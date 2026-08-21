@@ -1,10 +1,10 @@
 {
   "name": "pos-system-client",
   "version": "1.0.0",
-  "description": "An Electron application with React and TypeScript",
+  "description": "Maria POS desktop application",
   "main": "./out/main/index.js",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "Maria Dev Team",
+  "homepage": "https://github.com/maria-dev-team/pos-system-client",
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
@@ -15,15 +15,10 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:unpack": "npm run build && electron-builder --dir",
-    "build:win": "npm run build && electron-builder --win",
-    "build:mac": "electron-vite build && electron-builder --mac",
-    "build:linux": "electron-vite build && electron-builder --linux"
+    "build:win": "npm run build && electron-builder --win nsis --x64"
   },
   "dependencies": {
-    "@electron-toolkit/preload": "^3.0.2",
-    "@electron-toolkit/utils": "^4.0.0",
-    "electron-updater": "^6.3.9"
+    "@electron-toolkit/utils": "^4.0.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

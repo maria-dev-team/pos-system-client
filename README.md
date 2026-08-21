@@ -1,6 +1,6 @@
-# pos-system-client
+# Maria POS
 
-An Electron application with React and TypeScript
+Кассовое Electron-приложение на React и TypeScript.
 
 ## Recommended IDE Setup
 
@@ -23,13 +23,5 @@ $ npm run dev
 ### Build
 
 ```bash
-# For windows
 $ npm run build:win
-
-# For macOS
-$ npm run build:mac
-
-# For Linux
-$ npm run build:linux
 ```
-# pos-system-client
