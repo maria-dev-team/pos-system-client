@@ -4,3 +4,16 @@ out
 .DS_Store
 .eslintcache
 *.log*
+logs
+*.local
+
+# Environment variables
+.env*
+!.env.example
+
+# Local agent instructions
+AGENTS.md
+
+# IDE
+.idea
+.vscode
