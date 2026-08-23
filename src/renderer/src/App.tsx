@@ -1,14 +1,13 @@
-import electronLogo from './assets/electron.svg'
+import { RouterProvider } from '@tanstack/react-router';
 
-function App(): React.JSX.Element {
-  return (
-    <>
-      <img alt="Maria POS" className="logo" src={electronLogo} />
-      <div className="creator">Maria POS</div>
-      <div className="text">Кассовое приложение готово к разработке</div>
-      <p className="tip">Нажмите F12, чтобы открыть DevTools</p>
-    </>
-  )
+import type { AppRouter } from '@renderer/common/router';
+
+type AppProps = {
+  router: AppRouter;
+};
+
+function App({ router }: AppProps) {
+  return <RouterProvider router={router} />;
 }
 
-export default App
+export default App;
