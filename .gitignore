@@ -13,6 +13,10 @@ logs
 
 # Local agent instructions
 AGENTS.md
+CLAUDE.md
+
+# Local reference docs
+docs
 
 # IDE
 .idea
