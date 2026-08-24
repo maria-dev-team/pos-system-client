@@ -22,6 +22,8 @@ import {
 } from '@renderer/features/auth';
 import { AuthDebugView } from '@renderer/features/development';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
+import { RegisterShiftSelectionView } from '@renderer/features/register-shifts';
+import { StatusBar } from '@renderer/features/status-bar';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
 type RouterContext = {
@@ -47,10 +49,13 @@ function SessionRedirect(): null {
 
 function RootLayout() {
   return (
-    <>
-      <SessionRedirect />
-      <Outlet />
-    </>
+    <div className="flex h-svh flex-col overflow-hidden">
+      <StatusBar />
+      <div className="min-h-0 flex-1 overflow-auto">
+        <SessionRedirect />
+        <Outlet />
+      </div>
+    </div>
   );
 }
 
@@ -72,7 +77,7 @@ const indexRoute = createRoute({
     if (!context.userOrganizationId)
       throw redirect({ to: '/select-organization' });
     if (!context.storeId) throw redirect({ to: '/select-store' });
-    throw redirect({ to: '/debug' });
+    throw redirect({ to: '/select-register-shift' });
   },
   component: () => <FullPageState isLoading title="Восстанавливаем сессию" />,
   getParentRoute: () => rootRoute,
@@ -118,7 +123,7 @@ const storeRoute = createRoute({
   path: 'select-store',
 });
 
-const debugRoute = createRoute({
+const registerShiftRoute = createRoute({
   beforeLoad: async ({ context: { queryClient } }) => {
     const context = await queryClient.ensureQueryData(
       authContextQueryOptions(),
@@ -127,15 +132,49 @@ const debugRoute = createRoute({
       throw redirect({ to: '/select-organization' });
     if (!context.storeId) throw redirect({ to: '/select-store' });
   },
-  component: AuthDebugView,
+  component: RegisterShiftSelectionView,
+  getParentRoute: () => authenticatedRoute,
+  path: 'select-register-shift',
+});
+
+function DebugRouteComponent() {
+  const { registerShiftId } = debugRoute.useSearch();
+  return registerShiftId ? (
+    <AuthDebugView registerShiftId={registerShiftId} />
+  ) : null;
+}
+
+const debugRoute = createRoute({
+  beforeLoad: async ({ context: { queryClient }, search }) => {
+    const context = await queryClient.ensureQueryData(
+      authContextQueryOptions(),
+    );
+    if (!context.userOrganizationId)
+      throw redirect({ to: '/select-organization' });
+    if (!context.storeId) throw redirect({ to: '/select-store' });
+    if (!search.registerShiftId)
+      throw redirect({ to: '/select-register-shift' });
+  },
+  component: DebugRouteComponent,
   getParentRoute: () => authenticatedRoute,
   path: 'debug',
+  validateSearch: (search: Record<string, unknown>) => ({
+    registerShiftId:
+      typeof search.registerShiftId === 'string' && search.registerShiftId
+        ? search.registerShiftId
+        : undefined,
+  }),
 });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
-  authenticatedRoute.addChildren([organizationRoute, storeRoute, debugRoute]),
+  authenticatedRoute.addChildren([
+    organizationRoute,
+    storeRoute,
+    registerShiftRoute,
+    debugRoute,
+  ]),
 ]);
 
 export const createAppRouter = (queryClient: QueryClient) =>

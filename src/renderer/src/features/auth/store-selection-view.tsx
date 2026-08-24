@@ -29,7 +29,7 @@ export function StoreSelectionView() {
       await queryClient.invalidateQueries({
         queryKey: queryKeys.registers.all(),
       });
-      await navigate({ replace: true, to: '/debug' });
+      await navigate({ replace: true, to: '/select-register-shift' });
     },
   });
 
