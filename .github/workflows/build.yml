@@ -9,6 +9,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    env:
+      VITE_API_URL: http://localhost:4004
 
     steps:
       - uses: actions/checkout@v3
@@ -17,4 +19,5 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
+      - run: npm test
       - run: npm run build
