@@ -16,7 +16,7 @@ export function FullPageState({
   title,
 }: FullPageStateProps) {
   return (
-    <main className="grid min-h-svh place-items-center bg-workspace px-6 py-10">
+    <main className="grid min-h-full place-items-center bg-workspace px-6 py-10">
       <section className="w-full max-w-md rounded-2xl border border-border bg-card p-8 text-center shadow-[var(--shadow-surface)]">
         {isLoading ? (
           <LoaderCircle

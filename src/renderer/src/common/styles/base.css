@@ -19,6 +19,10 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
   --color-workspace: var(--workspace);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -44,6 +48,10 @@
   --border: #dbeafe;
   --input: #cbd5e1;
   --ring: #3b82f6;
+  --success: #15803d;
+  --success-muted: #dcfce7;
+  --warning: #a16207;
+  --warning-muted: #fef3c7;
   --workspace: #eff6ff;
   --radius: 0.75rem;
   --shadow-surface:

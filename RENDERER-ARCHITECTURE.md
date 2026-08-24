@@ -1,4 +1,4 @@
-re# Архитектура renderer Maria POS
+# Архитектура renderer Maria POS
 
 Этот документ описывает правила разработки React-интерфейса в
 `src/renderer/src`. Общие границы Electron main, preload и renderer остаются в
@@ -31,6 +31,7 @@ src/renderer/src/
       request.ts           # Axios, auth header и refresh/retry
     components/
       ui/                  # локальные shadcn/ui-примитивы
+    config/                # build-time UI-конфигурация
     constants/             # query keys и общие константы
     helpers/               # небольшие общие pure helpers
     lib/                   # настройка библиотек и низкоуровневые utilities
@@ -93,8 +94,10 @@ auth store в `main.tsx`, потому что это composition root, а `commo
 
 - `auth` — login, выбор контекста, session store и logout;
 - `organizations` — запрос доступных организаций;
+- `register-shifts` — активные кассы, выбор, открытие и закрытие `register_shift`;
+- `status-bar` — глобальный контекст, пользователь, API health, часы и logout;
 - `user` — запрос текущего пользователя;
-- `development` — временный debug-экран и запрос активных касс.
+- `development` — временный debug-экран.
 
 ## Направление зависимостей
 
@@ -157,6 +160,11 @@ Query hook и его `queryOptions` находятся рядом. Query keys о
 
 Feature component получает данные и callbacks через props и не обращается к API,
 если запрос не является его явной ответственностью.
+
+Переиспользуемое POS-действие не знает, на каком экране размещено. Например,
+`CloseRegisterShiftAction` получает `registerShiftId` и callback завершения,
+самостоятельно выполняет mutation и показывает сверку, но не импортирует router
+или временный debug feature.
 
 ### Schemas
 
@@ -250,23 +258,28 @@ Refresh token остаётся только в httpOnly cookie и недосту
 
 ## Server state и client state
 
-React Query владеет user, organizations, auth context и registers. Server state
-не копируется в Zustand.
+React Query владеет user, organizations, auth context, registers и
+register shifts, а также API health. Server state не копируется в Zustand.
 
 Query keys централизованы:
 
 ```ts
 queryKeys.auth.context();
 queryKeys.auth.currentUser();
+queryKeys.health.api();
 queryKeys.organizations.mine();
 queryKeys.registers.all();
 queryKeys.registers.active(storeId);
+queryKeys.registerShifts.all();
+queryKeys.registerShifts.current(registerId);
 ```
 
 Zustand хранит lifecycle auth session: access token, initialization/logout и
 pending flags. Access token сохраняется в `sessionStorage` только до JWT `exp`.
 
 После смены organization/store инвалидируются context и зависимые queries.
+После закрытия кассовой смены current-shift cache соответствующей кассы сразу
+очищается; переход выполняет экран-потребитель после подтверждения сверки.
 
 ## Роутинг
 
@@ -286,8 +299,19 @@ Auth guards выполняются в `beforeLoad`. В router context перед
 /login
 /select-organization
 /select-store
+/select-register-shift
 /debug
 ```
+
+Корневой route layout владеет общим shell: status bar занимает фиксированную
+высоту, а содержимое текущего маршрута прокручивается отдельно. Полноэкранные
+views используют высоту родителя, а не повторный viewport height.
+
+Состав status bar и частота `/health` задаются build-time конфигурацией в
+`common/config/status-bar.config.ts`. Известные элементы можно менять местами,
+добавлять и убирать через `leftItems`/`rightItems`. Health-check хранится в React
+Query, не вызывает toast при потере связи и не заменяется `navigator.onLine`,
+поскольку POS должен показывать доступность backend, а не только наличие сети.
 
 ## Auth и ошибки
 

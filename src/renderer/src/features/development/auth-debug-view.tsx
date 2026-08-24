@@ -1,24 +1,17 @@
-import { queryOptions, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { LogOut } from 'lucide-react';
 import { useEffect } from 'react';
 
-import { getActiveRegisters } from '@renderer/common/api';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { Button } from '@renderer/common/components/ui/button';
-import { queryKeys } from '@renderer/common/constants';
 import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
-import { authContextQueryOptions, useLogout } from '@renderer/features/auth';
+import { authContextQueryOptions } from '@renderer/features/auth';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
+import {
+  CloseRegisterShiftAction,
+  activeRegistersQueryOptions,
+} from '@renderer/features/register-shifts';
 import { currentUserQueryOptions } from '@renderer/features/user';
-
-const activeRegistersQueryOptions = (storeId?: string | null) =>
-  queryOptions({
-    enabled: Boolean(storeId),
-    queryFn: getActiveRegisters,
-    queryKey: queryKeys.registers.active(storeId),
-    retry: false,
-  });
 
 type DebugBlockProps = {
   title: string;
@@ -38,9 +31,12 @@ function DebugBlock({ title, value }: DebugBlockProps) {
   );
 }
 
-export function AuthDebugView() {
+type AuthDebugViewProps = {
+  registerShiftId: string;
+};
+
+export function AuthDebugView({ registerShiftId }: AuthDebugViewProps) {
   const navigate = useNavigate();
-  const logout = useLogout();
   const user = useQuery(currentUserQueryOptions());
   const organizations = useQuery(organizationsQueryOptions());
   const context = useQuery(authContextQueryOptions());
@@ -83,9 +79,13 @@ export function AuthDebugView() {
   const store = context.data?.storeScope.stores.find(
     ({ id }) => id === context.data?.storeId,
   );
+  const canCloseRegisterShift =
+    context.data?.isSystemPosition ||
+    context.data?.permissions.includes('register_shift.close') ||
+    context.data?.permissions.includes('register_shift.close_others');
 
   return (
-    <main className="min-h-svh bg-workspace px-6 py-8">
+    <main className="min-h-full bg-workspace px-6 py-8">
       <div className="mx-auto max-w-6xl">
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-card p-6 shadow-[var(--shadow-surface)]">
           <div>
@@ -99,6 +99,17 @@ export function AuthDebugView() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {canCloseRegisterShift ? (
+              <CloseRegisterShiftAction
+                onClosed={() =>
+                  void navigate({
+                    replace: true,
+                    to: '/select-register-shift',
+                  })
+                }
+                registerShiftId={registerShiftId}
+              />
+            ) : null}
             <Button
               onClick={() =>
                 void navigate({ replace: true, to: '/select-organization' })
@@ -116,15 +127,6 @@ export function AuthDebugView() {
               variant="ghost"
             >
               Сменить магазин
-            </Button>
-            <Button
-              disabled={logout.isLoggingOut}
-              onClick={() => void logout.logout()}
-              type="button"
-              variant="ghost"
-            >
-              <LogOut aria-hidden="true" />
-              Выйти
             </Button>
           </div>
         </header>
@@ -155,6 +157,10 @@ export function AuthDebugView() {
                 ? { error: 'Недостаточно прав или кассы недоступны' }
                 : (registers.data ?? [])
             }
+          />
+          <DebugBlock
+            title="Выбранная кассовая смена"
+            value={{ registerShiftId }}
           />
         </div>
       </div>

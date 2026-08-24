@@ -1,16 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Building2, LoaderCircle, LogOut } from 'lucide-react';
+import { Building2, LoaderCircle } from 'lucide-react';
 
 import { selectContext } from '@renderer/common/api';
 import { FullPageState } from '@renderer/common/components/full-page-state';
-import { Button } from '@renderer/common/components/ui/button';
 import { queryKeys } from '@renderer/common/constants';
 import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 
 import { AuthShell } from './components/auth-shell';
-import { useLogout } from './hooks/use-logout';
 import { useAuthStore } from './stores/auth-store';
 
 export function OrganizationSelectionView() {
@@ -18,7 +16,6 @@ export function OrganizationSelectionView() {
   const queryClient = useQueryClient();
   const organizations = useQuery(organizationsQueryOptions());
   const setAccessToken = useAuthStore((state) => state.setAccessToken);
-  const logout = useLogout();
   const mutation = useMutation({
     mutationFn: (membershipId: string) => selectContext(membershipId),
     onError: (error) =>
@@ -91,17 +88,6 @@ export function OrganizationSelectionView() {
           Нет доступных организаций
         </p>
       )}
-
-      <Button
-        className="mt-6 w-full"
-        disabled={logout.isLoggingOut}
-        onClick={() => void logout.logout()}
-        type="button"
-        variant="ghost"
-      >
-        <LogOut aria-hidden="true" />
-        Выйти
-      </Button>
     </AuthShell>
   );
 }
