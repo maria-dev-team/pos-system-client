@@ -4,7 +4,12 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 
 import icon from '../../resources/icon.png?asset';
+import { registerCameraIpc } from './camera';
 import { resolveRendererFilePath } from './renderer-protocol';
+
+const apiUrl = (
+  import.meta.env.MAIN_VITE_API_URL ?? 'http://localhost:4004'
+).replace(/\/+$/g, '');
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -47,6 +52,8 @@ function createWindow(): void {
       nodeIntegration: false,
     },
   });
+
+  registerCameraIpc(mainWindow, apiUrl);
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();

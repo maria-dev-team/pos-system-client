@@ -17,6 +17,7 @@ import {
 import { type FormEvent, useState } from 'react';
 
 import { type RegisterResponse, openRegisterShift } from '@renderer/common/api';
+import { syncCameraContext } from '@renderer/common/camera/camera-context';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
@@ -37,7 +38,7 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
-import { authContextQueryOptions } from '@renderer/features/auth';
+import { authContextQueryOptions, useAuthStore } from '@renderer/features/auth';
 
 import {
   activeRegistersQueryOptions,
@@ -86,6 +87,10 @@ export function RegisterShiftSelectionView() {
       httpErrorHandler(error, 'Не удалось открыть кассовую смену.');
     },
     onSuccess: async (registerShift) => {
+      const accessToken = useAuthStore.getState().accessToken;
+      if (accessToken) {
+        syncCameraContext(accessToken, registerShift.register_id);
+      }
       queryClient.setQueryData(
         queryKeys.registerShifts.current(registerShift.register_id),
         registerShift,
@@ -299,12 +304,16 @@ export function RegisterShiftSelectionView() {
                     <Button
                       aria-label={`Выбрать смену кассы ${register.name}`}
                       className="mt-5 min-h-13 w-full text-base"
-                      onClick={() =>
+                      onClick={() => {
+                        const accessToken = useAuthStore.getState().accessToken;
+                        if (accessToken) {
+                          syncCameraContext(accessToken, register.id);
+                        }
                         void navigate({
                           search: { registerShiftId: registerShift.id },
                           to: '/debug',
-                        })
-                      }
+                        });
+                      }}
                       type="button"
                     >
                       Выбрать смену

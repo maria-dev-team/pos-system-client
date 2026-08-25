@@ -7,3 +7,11 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface Window {
+  camera?: {
+    setContext: (
+      context: { accessToken: string; registerId: string | null } | null,
+    ) => void;
+  };
+}

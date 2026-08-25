@@ -12,6 +12,13 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 win:
   executableName: MariaPOS
+  extraResources:
+    - from: resources/ffmpeg.exe
+      to: ffmpeg.exe
+mac:
+  extraResources:
+    - from: resources/ffmpeg
+      to: ffmpeg
 nsis:
   artifactName: Maria-POS-${version}-${arch}-setup.${ext}
   shortcutName: ${productName}
