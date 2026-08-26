@@ -17,7 +17,8 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:win": "npm run build && electron-builder --win nsis --x64"
+    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win nsis --x64",
+    "build:mac": "node scripts/verify-ffmpeg.mjs darwin && npm run build && electron-builder --mac"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
