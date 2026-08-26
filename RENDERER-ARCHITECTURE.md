@@ -36,6 +36,7 @@ src/renderer/src/
     helpers/               # небольшие общие pure helpers
     lib/                   # настройка библиотек и низкоуровневые utilities
     router/                # composition root TanStack Router
+    schemas/               # общая валидация нескольких фич
     styles/                # tokens, reset и глобальные стили
   features/
     feature-name/
@@ -93,11 +94,12 @@ auth store в `main.tsx`, потому что это composition root, а `commo
 Текущие области:
 
 - `auth` — login, выбор контекста, session store и logout;
+- `cashier-sessions` — gate, открытие и завершение смены кассира;
+- `checkout` — scanner/search, серверная корзина и действия с продажей;
 - `organizations` — запрос доступных организаций;
 - `register-shifts` — активные кассы, выбор, открытие и закрытие `register_shift`;
 - `status-bar` — глобальный контекст, пользователь, API health, часы и logout;
-- `user` — запрос текущего пользователя;
-- `development` — временный debug-экран.
+- `user` — запрос текущего пользователя.
 
 ## Направление зависимостей
 
@@ -162,14 +164,17 @@ Feature component получает данные и callbacks через props и
 если запрос не является его явной ответственностью.
 
 Переиспользуемое POS-действие не знает, на каком экране размещено. Например,
-`CloseRegisterShiftAction` получает `registerShiftId` и callback завершения,
-самостоятельно выполняет mutation и показывает сверку, но не импортирует router
-или временный debug feature.
+`CloseRegisterShiftAction` и `EndCashierSessionAction` получают идентификатор или
+готовый resource и callback завершения, самостоятельно выполняют mutation и
+показывают сверку, но не импортируют router.
 
 ### Schemas
 
 `*.schema.ts` описывает клиентскую валидацию ввода: обязательность, формат,
 длину и допустимые значения. Backend остаётся источником истины для бизнес-правил.
+Одинаковый формат на границе нескольких фич выносится в `common/schemas`:
+например, `cashAmountSchema` используется для сумм register shift и cashier
+session.
 
 ### Stores
 
@@ -222,8 +227,12 @@ common/api/
   config/
   requests/
     auth/
+    cashier-sessions/
     organizations/
+    products/
+    register-shifts/
     registers/
+    sales/
     users/
   responses/
   types/
@@ -234,6 +243,10 @@ Request-функция описывает только endpoint, HTTP method, pa
 Она импортирует payload из `common/api/types`, response — из
 `common/api/responses`, снимает transport envelope `{ data: ... }` и экспортируется
 через `common/api/index.ts`.
+
+`products` содержит поиск товаров, а `sales` — создание/чтение черновика и
+команды корзины. `ProductResponse` и `SaleResponse` остаются backend-контрактами
+в snake_case; payload команд продажи — camelCase и проходят общий serializer.
 
 Правила контрактов:
 
@@ -259,27 +272,102 @@ Refresh token остаётся только в httpOnly cookie и недосту
 ## Server state и client state
 
 React Query владеет user, organizations, auth context, registers и
-register shifts, а также API health. Server state не копируется в Zustand.
+register shifts, cashier sessions, products, sales и API health. Server state не
+копируется в Zustand.
 
 Query keys централизованы:
 
 ```ts
 queryKeys.auth.context();
 queryKeys.auth.currentUser();
+queryKeys.cashierSessions.all();
+queryKeys.cashierSessions.current(registerId);
 queryKeys.health.api();
 queryKeys.organizations.mine();
+queryKeys.products.all();
+queryKeys.products.search(organizationId, storeId, term);
 queryKeys.registers.all();
 queryKeys.registers.active(storeId);
 queryKeys.registerShifts.all();
 queryKeys.registerShifts.current(registerId);
+queryKeys.sales.all();
+queryKeys.sales.current(cashierSessionId);
+queryKeys.sales.held(cashierSessionId);
+queryKeys.sales.recovery(
+  cashierSessionId,
+  type,
+  saleId,
+  expectedVersion,
+  paymentFingerprint,
+);
 ```
 
 Zustand хранит lifecycle auth session: access token, initialization/logout и
 pending flags. Access token сохраняется в `sessionStorage` только до JWT `exp`.
 
+До создания продажи Zustand также хранит локальную корзину отдельно по
+`cashierSessionId`. Она сохраняется в `localStorage`, не содержит временных
+`Sale`/`SaleItem` UUID и переживает reload и временную потерю сети. Persisted
+pending operation содержит только точный `saleId`, `expectedVersion`, тип команды
+и payload оплаты; платёжные реквизиты в неё не входят.
+
 После смены organization/store инвалидируются context и зависимые queries.
-После закрытия кассовой смены current-shift cache соответствующей кассы сразу
-очищается; переход выполняет экран-потребитель после подтверждения сверки.
+Ответы открытия и завершения смен записываются в соответствующий current cache
+через `setQueryData`. После подтверждения сверки завершённая cashier session или
+закрытая register shift заменяется в current cache на `null`; навигацию выполняет
+экран-потребитель.
+
+### Checkout и продажи
+
+Вход на `/checkout` выполняет только `GET /v1/sales/current`. `null` открывает
+persisted local cart, а найденный `DRAFT` становится server-owned чеком. Открытие
+экрана, поиск, локальное сканирование и локальные изменения никогда не вызывают
+`POST /v1/sales`.
+
+Локальная корзина хранит snapshot товара, количество и намерение изменить цену.
+Количество и денежные значения считаются через `decimal.js`: `pcs` допускает
+только целые, остальные единицы — до трёх знаков, денежная строка — до двух.
+Локальный итог является preview; после создания `SaleResponse` backend владеет
+строками, snapshot-ценами, итогом и `version`.
+
+Поиск и сканирование требуют `product.read`. Поиск начинается от двух символов,
+использует debounce 250 мс, limit 20 и scoped cache организации/магазина. Scanner
+сравнивает barcode как строку только по точному совпадению, выполняет быстрые
+сканы последовательно и освобождает поле до ответа, чтобы аппаратный сканер мог
+сразу отправить следующий код.
+
+`POST /v1/sales` вызывается только явным действием «Оплатить» или «Отложить» и
+атомарно получает текущие local items в стабильном порядке. Потерянный ответ
+create сверяется через `GET /v1/sales/current`; найденный `DRAFT` принимается,
+`null` сохраняет local cart. Автоматического повторения create нет.
+
+После появления `DRAFT` все команды строки (`scan`, add, quantity, remove, price
+override/reset и cancel) используют один TanStack Mutation scope по `sale.id`.
+Непосредственно перед командой читается актуальный `expected_version` из cache,
+а успешный полный response целиком заменяет cache. Клиент не пересчитывает
+server total и не объединяет server lines самостоятельно.
+
+Checkout поддерживает `CASH`, `CASHLESS` и mixed payment. До отправки persisted
+operation фиксирует точные `saleId`, `expectedVersion` и payments. Успешный
+`COMPLETED` очищает cart/pending и показывает серверные платежи и сдачу. «Новый
+чек» возвращает пустую local cart без автоматического POST.
+
+Hold выполняется как `create -> hold`; успешный `HELD` очищает local cart и
+инвалидирует список отложенных чеков. Held list запрашивается только при открытии
+диалога. Resume разрешён лишь при пустой local cart, без текущего `DRAFT` и
+pending operation.
+
+При timeout/network error checkout или hold не повторяются автоматически.
+Persisted operation блокирует новые server-команды, пока кассир явно не проверит
+статус, не повторит идентичную команду или не вернётся к редактированию. При
+перезапуске sale читается по сохранённому ID: `COMPLETED`/`HELD` завершают
+recovery, `DRAFT` ждёт решения кассира, network error сохраняет recovery, а
+подтверждённый 404 очищает только устаревший pending metadata.
+
+Локальная отмена очищает корзину после подтверждения без API и причины.
+Server `DRAFT` отменяется через API с причиной. Cashier session можно завершить
+только без local items, pending operation и `DRAFT`; register shift остаётся
+отдельным lifecycle.
 
 ## Роутинг
 
@@ -300,8 +388,29 @@ Auth guards выполняются в `beforeLoad`. В router context перед
 /select-organization
 /select-store
 /select-register-shift
-/debug
+/cashier-session?registerId=...&registerShiftId=...
+/checkout?registerId=...&registerShiftId=...
 ```
+
+`/cashier-session` — обязательный gate между выбором register shift и рабочим
+экраном. Route проверяет, что указанная register shift всё ещё является текущей
+открытой сменой выбранной кассы. Текущая `ACTIVE` или `LOCKED` cashier session с
+совпадающими идентификаторами ведёт на
+`/checkout?registerId=...&registerShiftId=...`; при её отсутствии кассир отдельно
+пересчитывает `opening_cash`. Несовпадающий контекст возвращает к выбору register
+shift.
+
+`/checkout` повторно проверяет organization, store, открытую register shift и
+связанные `registerId`/`registerShiftId`. `ACTIVE` session читает nullable current
+sale и восстанавливает local cart/recovery; `LOCKED` показывает блокирующее
+состояние и не вызывает Sales/Product API. Отсутствующая или несовпадающая
+session возвращает на `/cashier-session`.
+
+Cashier session и register shift имеют независимый lifecycle и независимые суммы
+сверки. Завершение cashier session не закрывает register shift. Закрытие register
+shift остаётся отдельным действием на карточке смены и доступно открывшему её с
+`register_shift.close`, system position или пользователю с
+`register_shift.close_others`.
 
 Корневой route layout владеет общим shell: status bar занимает фиксированную
 высоту, а содержимое текущего маршрута прокручивается отдельно. Полноэкранные
@@ -325,8 +434,10 @@ Logout очищает token и Query cache только после успешн�
 error или `CASHIER_SESSION_MUST_BE_ENDED` сохраняет локальную сессию.
 
 HTTP-ошибки нормализуются одним helper и показываются через Sonner. Feature не
-парсит `error_code` самостоятельно. Recoverable ошибка не сбрасывает введённые
-данные или выбранный контекст.
+парсит `error_code` самостоятельно, кроме явно предусмотренного inline recovery.
+Например, `CASHIER_SESSION_HAS_OPEN_SALES` остаётся внутри формы завершения и
+показывает блокирующие продажи; остальные ошибки проходят через Sonner.
+Recoverable ошибка не сбрасывает введённые данные или выбранный контекст.
 
 Каждый экран с server data явно обрабатывает:
 
@@ -375,6 +486,12 @@ User action
 - routing и guards;
 - критичные auth/POS flows.
 
+Для checkout дополнительно проверяются: serialization команд продажи, persisted
+cart по cashier session, Decimal totals, точный barcode и последовательные сканы,
+nullable current sale, переход local -> server truth, payment builders,
+hold/resume, persisted recovery без автоматического replay, permissions, отмена
+и завершение cashier session.
+
 Snapshot tests не заменяют поведенческие проверки.
 
 Перед merge:
@@ -415,6 +532,12 @@ npm run build
 - Feature создаёт собственный dialog/select/tooltip при наличии shadcn primitive.
 - Loading и error states существуют только для happy path.
 - Абстракция или dependency добавлена «на будущее».
+
+## Вне текущего checkout
+
+Печать чеков, клиенты, скидки, stock UI и быстрые товары без barcode пока не
+реализуются. Их правила и запросы добавляются вместе с отдельным пользовательским
+сценарием.
 
 ## Когда усложнять
 
