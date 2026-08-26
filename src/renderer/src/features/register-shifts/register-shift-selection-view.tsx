@@ -39,6 +39,7 @@ import {
 } from '@renderer/common/helpers/http-error.helper';
 import { authContextQueryOptions } from '@renderer/features/auth';
 
+import { CloseRegisterShiftAction } from './close-register-shift-action';
 import {
   activeRegistersQueryOptions,
   currentRegisterShiftQueryOptions,
@@ -91,8 +92,11 @@ export function RegisterShiftSelectionView() {
         registerShift,
       );
       await navigate({
-        search: { registerShiftId: registerShift.id },
-        to: '/debug',
+        search: {
+          registerId: registerShift.register_id,
+          registerShiftId: registerShift.id,
+        },
+        to: '/cashier-session',
       });
     },
   });
@@ -217,6 +221,15 @@ export function RegisterShiftSelectionView() {
             {registers.data.map((register, index) => {
               const shiftQuery = shiftQueries[index];
               const registerShift = shiftQuery?.data;
+              const canCloseShift =
+                Boolean(registerShift) &&
+                (context.data.isSystemPosition ||
+                  context.data.permissions.includes(
+                    'register_shift.close_others',
+                  ) ||
+                  (context.data.permissions.includes('register_shift.close') &&
+                    registerShift?.opened_by_membership_id ===
+                      context.data.userOrganizationId));
 
               return (
                 <article
@@ -296,19 +309,29 @@ export function RegisterShiftSelectionView() {
                       Повторить
                     </Button>
                   ) : registerShift ? (
-                    <Button
-                      aria-label={`Выбрать смену кассы ${register.name}`}
-                      className="mt-5 min-h-13 w-full text-base"
-                      onClick={() =>
-                        void navigate({
-                          search: { registerShiftId: registerShift.id },
-                          to: '/debug',
-                        })
-                      }
-                      type="button"
-                    >
-                      Выбрать смену
-                    </Button>
+                    <div className="mt-5 grid gap-2">
+                      <Button
+                        aria-label={`Выбрать смену кассы ${register.name}`}
+                        className="min-h-13 w-full text-base"
+                        onClick={() =>
+                          void navigate({
+                            search: {
+                              registerId: register.id,
+                              registerShiftId: registerShift.id,
+                            },
+                            to: '/cashier-session',
+                          })
+                        }
+                        type="button"
+                      >
+                        Выбрать смену
+                      </Button>
+                      {canCloseShift ? (
+                        <CloseRegisterShiftAction
+                          registerShiftId={registerShift.id}
+                        />
+                      ) : null}
+                    </div>
                   ) : canOpenShift ? (
                     <Button
                       aria-label={`Открыть смену кассы ${register.name}`}
