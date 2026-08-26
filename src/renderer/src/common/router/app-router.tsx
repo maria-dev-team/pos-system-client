@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import type { QueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQuery } from '@tanstack/react-query';
 import {
   Outlet,
   createMemoryHistory,
@@ -10,9 +10,10 @@ import {
   useNavigate,
   useRouterState,
 } from '@tanstack/react-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { FullPageState } from '@renderer/common/components/full-page-state';
+import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
 import {
   LoginView,
   OrganizationSelectionView,
@@ -20,9 +21,16 @@ import {
   authContextQueryOptions,
   useAuthStore,
 } from '@renderer/features/auth';
-import { AuthDebugView } from '@renderer/features/development';
+import {
+  CashierSessionView,
+  currentCashierSessionQueryOptions,
+} from '@renderer/features/cashier-sessions';
+import { CheckoutView } from '@renderer/features/checkout';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
-import { RegisterShiftSelectionView } from '@renderer/features/register-shifts';
+import {
+  RegisterShiftSelectionView,
+  currentRegisterShiftQueryOptions,
+} from '@renderer/features/register-shifts';
 import { StatusBar } from '@renderer/features/status-bar';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
@@ -137,14 +145,17 @@ const registerShiftRoute = createRoute({
   path: 'select-register-shift',
 });
 
-function DebugRouteComponent() {
-  const { registerShiftId } = debugRoute.useSearch();
-  return registerShiftId ? (
-    <AuthDebugView registerShiftId={registerShiftId} />
+function CashierSessionRouteComponent() {
+  const { registerId, registerShiftId } = cashierSessionRoute.useSearch();
+  return registerId && registerShiftId ? (
+    <CashierSessionView
+      registerId={registerId}
+      registerShiftId={registerShiftId}
+    />
   ) : null;
 }
 
-const debugRoute = createRoute({
+const cashierSessionRoute = createRoute({
   beforeLoad: async ({ context: { queryClient }, search }) => {
     const context = await queryClient.ensureQueryData(
       authContextQueryOptions(),
@@ -152,13 +163,159 @@ const debugRoute = createRoute({
     if (!context.userOrganizationId)
       throw redirect({ to: '/select-organization' });
     if (!context.storeId) throw redirect({ to: '/select-store' });
-    if (!search.registerShiftId)
+    if (!search.registerId || !search.registerShiftId)
       throw redirect({ to: '/select-register-shift' });
+
+    const registerShift = await queryClient.ensureQueryData(
+      currentRegisterShiftQueryOptions(search.registerId),
+    );
+    if (
+      !registerShift ||
+      registerShift.id !== search.registerShiftId ||
+      registerShift.status !== 'OPEN'
+    ) {
+      throw redirect({ to: '/select-register-shift' });
+    }
   },
-  component: DebugRouteComponent,
+  component: CashierSessionRouteComponent,
   getParentRoute: () => authenticatedRoute,
-  path: 'debug',
+  path: 'cashier-session',
   validateSearch: (search: Record<string, unknown>) => ({
+    registerId:
+      typeof search.registerId === 'string' && search.registerId
+        ? search.registerId
+        : undefined,
+    registerShiftId:
+      typeof search.registerShiftId === 'string' && search.registerShiftId
+        ? search.registerShiftId
+        : undefined,
+  }),
+});
+
+function CheckoutRouteComponent() {
+  const navigate = useNavigate();
+  const { registerId, registerShiftId } = checkoutRoute.useSearch();
+  const cashierSession = useQuery(
+    currentCashierSessionQueryOptions(registerId ?? ''),
+  );
+  const session = cashierSession.data;
+  const [locallyEndedSession, setLocallyEndedSession] =
+    useState<typeof session>();
+  const retainedSession =
+    session?.status === 'ENDED' && locallyEndedSession?.id === session.id
+      ? locallyEndedSession
+      : session;
+  const isCheckoutSession = Boolean(
+    retainedSession &&
+    ['ACTIVE', 'LOCKED'].includes(retainedSession.status) &&
+    retainedSession.register_id === registerId &&
+    retainedSession.register_shift_id === registerShiftId,
+  );
+
+  useEffect(() => {
+    if (
+      !registerId ||
+      !registerShiftId ||
+      cashierSession.isPending ||
+      cashierSession.isError ||
+      isCheckoutSession
+    ) {
+      return;
+    }
+
+    void navigate({
+      replace: true,
+      search: { registerId, registerShiftId },
+      to: '/cashier-session',
+    });
+  }, [
+    cashierSession.isError,
+    cashierSession.isPending,
+    isCheckoutSession,
+    navigate,
+    registerId,
+    registerShiftId,
+  ]);
+
+  if (cashierSession.isPending) {
+    return <FullPageState isLoading title="Проверяем смену кассира" />;
+  }
+  if (cashierSession.isError) {
+    return (
+      <FullPageState
+        description={getHttpErrorMessage(
+          cashierSession.error,
+          'Не удалось проверить текущую смену кассира.',
+        )}
+        onRetry={() => void cashierSession.refetch()}
+        title="Не удалось проверить смену кассира"
+      />
+    );
+  }
+  if (!retainedSession || !isCheckoutSession) {
+    return <FullPageState isLoading title="Проверяем смену кассира" />;
+  }
+
+  return (
+    <CheckoutView
+      cashierSession={retainedSession}
+      onRetrySession={() => void cashierSession.refetch()}
+      onSessionEndedLocally={() => setLocallyEndedSession(session)}
+      onSessionEnded={() =>
+        void navigate({ replace: true, to: '/select-register-shift' })
+      }
+    />
+  );
+}
+
+const checkoutRoute = createRoute({
+  beforeLoad: async ({ context: { queryClient }, search }) => {
+    const context = await queryClient.ensureQueryData(
+      authContextQueryOptions(),
+    );
+    if (!context.userOrganizationId)
+      throw redirect({ to: '/select-organization' });
+    if (!context.storeId) throw redirect({ to: '/select-store' });
+    if (!search.registerId || !search.registerShiftId)
+      throw redirect({ to: '/select-register-shift' });
+
+    const registerShift = await queryClient.ensureQueryData(
+      currentRegisterShiftQueryOptions(search.registerId),
+    );
+    if (
+      !registerShift ||
+      registerShift.id !== search.registerShiftId ||
+      registerShift.status !== 'OPEN'
+    ) {
+      throw redirect({ to: '/select-register-shift' });
+    }
+
+    const cashierSession = await queryClient.ensureQueryData(
+      currentCashierSessionQueryOptions(search.registerId),
+    );
+    if (
+      !cashierSession ||
+      !['ACTIVE', 'LOCKED'].includes(cashierSession.status) ||
+      cashierSession.register_id !== search.registerId ||
+      cashierSession.register_shift_id !== search.registerShiftId
+    ) {
+      throw redirect({
+        search: {
+          registerId: search.registerId,
+          registerShiftId: search.registerShiftId,
+        },
+        to: '/cashier-session',
+      });
+    }
+  },
+  component: CheckoutRouteComponent,
+  getParentRoute: () => authenticatedRoute,
+  path: 'checkout',
+  validateSearch: (search: Record<string, unknown>) => ({
+    registerId:
+      typeof search.registerId === 'string' && search.registerId
+        ? search.registerId
+        : undefined,
     registerShiftId:
       typeof search.registerShiftId === 'string' && search.registerShiftId
         ? search.registerShiftId
@@ -173,7 +330,8 @@ const routeTree = rootRoute.addChildren([
     organizationRoute,
     storeRoute,
     registerShiftRoute,
-    debugRoute,
+    cashierSessionRoute,
+    checkoutRoute,
   ]),
 ]);
 

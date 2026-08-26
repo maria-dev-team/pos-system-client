@@ -6,6 +6,49 @@ describe('queryKeys', () => {
   it('keeps auth, organization and store-scoped register caches separate', () => {
     expect(queryKeys.auth.context()).toEqual(['auth', 'context']);
     expect(queryKeys.auth.currentUser()).toEqual(['auth', 'user']);
+    expect(queryKeys.cashierSessions.all()).toEqual(['cashier-sessions']);
+    expect(queryKeys.cashierSessions.current('register-1')).toEqual([
+      'cashier-sessions',
+      'current',
+      'register-1',
+    ]);
+    expect(queryKeys.products.all()).toEqual(['products']);
+    expect(
+      queryKeys.products.search('organization-1', 'store-1', 'молоко'),
+    ).toEqual(['products', 'search', 'organization-1', 'store-1', 'молоко']);
+    expect(
+      queryKeys.products.search('organization-2', 'store-1', 'молоко'),
+    ).not.toEqual(
+      queryKeys.products.search('organization-1', 'store-1', 'молоко'),
+    );
+    expect(queryKeys.sales.all()).toEqual(['sales']);
+    expect(queryKeys.sales.current('cashier-session-1')).toEqual([
+      'sales',
+      'current',
+      'cashier-session-1',
+    ]);
+    expect(queryKeys.sales.held('cashier-session-1')).toEqual([
+      'sales',
+      'held',
+      'cashier-session-1',
+    ]);
+    expect(
+      queryKeys.sales.recovery(
+        'cashier-session-1',
+        'checkout',
+        'sale-1',
+        7,
+        '[["CASH","10.00","12.00"],["CASHLESS","5.00",null]]',
+      ),
+    ).toEqual([
+      'sales',
+      'recovery',
+      'cashier-session-1',
+      'checkout',
+      'sale-1',
+      7,
+      '[["CASH","10.00","12.00"],["CASHLESS","5.00",null]]',
+    ]);
     expect(queryKeys.health.api()).toEqual(['health', 'api']);
     expect(queryKeys.organizations.mine()).toEqual(['organizations', 'mine']);
     expect(queryKeys.registers.all()).toEqual(['registers']);

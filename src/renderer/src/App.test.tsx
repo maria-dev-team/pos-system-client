@@ -10,22 +10,41 @@ import { TooltipProvider } from '@renderer/common/components/ui/tooltip';
 import { createQueryClient } from '@renderer/common/lib/query-client';
 import { createAppRouter } from '@renderer/common/router';
 import { useAuthStore } from '@renderer/features/auth';
+import { useCheckoutCartStore } from '@renderer/features/checkout';
 
 import App from './App';
 
 const api = vi.hoisted(() => ({
+  addSaleItem: vi.fn(),
+  cancelSale: vi.fn(),
+  checkoutSale: vi.fn(),
   closeRegisterShift: vi.fn(),
+  createSale: vi.fn(),
+  endCashierSession: vi.fn(),
   getActiveRegisters: vi.fn(),
   getApiHealth: vi.fn(),
   getAuthContext: vi.fn(),
   getCurrentRegisterShift: vi.fn(),
+  getCurrentCashierSession: vi.fn(),
+  getCurrentSale: vi.fn(),
   getCurrentUser: vi.fn(),
+  getHeldSales: vi.fn(),
+  getSale: vi.fn(),
+  holdSale: vi.fn(),
   getMyOrganizations: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   openRegisterShift: vi.fn(),
+  overrideSaleItemPrice: vi.fn(),
   refreshTokens: vi.fn(),
+  removeSaleItem: vi.fn(),
+  resetSaleItemPrice: vi.fn(),
+  resumeSale: vi.fn(),
+  scanSaleItem: vi.fn(),
+  searchProducts: vi.fn(),
   selectContext: vi.fn(),
+  setSaleItemQuantity: vi.fn(),
+  startCashierSession: vi.fn(),
 }));
 
 vi.mock('@renderer/common/api', () => api);
@@ -63,7 +82,15 @@ const membershipResponse = {
 const contextResponse = {
   isSystemPosition: false,
   organizationId: 'organization-1',
-  permissions: ['register.read', 'register_shift.close', 'register_shift.open'],
+  permissions: [
+    'pos.login',
+    'product.read',
+    'register.read',
+    'register_shift.close',
+    'register_shift.open',
+    'sales.cancel',
+    'sales.price.override',
+  ],
   position: 'Кассир',
   storeId: 'store-1',
   storeScope: {
@@ -111,6 +138,60 @@ const closedRegisterShiftResponse = {
   expected_cash: '10000.00',
   status: 'CLOSED' as const,
 };
+const cashierSessionResponse = {
+  actual_cash: null,
+  created_at: '2026-08-24T08:05:00.000Z',
+  difference: null,
+  end_reason: null,
+  ended_at: null,
+  expected_cash: null,
+  id: 'cashier-session-1',
+  locked_at: null,
+  membership_id: 'membership-1',
+  opening_cash: '5000.00',
+  organization_id: 'organization-1',
+  register_id: 'register-1',
+  register_shift_id: 'register-shift-1',
+  started_at: '2026-08-24T08:05:00.000Z',
+  status: 'ACTIVE' as const,
+  store_id: 'store-1',
+  updated_at: '2026-08-24T08:05:00.000Z',
+};
+const endedCashierSessionResponse = {
+  ...cashierSessionResponse,
+  actual_cash: '4900.00',
+  difference: '-100.00',
+  end_reason: 'LOGOUT' as const,
+  ended_at: '2026-08-24T10:00:00.000Z',
+  expected_cash: '5000.00',
+  status: 'ENDED' as const,
+};
+const productResponse = {
+  barcode: '4870000000012',
+  category_id: 'category-1',
+  created_at: '2026-08-24T09:00:00.000Z',
+  deleted_at: null,
+  id: 'product-1',
+  is_active: true,
+  name: 'Молоко',
+  organization_id: 'organization-1',
+  retail_price: '650.00',
+  sku: 'MILK-1',
+  unit: 'pcs' as const,
+  updated_at: '2026-08-24T09:00:00.000Z',
+};
+const productSearchResponse = {
+  meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+  products: [productResponse],
+};
+
+const responseError = (errorCode: string, data?: Record<string, unknown>) =>
+  new AxiosError('Request failed', undefined, undefined, undefined, {
+    data: { error_code: errorCode, ...data },
+    headers: {},
+    status: 409,
+    statusText: 'Conflict',
+  } as AxiosResponse);
 
 const renderApp = () => {
   const queryClient = createQueryClient();
@@ -129,6 +210,7 @@ const renderApp = () => {
 beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
+  useCheckoutCartStore.setState({ sessions: {} });
   useAuthStore.setState({
     accessToken: null,
     isInitialized: false,
@@ -142,9 +224,14 @@ beforeEach(() => {
   api.getActiveRegisters.mockResolvedValue([registerResponse]);
   api.getApiHealth.mockResolvedValue({ status: 'ok' });
   api.getCurrentRegisterShift.mockResolvedValue(registerShiftResponse);
+  api.getCurrentCashierSession.mockResolvedValue(cashierSessionResponse);
+  api.getCurrentSale.mockResolvedValue(null);
   api.closeRegisterShift.mockResolvedValue(closedRegisterShiftResponse);
+  api.endCashierSession.mockResolvedValue(endedCashierSessionResponse);
   api.logout.mockResolvedValue(undefined);
   api.openRegisterShift.mockResolvedValue(registerShiftResponse);
+  api.searchProducts.mockResolvedValue(productSearchResponse);
+  api.startCashierSession.mockResolvedValue(cashierSessionResponse);
 });
 
 afterEach(cleanup);
@@ -169,7 +256,7 @@ describe('Maria POS authorization flow', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('requires explicit organization, store and register shift selection before debug', async () => {
+  it('requires explicit organization, store and register shift selection before checkout', async () => {
     const user = userEvent.setup();
     api.login.mockResolvedValue({
       auth: { access_token: 'login-token' },
@@ -201,7 +288,7 @@ describe('Maria POS authorization flow', () => {
       await screen.findByRole('heading', { name: 'Выберите кассовую смену' }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('heading', { name: 'Данные авторизации' }),
+      screen.queryByRole('heading', { name: 'Оформление продажи' }),
     ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole('button', {
@@ -210,12 +297,9 @@ describe('Maria POS authorization flow', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'Данные авторизации' }),
+      await screen.findByRole('heading', { name: 'Оформление продажи' }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/register-shift-1/)).toBeInTheDocument();
-    expect(screen.getByText(/cashier@maria.kz/)).toBeInTheDocument();
-    expect(screen.getByText(/register.read/)).toBeInTheDocument();
-    expect(screen.getByText(/Основная касса/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Сканируйте или найдите товар')).toHaveFocus();
     expect(api.selectContext).toHaveBeenNthCalledWith(1, 'membership-1');
     expect(api.selectContext).toHaveBeenNthCalledWith(
       2,
@@ -246,11 +330,6 @@ describe('Maria POS authorization flow', () => {
     const { queryClient, router } = renderApp();
 
     await user.click(
-      await screen.findByRole('button', {
-        name: 'Выбрать смену кассы Основная касса',
-      }),
-    );
-    await user.click(
       await screen.findByRole('button', { name: 'Закрыть кассовую смену' }),
     );
     await user.click(screen.getByRole('button', { name: '9' }));
@@ -271,21 +350,24 @@ describe('Maria POS authorization flow', () => {
       name: 'Результат сверки',
     });
     await waitFor(() => expect(reconciliation).toHaveFocus());
-    expect(router.state.location.pathname).toBe('/debug');
+    expect(router.state.location.pathname).toBe('/select-register-shift');
     expect(
       queryClient.getQueryData(['register-shifts', 'current', 'register-1']),
-    ).toBeNull();
+    ).toEqual(registerShiftResponse);
 
     await user.keyboard('{Escape}');
     expect(
       screen.getByRole('heading', { name: 'Смена закрыта' }),
     ).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/debug');
+    expect(router.state.location.pathname).toBe('/select-register-shift');
 
     await user.click(screen.getByRole('button', { name: 'К списку смен' }));
     expect(
       await screen.findByRole('heading', { name: 'Выберите кассовую смену' }),
     ).toBeInTheDocument();
+    expect(
+      queryClient.getQueryData(['register-shifts', 'current', 'register-1']),
+    ).toBeNull();
   });
 
   it('keeps the counted cash when closing the register shift fails', async () => {
@@ -294,11 +376,6 @@ describe('Maria POS authorization flow', () => {
     api.closeRegisterShift.mockRejectedValue(new Error('API unavailable'));
     renderApp();
 
-    await user.click(
-      await screen.findByRole('button', {
-        name: 'Выбрать смену кассы Основная касса',
-      }),
-    );
     await user.click(
       await screen.findByRole('button', { name: 'Закрыть кассовую смену' }),
     );
@@ -316,7 +393,6 @@ describe('Maria POS authorization flow', () => {
   });
 
   it('does not expose register shift closing without permission', async () => {
-    const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
     api.getAuthContext.mockResolvedValue({
       ...contextResponse,
@@ -324,13 +400,8 @@ describe('Maria POS authorization flow', () => {
     });
     renderApp();
 
-    await user.click(
-      await screen.findByRole('button', {
-        name: 'Выбрать смену кассы Основная касса',
-      }),
-    );
     expect(
-      await screen.findByRole('heading', { name: 'Данные авторизации' }),
+      await screen.findByRole('heading', { name: 'Выберите кассовую смену' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Закрыть кассовую смену' }),
@@ -338,19 +409,35 @@ describe('Maria POS authorization flow', () => {
   });
 
   it('exposes register shift closing with close-others permission', async () => {
-    const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
     api.getAuthContext.mockResolvedValue({
       ...contextResponse,
       permissions: ['register.read', 'register_shift.close_others'],
     });
+    api.getCurrentRegisterShift.mockResolvedValue({
+      ...registerShiftResponse,
+      opened_by_membership_id: 'membership-2',
+    });
     renderApp();
 
-    await user.click(
-      await screen.findByRole('button', {
-        name: 'Выбрать смену кассы Основная касса',
-      }),
-    );
+    expect(
+      await screen.findByRole('button', { name: 'Закрыть кассовую смену' }),
+    ).toBeInTheDocument();
+  });
+
+  it('exposes register shift closing to a system position', async () => {
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      isSystemPosition: true,
+      permissions: ['register.read'],
+    });
+    api.getCurrentRegisterShift.mockResolvedValue({
+      ...registerShiftResponse,
+      opened_by_membership_id: 'membership-2',
+    });
+    renderApp();
+
     expect(
       await screen.findByRole('button', { name: 'Закрыть кассовую смену' }),
     ).toBeInTheDocument();
@@ -539,8 +626,354 @@ describe('Maria POS authorization flow', () => {
       registerId: 'register-1',
     });
     expect(
-      await screen.findByRole('heading', { name: 'Данные авторизации' }),
+      await screen.findByRole('heading', { name: 'Оформление продажи' }),
     ).toBeInTheDocument();
+  });
+
+  it('opens an independent cashier session before entering checkout', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession.mockResolvedValue(null);
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Начать смену кассира' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Наличные кассира на начало, ₸')).toHaveValue(
+      '',
+    );
+    expect(screen.getByLabelText('Цифровая клавиатура')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '5' }));
+    for (let index = 0; index < 3; index += 1) {
+      await user.click(screen.getByRole('button', { name: '0' }));
+    }
+    await user.click(screen.getByRole('button', { name: 'Начать работу' }));
+
+    await waitFor(() =>
+      expect(api.startCashierSession).toHaveBeenCalledWith('register-shift-1', {
+        openingCash: '5000',
+      }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Оформление продажи' }),
+    ).toBeInTheDocument();
+    expect(api.getCurrentSale).toHaveBeenCalledOnce();
+    expect(api.createSale).not.toHaveBeenCalled();
+  });
+
+  it('restores a locked cashier session without opening it again', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession.mockResolvedValue({
+      ...cashierSessionResponse,
+      locked_at: '2026-08-24T09:00:00.000Z',
+      status: 'LOCKED',
+    });
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Смена кассира заблокирована',
+      }),
+    ).toBeInTheDocument();
+    expect(api.startCashierSession).not.toHaveBeenCalled();
+    expect(api.createSale).not.toHaveBeenCalled();
+  });
+
+  it('returns a locked checkout to the cashier gate when retry finds no session', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession
+      .mockResolvedValueOnce({
+        ...cashierSessionResponse,
+        locked_at: '2026-08-24T09:00:00.000Z',
+        status: 'LOCKED',
+      })
+      .mockResolvedValueOnce(null);
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    await user.click(await screen.findByRole('button', { name: 'Повторить' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Начать смену кассира' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/cashier-session');
+    expect(router.state.location.search).toEqual({
+      registerId: 'register-1',
+      registerShiftId: 'register-shift-1',
+    });
+  });
+
+  it('shows a recoverable checkout session error and retries it', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession
+      .mockResolvedValueOnce({
+        ...cashierSessionResponse,
+        locked_at: '2026-08-24T09:00:00.000Z',
+        status: 'LOCKED',
+      })
+      .mockRejectedValueOnce(new Error('API unavailable'))
+      .mockResolvedValueOnce(cashierSessionResponse);
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Смена кассира заблокирована',
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Повторить' }));
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Не удалось проверить смену кассира',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Не удалось проверить текущую смену кассира.'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Повторить' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Оформление продажи' }),
+    ).toBeInTheDocument();
+  });
+
+  it('rejects mismatched register shift context at the cashier gate', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession.mockResolvedValue({
+      ...cashierSessionResponse,
+      register_shift_id: 'another-shift',
+    });
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/select-register-shift'),
+    );
+    expect(
+      screen.getByRole('heading', { name: 'Выберите кассовую смену' }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not offer cashier session opening without pos.login', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: ['register.read', 'register_shift.close'],
+    });
+    api.getCurrentCashierSession.mockResolvedValue(null);
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+
+    expect(
+      await screen.findByText('Нет права начинать смену кассира'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Начать работу' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      'CASHIER_SESSION_REGISTER_OCCUPIED',
+      'На этой кассе уже работает другой кассир.',
+    ],
+    [
+      'CASHIER_SESSION_MEMBERSHIP_OCCUPIED',
+      'У вас уже открыта смена кассира на другой кассе.',
+    ],
+  ])('keeps opening cash on %s', async (errorCode, message) => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession.mockResolvedValue(null);
+    api.startCashierSession.mockRejectedValue(responseError(errorCode));
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    const input = await screen.findByLabelText('Наличные кассира на начало, ₸');
+    await user.type(input, '5000');
+    await user.click(screen.getByRole('button', { name: 'Начать работу' }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(input).toHaveValue('5000');
+  });
+
+  it('ends a cashier session with reconciliation and keeps the register shift open', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    const { queryClient, router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Завершить смену кассира' }),
+    );
+    await user.type(
+      screen.getByLabelText('Фактические наличные кассира, ₸'),
+      '4900',
+    );
+    await user.click(screen.getByRole('button', { name: /^Завершить смену$/ }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Смена кассира завершена' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('5 000,00 ₸')).toBeInTheDocument();
+    expect(screen.getByText('4 900,00 ₸')).toBeInTheDocument();
+    expect(screen.getByText('-100,00 ₸')).toBeInTheDocument();
+    expect(api.endCashierSession).toHaveBeenCalledWith('cashier-session-1', {
+      actualCash: '4900',
+    });
+    expect(
+      queryClient.getQueryData(['cashier-sessions', 'current', 'register-1']),
+    ).toEqual(endedCashierSessionResponse);
+    expect(
+      queryClient.getQueryData(['register-shifts', 'current', 'register-1']),
+    ).toEqual(registerShiftResponse);
+    expect(router.state.location.pathname).toBe('/checkout');
+
+    await user.click(
+      screen.getByRole('button', { name: 'К списку кассовых смен' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Выберите кассовую смену' }),
+    ).toBeInTheDocument();
+    expect(
+      queryClient.getQueryData(['cashier-sessions', 'current', 'register-1']),
+    ).toBeNull();
+  });
+
+  it('keeps actual cash and shows blocking sales inline', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession.mockResolvedValue({
+      ...cashierSessionResponse,
+      locked_at: '2026-08-24T09:00:00.000Z',
+      status: 'LOCKED',
+    });
+    api.endCashierSession.mockRejectedValue(
+      responseError('CASHIER_SESSION_HAS_OPEN_SALES', {
+        sales: [
+          {
+            created_at: '2026-08-24T09:30:00.000Z',
+            held_at: null,
+            id: 'sale-1',
+            items_count: 2,
+            status: 'DRAFT',
+            total: '1500.00',
+          },
+        ],
+      }),
+    );
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Завершить смену кассира' }),
+    );
+    const input = screen.getByLabelText('Фактические наличные кассира, ₸');
+    await user.type(input, '4900');
+    await user.click(screen.getByRole('button', { name: /^Завершить смену$/ }));
+
+    expect(
+      await screen.findByText('Сначала завершите открытые продажи'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/sale-1/)).toBeInTheDocument();
+    expect(screen.getByText(/DRAFT/)).toBeInTheDocument();
+    expect(screen.getByText(/2 позиции/)).toBeInTheDocument();
+    expect(input).toHaveValue('4900');
+  });
+
+  it('keeps the active session when backend blocks logout', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.logout.mockRejectedValue(
+      responseError('CASHIER_SESSION_MUST_BE_ENDED'),
+    );
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Выйти' }));
+
+    expect(
+      await screen.findAllByText('Сначала завершите текущую кассовую сессию.'),
+    ).not.toHaveLength(0);
+    expect(router.state.location.pathname).toBe('/checkout');
+    expect(useAuthStore.getState().accessToken).toBe('restored-token');
+  });
+
+  it('keeps the current context when backend blocks organization switching', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.selectContext.mockRejectedValue(
+      responseError('CASHIER_SESSION_MUST_BE_ENDED'),
+    );
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Выбрать смену кассы Основная касса',
+      }),
+    );
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    await router.navigate({ to: '/select-organization' });
+    await user.click(await screen.findByRole('button', { name: /Maria/ }));
+
+    expect(
+      await screen.findAllByText('Сначала завершите текущую кассовую сессию.'),
+    ).not.toHaveLength(0);
+    expect(router.state.location.pathname).toBe('/select-organization');
+    expect(useAuthStore.getState().accessToken).toBe('restored-token');
   });
 
   it('shows an empty state when the store has no active registers', async () => {

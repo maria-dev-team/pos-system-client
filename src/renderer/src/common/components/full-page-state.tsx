@@ -6,6 +6,7 @@ type FullPageStateProps = {
   description?: string;
   isLoading?: boolean;
   onRetry?: () => void;
+  retryLabel?: string;
   title: string;
 };
 
@@ -13,6 +14,7 @@ export function FullPageState({
   description,
   isLoading = false,
   onRetry,
+  retryLabel = 'Повторить',
   title,
 }: FullPageStateProps) {
   return (
@@ -30,7 +32,7 @@ export function FullPageState({
         ) : null}
         {onRetry ? (
           <Button className="mt-6" onClick={onRetry} type="button">
-            Повторить
+            {retryLabel}
           </Button>
         ) : null}
       </section>

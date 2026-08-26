@@ -1,11 +1,6 @@
 import { z } from 'zod';
 
-const moneyPattern = /^\d+(?:\.\d{1,2})?$/;
-const cashAmountSchema = z
-  .string()
-  .trim()
-  .min(1, 'Введите сумму наличных')
-  .regex(moneyPattern, 'Введите сумму с точностью не более двух знаков');
+import { cashAmountSchema } from '@renderer/common/schemas/cash-amount.schema';
 
 export const registerShiftOpeningSchema = z.object({
   openingCash: cashAmountSchema,
