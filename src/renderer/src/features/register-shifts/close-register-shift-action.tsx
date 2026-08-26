@@ -20,24 +20,13 @@ import {
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { queryKeys } from '@renderer/common/constants';
+import { formatCash } from '@renderer/common/helpers/format-cash';
 import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
 
 import { registerShiftClosingSchema } from './register-shift.schema';
 
-const integerFormatter = new Intl.NumberFormat('ru-RU', {
-  maximumFractionDigits: 0,
-});
-
-const formatCash = (value: string | null) => {
-  if (value === null) return '—';
-  const [integer = '0', fraction = ''] = value.split('.');
-  return `${integerFormatter
-    .format(BigInt(integer))
-    .replaceAll('\u00a0', ' ')},${fraction.padEnd(2, '0')} ₸`;
-};
-
 type CloseRegisterShiftActionProps = {
-  onClosed: (registerShift: RegisterShiftResponse) => void;
+  onClosed?: (registerShift: RegisterShiftResponse) => void;
   registerShiftId: string;
 };
 
@@ -59,10 +48,6 @@ export function CloseRegisterShiftAction({
     onError: (error) =>
       httpErrorHandler(error, 'Не удалось закрыть кассовую смену.'),
     onSuccess: (registerShift) => {
-      queryClient.setQueryData(
-        queryKeys.registerShifts.current(registerShift.register_id),
-        null,
-      );
       setClosedShift(registerShift);
     },
   });
@@ -105,16 +90,20 @@ export function CloseRegisterShiftAction({
   const finish = () => {
     if (!closedShift) return;
     const result = closedShift;
+    queryClient.setQueryData(
+      queryKeys.registerShifts.current(result.register_id),
+      null,
+    );
     setIsOpen(false);
     reset();
-    onClosed(result);
+    onClosed?.(result);
   };
 
   return (
     <>
       <Button
         aria-label="Закрыть кассовую смену"
-        className="min-h-12 bg-destructive px-4 text-white hover:bg-destructive/90"
+        className="min-h-12 w-full bg-destructive px-4 text-white hover:bg-destructive/90"
         onClick={() => setIsOpen(true)}
         type="button"
       >
