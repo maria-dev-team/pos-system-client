@@ -152,7 +152,7 @@ function DispositionButtons({
   return (
     <div>
       <p className="mb-2 text-sm font-semibold">Состояние товара</p>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/40 p-1">
         {dispositionOptions.map((option) => (
           <Button
             aria-label={`${option.label} ${name}`}
