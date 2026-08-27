@@ -5,6 +5,7 @@ import { type FormEvent, useState } from 'react';
 
 import { type LoginResponse, login } from '@renderer/common/api';
 import { Button } from '@renderer/common/components/ui/button';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import {
@@ -103,7 +104,7 @@ export function LoginView() {
       title="Вход в Maria POS"
     >
       <form className="space-y-5" noValidate onSubmit={handleSubmit}>
-        <div className="space-y-2">
+        <FormField>
           <Label htmlFor="login">Email или телефон</Label>
           <Input
             aria-describedby={errors.login ? 'login-message' : undefined}
@@ -126,9 +127,9 @@ export function LoginView() {
               {errors.login}
             </p>
           ) : null}
-        </div>
+        </FormField>
 
-        <div className="space-y-2">
+        <FormField>
           <Label htmlFor="password">Пароль</Label>
           <div className="relative">
             <Input
@@ -137,7 +138,7 @@ export function LoginView() {
               }
               aria-invalid={Boolean(errors.password)}
               autoComplete="current-password"
-              className="pr-12"
+              className="pr-14"
               id="password"
               name="password"
               onBlur={() => touchField('password')}
@@ -175,10 +176,10 @@ export function LoginView() {
               {errors.password}
             </p>
           ) : null}
-        </div>
+        </FormField>
 
         <Button
-          className="mt-2 h-11 w-full rounded-lg font-semibold"
+          className="mt-2 w-full rounded-lg font-semibold"
           disabled={mutation.isPending}
         >
           {mutation.isPending ? (

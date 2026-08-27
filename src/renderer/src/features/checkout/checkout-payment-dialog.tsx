@@ -1,4 +1,4 @@
-import { LoaderCircle } from 'lucide-react';
+import { Banknote, CreditCard, LoaderCircle, Split } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 
 import type { SalePaymentPayload, SaleResponse } from '@renderer/common/api';
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
@@ -35,11 +36,11 @@ type CheckoutPaymentDialogProps = {
   serverErrorMessage?: string;
 };
 
-const modes: { label: string; value: PaymentMode }[] = [
-  { label: 'Наличные', value: 'CASH' },
-  { label: 'Безналичные', value: 'CASHLESS' },
-  { label: 'Смешанная', value: 'MIXED' },
-];
+const modes = [
+  { icon: Banknote, label: 'Наличные', value: 'CASH' },
+  { icon: CreditCard, label: 'Безналичные', value: 'CASHLESS' },
+  { icon: Split, label: 'Смешанная', value: 'MIXED' },
+] as const;
 
 function PaymentForm({
   localPreviewTotal,
@@ -139,9 +140,14 @@ function PaymentForm({
       </DialogHeader>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div aria-label="Сумма на сервере" className="rounded-xl bg-muted p-4">
-          <p className="text-sm text-muted-foreground">К оплате</p>
-          <p className="mt-1 text-xl font-bold tabular-nums">
+        <div
+          aria-label="Сумма на сервере"
+          className="rounded-2xl border border-primary/15 bg-primary/5 p-5"
+        >
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            К оплате
+          </p>
+          <p className="mt-2 text-3xl font-extrabold tracking-[-0.04em] tabular-nums text-primary">
             {formatCash(sale.total)}
           </p>
         </div>
@@ -161,26 +167,34 @@ function PaymentForm({
       <form className="space-y-5" onSubmit={submit}>
         <div
           aria-label="Способ оплаты"
-          className="grid grid-cols-3 gap-2"
+          className="grid grid-cols-3 gap-3"
           role="group"
         >
-          {modes.map((option) => (
-            <Button
-              aria-pressed={mode === option.value}
-              className="min-h-12 px-2"
-              disabled={pending}
-              key={option.value}
-              onClick={() => changeMode(option.value)}
-              type="button"
-              variant={mode === option.value ? 'default' : 'ghost'}
-            >
-              {option.label}
-            </Button>
-          ))}
+          {modes.map((option) => {
+            const Icon = option.icon;
+            return (
+              <Button
+                aria-pressed={mode === option.value}
+                className={
+                  mode === option.value
+                    ? 'min-h-14 px-2'
+                    : 'min-h-14 border-border bg-background px-2'
+                }
+                disabled={pending}
+                key={option.value}
+                onClick={() => changeMode(option.value)}
+                type="button"
+                variant={mode === option.value ? 'default' : 'ghost'}
+              >
+                <Icon aria-hidden="true" className="size-5" />
+                {option.label}
+              </Button>
+            );
+          })}
         </div>
 
         {mode === 'CASH' ? (
-          <div className="space-y-2">
+          <FormField>
             <Label htmlFor="checkout-cash-received">
               Получено наличными, ₸
             </Label>
@@ -195,12 +209,21 @@ function PaymentForm({
               placeholder="0.00"
               value={cashReceived}
             />
-          </div>
+            <Button
+              className="min-h-11 border-border bg-background"
+              disabled={pending}
+              onClick={() => edit(setCashReceived, sale.total)}
+              type="button"
+              variant="ghost"
+            >
+              Без сдачи · {formatCash(sale.total)}
+            </Button>
+          </FormField>
         ) : null}
 
         {mode === 'MIXED' ? (
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
+            <FormField>
               <Label htmlFor="checkout-mixed-cash">Наличная часть, ₸</Label>
               <Input
                 aria-invalid={Boolean(validationError)}
@@ -214,8 +237,8 @@ function PaymentForm({
                 placeholder="0.00"
                 value={cashAmount}
               />
-            </div>
-            <div className="space-y-2">
+            </FormField>
+            <FormField>
               <Label htmlFor="checkout-mixed-received">
                 Получено наличными, ₸
               </Label>
@@ -230,7 +253,7 @@ function PaymentForm({
                 placeholder="0.00"
                 value={cashReceived}
               />
-            </div>
+            </FormField>
           </div>
         ) : null}
 
@@ -296,7 +319,11 @@ function PaymentForm({
           >
             Отмена
           </Button>
-          <Button className="min-h-12" disabled={pending} type="submit">
+          <Button
+            className="min-h-13 px-6 text-base shadow-md shadow-primary/20"
+            disabled={pending}
+            type="submit"
+          >
             {pending ? (
               <LoaderCircle aria-hidden="true" className="animate-spin" />
             ) : null}
