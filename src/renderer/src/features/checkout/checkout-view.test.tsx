@@ -283,6 +283,26 @@ afterEach(() => {
 });
 
 describe('local-first checkout', () => {
+  it('opens the search keyboard without an inner scroll container', async () => {
+    const user = userEvent.setup();
+    renderCheckout();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Показать виртуальную клавиатуру',
+      }),
+    );
+
+    const keyboard = screen.getByRole('group', {
+      name: 'Виртуальная клавиатура',
+    });
+    expect(keyboard.parentElement).toHaveClass('overflow-hidden');
+    expect(keyboard.parentElement).not.toHaveClass('overflow-auto');
+    expect(keyboard.firstElementChild).toHaveClass(
+      'maria-virtual-keyboard--compact',
+    );
+  });
+
   it('GETs nullable current sale and restores this cashier cart without POST', async () => {
     useCheckoutCartStore
       .getState()
@@ -505,18 +525,18 @@ describe('local-first checkout', () => {
     renderCheckout();
     const input = await screen.findByLabelText('Сканируйте или найдите товар');
     expect(
-      screen.getByRole('button', { name: 'Завершить смену кассира' }),
+      screen.getByRole('button', { name: 'Завершить работу на кассе' }),
     ).toBeInTheDocument();
 
     await user.type(input, '001234{Enter}');
 
     expect(
-      screen.queryByRole('button', { name: 'Завершить смену кассира' }),
+      screen.queryByRole('button', { name: 'Завершить работу на кассе' }),
     ).not.toBeInTheDocument();
     scan.resolve(productSearchFixture([productFixture()]));
     await screen.findByText('Молоко');
     expect(
-      screen.queryByRole('button', { name: 'Завершить смену кассира' }),
+      screen.queryByRole('button', { name: 'Завершить работу на кассе' }),
     ).not.toBeInTheDocument();
   });
 
@@ -870,7 +890,7 @@ describe('server DRAFT and session handoff', () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Завершить смену кассира' }),
+      screen.queryByRole('button', { name: 'Завершить работу на кассе' }),
     ).not.toBeInTheDocument();
     expect(getCurrentSale).not.toHaveBeenCalled();
     expect(searchProducts).not.toHaveBeenCalled();
@@ -897,15 +917,14 @@ describe('server DRAFT and session handoff', () => {
     renderCheckout({ onSessionEnded });
 
     await user.click(
-      await screen.findByRole('button', { name: 'Завершить смену кассира' }),
+      await screen.findByRole('button', { name: 'Завершить работу на кассе' }),
     );
-    await user.type(
-      screen.getByLabelText('Фактические наличные кассира, ₸'),
-      '5000',
-    );
-    await user.click(screen.getByRole('button', { name: /^Завершить смену$/ }));
+    await user.type(screen.getByLabelText('Наличные у кассира, ₸'), '5000');
     await user.click(
-      await screen.findByRole('button', { name: 'К списку кассовых смен' }),
+      screen.getByRole('button', { name: /^Завершить работу$/ }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'К выбору кассы' }),
     );
 
     expect(
@@ -1032,7 +1051,7 @@ describe('checkout sale transitions', () => {
       '1 250,00 ₸',
     );
     expect(
-      screen.getByRole('button', { name: 'Завершить смену кассира' }),
+      screen.getByRole('button', { name: 'Завершить работу на кассе' }),
     ).toBeInTheDocument();
     expect(
       useCheckoutCartStore.getState().sessions[cashierSession.id],
@@ -1201,6 +1220,68 @@ describe('checkout sale transitions', () => {
     expect(within(heldDialog).getByText('1 300,00 ₸')).toBeInTheDocument();
   });
 
+  it('loads and reveals held sale positions only when its card is expanded', async () => {
+    const user = userEvent.setup();
+    const held = heldFixture();
+    vi.mocked(getHeldSales).mockResolvedValue([held]);
+    vi.mocked(getSale).mockResolvedValue(
+      saleFixture({
+        held_at: held.held_at,
+        id: held.id,
+        items: [
+          itemFixture(),
+          itemFixture({
+            id: 'item-2',
+            line_number: 2,
+            line_total: '650.00',
+            name: 'Хлеб',
+            product_id: 'product-2',
+            quantity: '2',
+            sku: 'BREAD-1',
+            unit_price: '325.00',
+          }),
+        ],
+        status: 'HELD',
+        total: held.total,
+        version: held.version,
+      }),
+    );
+    renderCheckout();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Отложенные чеки' }),
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Отложенные чеки',
+    });
+    expect(getSale).not.toHaveBeenCalled();
+
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: /Показать товары чека/,
+      }),
+    );
+
+    const positions = await within(dialog).findByRole('region', {
+      name: /Товары в чеке/,
+    });
+    expect(getSale).toHaveBeenCalledOnce();
+    expect(getSale).toHaveBeenCalledWith(held.id);
+    expect(within(positions).getByText('Молоко')).toBeInTheDocument();
+    expect(within(positions).getByText('1 шт. × 650,00 ₸')).toBeInTheDocument();
+    expect(within(positions).getByText('Хлеб')).toBeInTheDocument();
+    expect(within(positions).getByText('2 шт. × 325,00 ₸')).toBeInTheDocument();
+
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: /Скрыть товары чека/,
+      }),
+    );
+    expect(
+      within(dialog).queryByRole('region', { name: /Товары в чеке/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it('holds an existing DRAFT without creating another sale', async () => {
     const user = userEvent.setup();
     const draft = saleFixture({
@@ -1251,7 +1332,7 @@ describe('checkout sale transitions', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Повторить' }));
 
     expect(
-      await within(dialog).findByText('Отложенных чеков нет'),
+      await within(dialog).findByText('Нет отложенных чеков'),
     ).toBeInTheDocument();
   });
 
@@ -1285,9 +1366,7 @@ describe('checkout sale transitions', () => {
         await screen.findByRole('button', { name: 'Возобновить чек' }),
       ).toBeDisabled();
       expect(
-        screen.getByText(
-          'Для возобновления нужен доступ и пустой чек без незавершённой операции.',
-        ),
+        screen.getByText('Сначала завершите или очистите текущий чек'),
       ).toBeInTheDocument();
       expect(resumeSale).not.toHaveBeenCalled();
     },

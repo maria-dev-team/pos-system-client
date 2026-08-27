@@ -1,13 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
+  CheckCircle2,
+  CreditCard,
   Keyboard,
   LoaderCircle,
   Minus,
+  PackageSearch,
   Pencil,
   Plus,
+  ReceiptText,
   RotateCcw,
   ScanLine,
+  ShoppingBasket,
   Trash2,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
@@ -34,6 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { VirtualKeyboard } from '@renderer/common/components/virtual-keyboard';
@@ -150,7 +156,7 @@ function LockedCheckout({
         <Ban aria-hidden="true" className="mx-auto size-10 text-warning" />
         <h1 className="mt-4 text-2xl font-bold">Смена кассира заблокирована</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Продажи недоступны. Повторите проверку или завершите смену кассира.
+          Продажи недоступны. Повторите проверку или завершите работу на кассе.
         </p>
         <div className={`mt-6 grid gap-3 ${canEnd ? 'sm:grid-cols-2' : ''}`}>
           <Button
@@ -547,68 +553,79 @@ function ActiveCheckout({
   if (visibleCompletedSale) {
     return (
       <main className="grid min-h-full place-items-center bg-workspace p-4">
-        <section className="w-full max-w-2xl rounded-2xl border border-border bg-card p-6 shadow-[var(--shadow-surface)]">
-          <h1 className="text-2xl font-bold">Оплата завершена</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Чек успешно оплачен по данным сервера.
-          </p>
-          <div
-            aria-label="Итог завершённого чека"
-            className="mt-5 rounded-xl bg-muted p-4"
-          >
-            <p className="text-sm text-muted-foreground">Итого</p>
-            <p className="mt-1 text-3xl font-extrabold tabular-nums text-primary">
-              {formatCash(visibleCompletedSale.total)}
+        <section className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-surface)]">
+          <div className="border-b border-border bg-success-muted/60 px-6 py-5">
+            <span className="grid size-12 place-items-center rounded-xl bg-success text-white shadow-sm">
+              <CheckCircle2 aria-hidden="true" className="size-6" />
+            </span>
+            <h1 className="mt-4 text-2xl font-bold tracking-[-0.03em]">
+              Оплата завершена
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Чек успешно оплачен и сохранён на сервере
             </p>
           </div>
-          <div className="mt-4 space-y-3">
-            {visibleCompletedSale.payments.map((payment) => (
-              <div
-                className="rounded-xl border border-border bg-background p-4"
-                key={payment.id}
-              >
-                <div className="flex justify-between gap-3">
-                  <span className="font-semibold">
-                    {payment.method === 'CASH' ? 'Наличные' : 'Безналичные'}
-                  </span>
-                  <span className="font-bold tabular-nums">
-                    {formatCash(payment.amount)}
-                  </span>
-                </div>
-                {payment.received ? (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Получено: {formatCash(payment.received)}
-                  </p>
-                ) : null}
-                {payment.change ? (
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Сдача: {formatCash(payment.change)}
-                  </p>
-                ) : null}
-              </div>
-            ))}
-          </div>
-          <div
-            className={`mt-6 grid gap-3 ${pendingOperation ? '' : 'sm:grid-cols-2'}`}
-          >
-            <Button
-              className="min-h-12"
-              onClick={() => {
-                setDismissedCompletedSaleId(visibleCompletedSale.id);
-                setCompletedSale(null);
-                refocus();
-              }}
-              type="button"
+          <div className="p-6">
+            <div
+              aria-label="Итог завершённого чека"
+              className="rounded-xl border border-primary/15 bg-primary/5 p-5"
             >
-              Новый чек
-            </Button>
-            {pendingOperation === undefined ? (
-              <SessionEndAction
-                cashierSession={cashierSession}
-                onSessionEndedLocally={onSessionEndedLocally}
-                onSessionEnded={onSessionEnded}
-              />
-            ) : null}
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Итого оплачено
+              </p>
+              <p className="mt-2 text-4xl font-extrabold tracking-[-0.04em] tabular-nums text-primary">
+                {formatCash(visibleCompletedSale.total)}
+              </p>
+            </div>
+            <div className="mt-4 space-y-3">
+              {visibleCompletedSale.payments.map((payment) => (
+                <div
+                  className="rounded-xl border border-border bg-background p-4"
+                  key={payment.id}
+                >
+                  <div className="flex justify-between gap-3">
+                    <span className="font-semibold">
+                      {payment.method === 'CASH' ? 'Наличные' : 'Безналичные'}
+                    </span>
+                    <span className="font-bold tabular-nums">
+                      {formatCash(payment.amount)}
+                    </span>
+                  </div>
+                  {payment.received ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Получено: {formatCash(payment.received)}
+                    </p>
+                  ) : null}
+                  {payment.change ? (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Сдача: {formatCash(payment.change)}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div
+              className={`mt-6 grid gap-3 ${pendingOperation ? '' : 'sm:grid-cols-2'}`}
+            >
+              <Button
+                className="min-h-12"
+                onClick={() => {
+                  setDismissedCompletedSaleId(visibleCompletedSale.id);
+                  setCompletedSale(null);
+                  refocus();
+                }}
+                type="button"
+              >
+                Новый чек
+              </Button>
+              {pendingOperation === undefined ? (
+                <SessionEndAction
+                  cashierSession={cashierSession}
+                  onSessionEndedLocally={onSessionEndedLocally}
+                  onSessionEnded={onSessionEnded}
+                />
+              ) : null}
+            </div>
           </div>
         </section>
       </main>
@@ -779,8 +796,8 @@ function ActiveCheckout({
   };
 
   return (
-    <main className="flex h-full min-h-0 flex-col overflow-hidden bg-workspace p-3 sm:p-4">
-      <section className="shrink-0 rounded-2xl border border-border bg-card p-3 shadow-[var(--shadow-surface)]">
+    <main className="flex h-full min-h-0 flex-col overflow-hidden bg-workspace p-3 sm:p-4 lg:p-5">
+      <section className="shrink-0 rounded-2xl border border-border/80 bg-card p-3 shadow-[var(--shadow-surface)] sm:p-4">
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
             <ScanLine
@@ -790,7 +807,7 @@ function ActiveCheckout({
             <Input
               aria-describedby={scanIssue ? 'scan-issue' : undefined}
               autoFocus
-              className="h-14 pl-13 text-lg md:text-lg"
+              className="h-15 border-border bg-muted/35 pl-13 pr-4 text-lg shadow-none md:text-lg"
               disabled={!canSearch || scannerBlocked}
               id="checkout-search"
               maxLength={255}
@@ -801,7 +818,7 @@ function ActiveCheckout({
                   submitScan();
                 }
               }}
-              placeholder="Штрихкод, название или SKU"
+              placeholder="Сканируйте штрихкод или найдите товар"
               ref={inputRef}
               value={search}
             />
@@ -811,7 +828,7 @@ function ActiveCheckout({
           </div>
           <Button
             aria-label="Показать виртуальную клавиатуру"
-            className="min-h-12 min-w-12"
+            className="min-h-15 min-w-15 bg-muted/50"
             disabled={!canSearch || scannerBlocked}
             onClick={() => setKeyboardOpen((open) => !open)}
             type="button"
@@ -843,8 +860,9 @@ function ActiveCheckout({
         ) : null}
 
         {keyboardOpen ? (
-          <div className="mt-3 max-h-64 overflow-auto rounded-xl bg-muted p-3">
+          <div className="mt-3 overflow-hidden rounded-xl bg-muted p-3">
             <VirtualKeyboard
+              compact
               maxLength={255}
               onClose={() => {
                 setKeyboardOpen(false);
@@ -856,7 +874,7 @@ function ActiveCheckout({
           </div>
         ) : null}
 
-        <div className="mt-2 max-h-48 overflow-auto" aria-live="polite">
+        <div className="mt-2 max-h-52 overflow-auto" aria-live="polite">
           {!canSearch ? (
             <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
               Нет права искать и сканировать товары.
@@ -894,7 +912,7 @@ function ActiveCheckout({
                   return (
                     <button
                       aria-label={`Добавить товар ${product.name}`}
-                      className="min-h-16 rounded-xl border border-border bg-background p-3 text-left disabled:cursor-not-allowed disabled:opacity-55"
+                      className="group min-h-17 rounded-xl border border-border bg-background p-3 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-55"
                       disabled={Boolean(reason) || isBusy}
                       key={product.id}
                       onClick={() => selectProduct(product)}
@@ -902,7 +920,7 @@ function ActiveCheckout({
                     >
                       <span className="flex items-start justify-between gap-2">
                         <span className="font-semibold">{product.name}</span>
-                        <span className="font-bold text-primary">
+                        <span className="shrink-0 font-bold tabular-nums text-primary">
                           {formatCash(product.retail_price)}
                         </span>
                       </span>
@@ -1008,26 +1026,49 @@ function ActiveCheckout({
         </p>
       ) : null}
 
-      <div className="mt-3 grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px] gap-3">
-        <section className="min-h-0 overflow-auto rounded-2xl border border-border bg-card shadow-[var(--shadow-surface)]">
-          <div className="sticky top-0 z-10 border-b border-border bg-card px-4 py-3">
-            <h1 className="text-xl font-bold">Оформление продажи</h1>
+      <div className="mt-3 grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="min-h-0 overflow-auto rounded-2xl border border-border/80 bg-card shadow-[var(--shadow-surface)]">
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border/70 bg-card/95 px-5 py-4 backdrop-blur">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                <ShoppingBasket aria-hidden="true" className="size-5" />
+              </span>
+              <div>
+                <h1 className="text-lg font-bold tracking-[-0.02em]">
+                  Оформление продажи
+                </h1>
+                <p className="text-xs text-muted-foreground">
+                  Товары текущего чека
+                </p>
+              </div>
+            </div>
+            <span className="rounded-full bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">
+              {rows.length} {rows.length === 1 ? 'позиция' : 'позиций'}
+            </span>
           </div>
           {rows.length === 0 ? (
-            <div className="grid min-h-52 place-items-center p-6 text-center text-muted-foreground">
+            <div className="grid min-h-72 place-items-center p-8 text-center text-muted-foreground">
               <div>
-                <ScanLine aria-hidden="true" className="mx-auto size-9" />
-                <p className="mt-3 font-semibold">Корзина пуста</p>
+                <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-muted">
+                  <PackageSearch aria-hidden="true" className="size-8" />
+                </span>
+                <p className="mt-4 text-base font-semibold text-foreground">
+                  Корзина пуста
+                </p>
+                <p className="mx-auto mt-1 max-w-sm text-sm">
+                  Отсканируйте штрихкод или найдите товар по названию — он
+                  появится здесь
+                </p>
               </div>
             </div>
           ) : (
             <table className="w-full border-collapse text-sm">
-              <thead className="sticky top-[53px] bg-muted text-left text-muted-foreground">
+              <thead className="sticky top-[73px] z-[5] bg-muted/95 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground backdrop-blur">
                 <tr>
-                  <th className="px-4 py-3">Товар</th>
+                  <th className="px-5 py-3">Товар</th>
                   <th className="px-3 py-3">Количество</th>
                   <th className="px-3 py-3 text-right">Цена</th>
-                  <th className="px-4 py-3 text-right">Сумма</th>
+                  <th className="px-5 py-3 text-right">Сумма</th>
                 </tr>
               </thead>
               <tbody>
@@ -1036,27 +1077,30 @@ function ActiveCheckout({
                   const isOverridden = rowIsOverridden(row);
                   return (
                     <tr
-                      className="border-b border-border align-top"
+                      className="border-b border-border/70 align-top transition-colors last:border-b-0 hover:bg-primary/[0.018]"
                       key={
                         row.mode === 'local' ? row.item.productId : row.item.id
                       }
                     >
-                      <td className="px-4 py-3">
-                        <p className="font-semibold">{name}</p>
+                      <td className="px-5 py-4">
+                        <p className="font-semibold leading-snug">{name}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {row.item.barcode}
+                        </p>
                         {isOverridden ? (
                           <span className="mt-2 inline-flex rounded-full bg-warning-muted px-2 py-1 text-xs font-semibold text-warning">
                             Цена изменена
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-3 py-3">
-                        <p className="mb-2 font-semibold tabular-nums">
+                      <td className="px-3 py-4">
+                        <p className="mb-2 font-bold tabular-nums">
                           {formatQuantity(row.item.quantity, rowUnit(row))}
                         </p>
                         <div className="flex flex-wrap gap-2">
                           <Button
                             aria-label={`Уменьшить ${name}`}
-                            className="min-h-12 min-w-12"
+                            className="min-h-10 min-w-10 border-border bg-background"
                             disabled={isBusy}
                             onClick={() => adjustQuantity(row, -1)}
                             size="icon"
@@ -1067,7 +1111,7 @@ function ActiveCheckout({
                           </Button>
                           <Button
                             aria-label={`Увеличить ${name}`}
-                            className="min-h-12 min-w-12"
+                            className="min-h-10 min-w-10 border-border bg-background"
                             disabled={isBusy}
                             onClick={() => adjustQuantity(row, 1)}
                             size="icon"
@@ -1078,7 +1122,7 @@ function ActiveCheckout({
                           </Button>
                           <Button
                             aria-label={`Изменить количество ${name}`}
-                            className="min-h-12 min-w-12"
+                            className="min-h-10 min-w-10 border-border bg-background"
                             disabled={isBusy}
                             onClick={() => openQuantity(row)}
                             size="icon"
@@ -1089,7 +1133,7 @@ function ActiveCheckout({
                           </Button>
                           <Button
                             aria-label={`Удалить ${name}`}
-                            className="min-h-12 min-w-12"
+                            className="min-h-10 min-w-10 border-border bg-background text-destructive hover:text-destructive"
                             disabled={isBusy}
                             onClick={() => openRemove(row)}
                             size="icon"
@@ -1100,7 +1144,7 @@ function ActiveCheckout({
                           </Button>
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-right">
+                      <td className="px-3 py-4 text-right">
                         <p className="font-semibold tabular-nums">
                           {formatCash(rowUnitPrice(row))}
                         </p>
@@ -1108,7 +1152,7 @@ function ActiveCheckout({
                           <div className="mt-2 flex justify-end gap-2">
                             <Button
                               aria-label={`Изменить цену ${name}`}
-                              className="min-h-12 min-w-12"
+                              className="min-h-10 min-w-10 border-border bg-background"
                               disabled={isBusy}
                               onClick={() => openPrice(row)}
                               size="icon"
@@ -1120,7 +1164,7 @@ function ActiveCheckout({
                             {isOverridden ? (
                               <Button
                                 aria-label={`Сбросить цену ${name}`}
-                                className="min-h-12 min-w-12"
+                                className="min-h-10 min-w-10 border-border bg-background"
                                 disabled={isBusy}
                                 onClick={() => resetPrice(row)}
                                 size="icon"
@@ -1133,7 +1177,7 @@ function ActiveCheckout({
                           </div>
                         ) : null}
                       </td>
-                      <td className="px-4 py-3 text-right font-bold tabular-nums">
+                      <td className="px-5 py-4 text-right text-base font-bold tabular-nums">
                         {formatCash(rowLineTotal(row))}
                       </td>
                     </tr>
@@ -1144,27 +1188,55 @@ function ActiveCheckout({
           )}
         </section>
 
-        <aside className="flex min-h-0 flex-col rounded-2xl border border-border bg-card p-4 shadow-[var(--shadow-surface)]">
-          <p className="text-sm font-semibold text-muted-foreground">
-            {sale ? 'Итого' : 'Предварительный итог'}
-          </p>
-          <p className="mt-2 text-3xl font-extrabold tabular-nums text-primary">
-            {formatCash(sale ? sale.total : getCartTotal(localItems))}
-          </p>
-          <div className="mt-auto space-y-3 pt-4">
+        <aside className="flex min-h-0 flex-col overflow-auto rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)]">
+          <div className="flex items-center gap-3">
+            <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+              <ReceiptText aria-hidden="true" className="size-5" />
+            </span>
+            <div>
+              <p className="font-bold">Текущий чек</p>
+              <p className="text-xs text-muted-foreground">
+                {rows.length === 0
+                  ? 'Добавьте первый товар'
+                  : `${rows.length} ${rows.length === 1 ? 'позиция' : 'позиций'}`}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-2xl border border-primary/15 bg-primary/[0.045] p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              {sale ? 'Итого' : 'Предварительный итог'}
+            </p>
+            <p className="mt-2 text-[2rem] font-extrabold leading-none tracking-[-0.045em] tabular-nums text-primary xl:text-4xl">
+              {formatCash(sale ? sale.total : getCartTotal(localItems))}
+            </p>
+          </div>
+
+          <div className="space-y-2.5 pt-4">
             {!pendingOperation && rows.length > 0 && canPay ? (
               <Button
-                className="min-h-12 w-full"
+                className="min-h-15 w-full text-base shadow-md shadow-primary/20"
                 disabled={isBusy}
                 onClick={() => void openPayment()}
                 type="button"
               >
+                <CreditCard aria-hidden="true" className="size-5" />
                 Оплатить
               </Button>
             ) : null}
+            <Button
+              className="min-h-12 w-full border-border bg-background"
+              disabled={isBusy}
+              onClick={() => setHeldOpen(true)}
+              type="button"
+              variant="ghost"
+            >
+              <ReceiptText aria-hidden="true" />
+              Отложенные чеки
+            </Button>
             {!pendingOperation && rows.length > 0 && canHold ? (
               <Button
-                className="min-h-12 w-full"
+                className="min-h-12 w-full border-border bg-background"
                 disabled={isBusy}
                 onClick={() => void holdCurrent()}
                 type="button"
@@ -1173,21 +1245,16 @@ function ActiveCheckout({
                 Отложить чек
               </Button>
             ) : null}
-            <Button
-              className="min-h-12 w-full"
-              disabled={isBusy}
-              onClick={() => setHeldOpen(true)}
-              type="button"
-              variant="ghost"
-            >
-              Отложенные чеки
-            </Button>
+            {(sale && canCancel) || (!sale && localItems.length > 0) ? (
+              <div className="my-3 border-t border-border/70" />
+            ) : null}
             {sale && canCancel ? (
               <Button
-                className="min-h-12 w-full bg-destructive text-white hover:bg-destructive/90"
+                className="min-h-12 w-full text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
                 disabled={isBusy}
                 onClick={openCancel}
                 type="button"
+                variant="ghost"
               >
                 <Ban aria-hidden="true" />
                 Отменить чек
@@ -1195,21 +1262,24 @@ function ActiveCheckout({
             ) : null}
             {!sale && localItems.length > 0 ? (
               <Button
-                className="min-h-12 w-full bg-destructive text-white hover:bg-destructive/90"
+                className="min-h-12 w-full text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
                 disabled={isBusy}
                 onClick={openCancel}
                 type="button"
+                variant="ghost"
               >
                 <Trash2 aria-hidden="true" />
                 Очистить корзину
               </Button>
             ) : null}
             {canEndSession ? (
-              <SessionEndAction
-                cashierSession={cashierSession}
-                onSessionEndedLocally={onSessionEndedLocally}
-                onSessionEnded={onSessionEnded}
-              />
+              <div className="border-t border-border/70 pt-3">
+                <SessionEndAction
+                  cashierSession={cashierSession}
+                  onSessionEndedLocally={onSessionEndedLocally}
+                  onSessionEnded={onSessionEnded}
+                />
+              </div>
             ) : null}
           </div>
         </aside>
@@ -1230,7 +1300,7 @@ function ActiveCheckout({
             <DialogDescription>{quantityItem?.item.name}</DialogDescription>
           </DialogHeader>
           <form className="space-y-5" onSubmit={submitQuantity}>
-            <div className="space-y-2">
+            <FormField>
               <Label htmlFor="sale-item-quantity">
                 Количество {quantityItem?.item.name},{' '}
                 {quantityItem ? unitLabels[rowUnit(quantityItem)] : ''}
@@ -1251,7 +1321,7 @@ function ActiveCheckout({
                   {quantityError}
                 </p>
               ) : null}
-            </div>
+            </FormField>
             <NumericKeypad
               disabled={command.isPending}
               onValueChange={(value) => {
@@ -1377,7 +1447,7 @@ function ActiveCheckout({
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-5" onSubmit={submitPrice}>
-            <div className="space-y-2">
+            <FormField>
               <Label htmlFor="override-unit-price">Новая цена, ₸</Label>
               <Input
                 autoFocus
@@ -1389,7 +1459,7 @@ function ActiveCheckout({
                 }}
                 value={unitPrice}
               />
-            </div>
+            </FormField>
             <NumericKeypad
               disabled={command.isPending}
               onValueChange={(value) => {
@@ -1398,7 +1468,7 @@ function ActiveCheckout({
               }}
               value={unitPrice}
             />
-            <div className="space-y-2">
+            <FormField>
               <Label htmlFor="override-reason">Причина изменения цены</Label>
               <Input
                 id="override-reason"
@@ -1409,7 +1479,7 @@ function ActiveCheckout({
                 }}
                 value={priceReason}
               />
-            </div>
+            </FormField>
             <VirtualKeyboard
               disabled={command.isPending}
               maxLength={500}
@@ -1470,7 +1540,7 @@ function ActiveCheckout({
           <form className="space-y-5" onSubmit={submitCancel}>
             {sale ? (
               <>
-                <div className="space-y-2">
+                <FormField>
                   <Label htmlFor="cancel-reason">Причина отмены</Label>
                   <Input
                     autoFocus
@@ -1482,7 +1552,7 @@ function ActiveCheckout({
                     }}
                     value={cancelReason}
                   />
-                </div>
+                </FormField>
                 <VirtualKeyboard
                   compact
                   disabled={command.isPending}

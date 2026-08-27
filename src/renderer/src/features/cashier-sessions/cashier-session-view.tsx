@@ -7,6 +7,7 @@ import { startCashierSession } from '@renderer/common/api';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { queryKeys } from '@renderer/common/constants';
@@ -39,8 +40,7 @@ export function CashierSessionView({
   const startMutation = useMutation({
     mutationFn: (cash: string) =>
       startCashierSession(registerShiftId, { openingCash: cash }),
-    onError: (error) =>
-      httpErrorHandler(error, 'Не удалось начать смену кассира.'),
+    onError: (error) => httpErrorHandler(error, 'Не удалось начать работу.'),
     onSuccess: async (cashierSession) => {
       queryClient.setQueryData(
         queryKeys.cashierSessions.current(registerId),
@@ -96,7 +96,7 @@ export function CashierSessionView({
   };
 
   if (context.isPending || currentSession.isPending) {
-    return <FullPageState isLoading title="Проверяем смену кассира" />;
+    return <FullPageState isLoading title="Проверяем доступ к кассе" />;
   }
   if (context.isError || currentSession.isError) {
     const error = context.error ?? currentSession.error;
@@ -104,12 +104,12 @@ export function CashierSessionView({
       <FullPageState
         description={getHttpErrorMessage(
           error,
-          'Не удалось проверить текущую смену кассира.',
+          'Не удалось проверить доступ к кассе.',
         )}
         onRetry={() => {
           void Promise.all([context.refetch(), currentSession.refetch()]);
         }}
-        title="Не удалось проверить смену кассира"
+        title="Не удалось проверить доступ к кассе"
       />
     );
   }
@@ -117,7 +117,7 @@ export function CashierSessionView({
     currentSession.data?.status === 'ACTIVE' ||
     currentSession.data?.status === 'LOCKED'
   ) {
-    return <FullPageState isLoading title="Восстанавливаем смену кассира" />;
+    return <FullPageState isLoading title="Восстанавливаем работу" />;
   }
 
   const canStart =
@@ -131,8 +131,8 @@ export function CashierSessionView({
         onRetry={() =>
           void navigate({ replace: true, to: '/select-register-shift' })
         }
-        retryLabel="К списку кассовых смен"
-        title="Нет права начинать смену кассира"
+        retryLabel="К выбору кассы"
+        title="Нет права работать на кассе"
       />
     );
   }
@@ -145,19 +145,16 @@ export function CashierSessionView({
             <LogIn aria-hidden="true" className="size-6" />
           </span>
           <h1 className="mt-4 text-2xl font-bold tracking-[-0.035em] text-card-foreground sm:text-3xl">
-            Начать смену кассира
+            Начало работы
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Пересчитайте личные наличные перед началом работы. Эта сумма не
-            копируется из кассовой смены.
+            Укажите личные наличные перед переходом к продажам
           </p>
         </header>
 
         <form className="space-y-5" onSubmit={submit}>
-          <div className="space-y-2.5">
-            <Label htmlFor="cashier-opening-cash">
-              Наличные кассира на начало, ₸
-            </Label>
+          <FormField>
+            <Label htmlFor="cashier-opening-cash">Наличные у кассира, ₸</Label>
             <div className="relative">
               <Banknote
                 aria-hidden="true"
@@ -186,7 +183,7 @@ export function CashierSessionView({
                 {validationError}
               </p>
             ) : null}
-          </div>
+          </FormField>
 
           <NumericKeypad
             disabled={startMutation.isPending}
@@ -194,7 +191,7 @@ export function CashierSessionView({
             value={openingCash}
           />
 
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             <Button
               className="min-h-13 text-base"
               disabled={startMutation.isPending}
@@ -217,7 +214,7 @@ export function CashierSessionView({
               {startMutation.isPending ? (
                 <LoaderCircle aria-hidden="true" className="animate-spin" />
               ) : null}
-              Начать работу
+              Перейти к продажам
             </Button>
           </div>
         </form>

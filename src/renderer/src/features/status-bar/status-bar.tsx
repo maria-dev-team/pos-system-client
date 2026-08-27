@@ -83,7 +83,7 @@ export function StatusBar() {
           <div className="flex min-w-0 items-center gap-3" key={item}>
             <span
               aria-hidden="true"
-              className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary font-extrabold text-primary-foreground"
+              className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary font-extrabold text-primary-foreground shadow-sm shadow-primary/20"
             >
               M
             </span>
@@ -190,7 +190,7 @@ export function StatusBar() {
   return (
     <header
       aria-label="Статус приложения"
-      className="flex h-14 shrink-0 items-center justify-between gap-6 border-b border-border bg-card px-4 shadow-sm"
+      className="flex h-16 shrink-0 items-center justify-between gap-6 border-b border-border/70 bg-card px-5"
     >
       <div className="flex min-w-0 items-center gap-5">
         {statusBarConfig.leftItems.map(renderItem)}

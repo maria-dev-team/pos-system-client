@@ -238,22 +238,22 @@ function CheckoutRouteComponent() {
   ]);
 
   if (cashierSession.isPending) {
-    return <FullPageState isLoading title="Проверяем смену кассира" />;
+    return <FullPageState isLoading title="Проверяем доступ к кассе" />;
   }
   if (cashierSession.isError) {
     return (
       <FullPageState
         description={getHttpErrorMessage(
           cashierSession.error,
-          'Не удалось проверить текущую смену кассира.',
+          'Не удалось проверить доступ к кассе.',
         )}
         onRetry={() => void cashierSession.refetch()}
-        title="Не удалось проверить смену кассира"
+        title="Не удалось проверить доступ к кассе"
       />
     );
   }
   if (!retainedSession || !isCheckoutSession) {
-    return <FullPageState isLoading title="Проверяем смену кассира" />;
+    return <FullPageState isLoading title="Проверяем доступ к кассе" />;
   }
 
   return (

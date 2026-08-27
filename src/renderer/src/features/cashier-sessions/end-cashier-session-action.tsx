@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
@@ -74,7 +75,7 @@ export function EndCashierSessionAction({
         setBlockingSales(getBlockingSales(error));
         return;
       }
-      httpErrorHandler(error, 'Не удалось завершить смену кассира.');
+      httpErrorHandler(error, 'Не удалось завершить работу.');
     },
     onSuccess: (session) => {
       onEndedLocally?.();
@@ -135,18 +136,19 @@ export function EndCashierSessionAction({
   return (
     <>
       <Button
-        aria-label="Завершить смену кассира"
-        className="min-h-12 bg-destructive px-4 text-white hover:bg-destructive/90"
+        aria-label="Завершить работу на кассе"
+        className="min-h-11 w-full border-border bg-background px-4 text-muted-foreground hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
         onClick={() => setIsOpen(true)}
         type="button"
+        variant="ghost"
       >
         <CircleStop aria-hidden="true" />
-        Завершить смену кассира
+        Завершить работу
       </Button>
 
       <Dialog onOpenChange={changeOpen} open={isOpen}>
         <DialogContent
-          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl"
+          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg"
           showCloseButton={!mutation.isPending && !endedSession}
         >
           {endedSession ? (
@@ -161,9 +163,10 @@ export function EndCashierSessionAction({
                 <span className="mb-2 grid size-12 place-items-center rounded-full bg-success-muted text-success">
                   <CircleCheck aria-hidden="true" className="size-7" />
                 </span>
-                <DialogTitle>Смена кассира завершена</DialogTitle>
+                <DialogTitle>Работа завершена</DialogTitle>
                 <DialogDescription>
-                  Кассовая смена остаётся открытой. Проверьте личную сверку.
+                  Касса остаётся открытой для следующего сотрудника. Проверьте
+                  итог.
                 </DialogDescription>
               </DialogHeader>
 
@@ -188,24 +191,24 @@ export function EndCashierSessionAction({
                 ))}
               </div>
 
-              <Button className="min-h-13 text-base" onClick={finish}>
-                К списку кассовых смен
+              <Button className="min-h-13 w-full text-base" onClick={finish}>
+                К выбору кассы
               </Button>
             </div>
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>Завершить смену кассира</DialogTitle>
+                <DialogTitle>Завершить работу на кассе</DialogTitle>
                 <DialogDescription>
-                  Пересчитайте личные наличные. Кассовая смена останется
-                  открытой.
+                  Пересчитайте свои наличные. Касса останется открытой для
+                  следующего сотрудника.
                 </DialogDescription>
               </DialogHeader>
 
               <form className="space-y-5" onSubmit={submit}>
-                <div className="space-y-2.5">
+                <FormField>
                   <Label htmlFor="cashier-actual-cash">
-                    Фактические наличные кассира, ₸
+                    Наличные у кассира, ₸
                   </Label>
                   <Input
                     aria-describedby={
@@ -229,7 +232,7 @@ export function EndCashierSessionAction({
                       {validationError}
                     </p>
                   ) : null}
-                </div>
+                </FormField>
 
                 <NumericKeypad
                   disabled={mutation.isPending}
@@ -290,7 +293,7 @@ export function EndCashierSessionAction({
                         className="animate-spin"
                       />
                     ) : null}
-                    Завершить смену
+                    Завершить работу
                   </Button>
                 </DialogFooter>
               </form>

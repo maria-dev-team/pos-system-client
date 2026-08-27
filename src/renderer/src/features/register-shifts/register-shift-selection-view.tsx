@@ -6,6 +6,7 @@ import {
 } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import {
+  ArrowRight,
   Banknote,
   CircleAlert,
   CircleCheck,
@@ -30,6 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
@@ -85,7 +87,7 @@ export function RegisterShiftSelectionView() {
           queryKey: queryKeys.registerShifts.current(registerId),
         });
       }
-      httpErrorHandler(error, 'Не удалось открыть кассовую смену.');
+      httpErrorHandler(error, 'Не удалось открыть кассу.');
     },
     onSuccess: async (registerShift) => {
       const accessToken = useAuthStore.getState().accessToken;
@@ -143,7 +145,7 @@ export function RegisterShiftSelectionView() {
   };
 
   if (context.isPending || registers.isPending) {
-    return <FullPageState isLoading title="Загружаем кассовые смены" />;
+    return <FullPageState isLoading title="Загружаем кассы" />;
   }
   if (context.isError) {
     return (
@@ -178,23 +180,23 @@ export function RegisterShiftSelectionView() {
     context.data.permissions.includes('register_shift.open');
 
   return (
-    <main className="min-h-full bg-workspace px-4 py-5 sm:px-6 sm:py-7">
-      <div className="mx-auto w-full max-w-[1440px]">
-        <header className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-surface)] sm:p-6">
+    <main className="min-h-full bg-workspace px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
+      <div className="mx-auto w-full max-w-6xl">
+        <header className="mb-8 flex flex-wrap items-end justify-between gap-5">
           <div className="min-w-0">
             <p className="flex items-center gap-2 text-sm font-semibold text-primary">
               <Store aria-hidden="true" className="size-4" />
               {store?.name ?? 'Текущий магазин'}
             </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-[-0.035em] text-card-foreground sm:text-3xl">
-              Выберите кассовую смену
+            <h1 className="mt-2 text-3xl font-bold tracking-[-0.04em] text-card-foreground sm:text-4xl">
+              Выберите кассу
             </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Выберите открытую смену или откройте новую на нужной кассе
+            <p className="mt-2 text-base text-muted-foreground">
+              Выберите рабочее место, чтобы начать продажи
             </p>
           </div>
           <Button
-            className="min-h-12 px-4"
+            className="min-h-11 border-border bg-background px-4"
             onClick={() =>
               void navigate({ replace: true, to: '/select-store' })
             }
@@ -222,7 +224,7 @@ export function RegisterShiftSelectionView() {
             </div>
           </section>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="space-y-4">
             {registers.data.map((register, index) => {
               const shiftQuery = shiftQueries[index];
               const registerShift = shiftQuery?.data;
@@ -238,75 +240,85 @@ export function RegisterShiftSelectionView() {
 
               return (
                 <article
-                  className="flex min-h-[240px] flex-col rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-surface)] sm:p-6"
+                  className="grid gap-6 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-surface)] transition-colors hover:border-primary/20 sm:p-6 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-center"
                   key={register.id}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-secondary text-secondary-foreground">
+                  <div className="flex min-w-0 items-start gap-4">
+                    <span className="grid size-14 shrink-0 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
                       <MonitorSmartphone
                         aria-hidden="true"
-                        className="size-6"
+                        className="size-7"
                       />
                     </span>
-                    {shiftQuery?.isPending ? (
-                      <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-sm font-semibold text-muted-foreground">
-                        <LoaderCircle
-                          aria-hidden="true"
-                          className="size-4 animate-spin"
-                        />
-                        Проверяем
-                      </span>
-                    ) : registerShift ? (
-                      <span className="inline-flex items-center gap-2 rounded-full bg-success-muted px-3 py-1.5 text-sm font-semibold text-success">
-                        <CircleCheck aria-hidden="true" className="size-4" />
-                        Смена открыта
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-2 rounded-full bg-warning-muted px-3 py-1.5 text-sm font-semibold text-warning">
-                        <Clock3 aria-hidden="true" className="size-4" />
-                        Смена не открыта
-                      </span>
-                    )}
-                  </div>
-
-                  <h2 className="mt-4 text-xl font-bold text-card-foreground">
-                    {register.name}
-                  </h2>
-                  <p className="mt-1 text-sm font-medium text-muted-foreground">
-                    {register.code}
-                  </p>
-
-                  <div className="mt-4 flex-1 text-sm text-muted-foreground">
-                    {shiftQuery?.isError ? (
-                      <div className="flex items-start gap-2 text-destructive">
-                        <CircleAlert
-                          aria-hidden="true"
-                          className="mt-0.5 size-4 shrink-0"
-                        />
-                        Не удалось проверить текущую смену
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h2 className="text-xl font-bold text-card-foreground">
+                          {register.name}
+                        </h2>
+                        {shiftQuery?.isPending ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                            <LoaderCircle
+                              aria-hidden="true"
+                              className="size-3.5 animate-spin"
+                            />
+                            Проверяем
+                          </span>
+                        ) : registerShift ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-success-muted px-2.5 py-1 text-xs font-semibold text-success">
+                            <CircleCheck
+                              aria-hidden="true"
+                              className="size-3.5"
+                            />
+                            Касса открыта
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-muted px-2.5 py-1 text-xs font-semibold text-warning">
+                            <Clock3 aria-hidden="true" className="size-3.5" />
+                            Касса закрыта
+                          </span>
+                        )}
                       </div>
-                    ) : registerShift ? (
-                      <div className="space-y-1.5">
-                        <p>
-                          Открыта{' '}
-                          {openedAtFormatter.format(
-                            new Date(registerShift.opened_at),
-                          )}
-                        </p>
-                        <p className="flex items-center gap-2 font-semibold text-foreground">
-                          <Banknote aria-hidden="true" className="size-4" />
-                          На начало:{' '}
-                          {cashFormatter.format(
-                            Number(registerShift.opening_cash),
-                          )}
-                        </p>
+                      <p className="mt-1 text-sm font-medium text-muted-foreground">
+                        Код кассы: {register.code}
+                      </p>
+
+                      <div className="mt-4 text-sm text-muted-foreground">
+                        {shiftQuery?.isError ? (
+                          <div className="flex items-start gap-2 text-destructive">
+                            <CircleAlert
+                              aria-hidden="true"
+                              className="mt-0.5 size-4 shrink-0"
+                            />
+                            Не удалось проверить состояние кассы
+                          </div>
+                        ) : registerShift ? (
+                          <div className="flex flex-wrap gap-x-6 gap-y-2">
+                            <p>
+                              Открыта{' '}
+                              {openedAtFormatter.format(
+                                new Date(registerShift.opened_at),
+                              )}
+                            </p>
+                            <p className="flex items-center gap-2 font-semibold text-foreground">
+                              <Banknote aria-hidden="true" className="size-4" />
+                              На начало:{' '}
+                              {cashFormatter.format(
+                                Number(registerShift.opening_cash),
+                              )}
+                            </p>
+                          </div>
+                        ) : (
+                          <p>
+                            Перед началом работы потребуется указать наличные
+                          </p>
+                        )}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
 
                   {shiftQuery?.isError ? (
                     <Button
-                      className="mt-5 min-h-13 w-full"
+                      className="min-h-12 w-full border-border bg-background"
                       onClick={() => void shiftQuery.refetch()}
                       type="button"
                       variant="ghost"
@@ -314,10 +326,10 @@ export function RegisterShiftSelectionView() {
                       Повторить
                     </Button>
                   ) : registerShift ? (
-                    <div className="mt-5 grid gap-2">
+                    <div className="grid gap-3">
                       <Button
-                        aria-label={`Выбрать смену кассы ${register.name}`}
-                        className="min-h-13 w-full text-base"
+                        aria-label={`Начать работу на кассе ${register.name}`}
+                        className="min-h-13 w-full justify-between px-5 text-base"
                         onClick={() => {
                           const accessToken =
                             useAuthStore.getState().accessToken;
@@ -334,7 +346,8 @@ export function RegisterShiftSelectionView() {
                         }}
                         type="button"
                       >
-                        Выбрать смену
+                        Начать работу
+                        <ArrowRight aria-hidden="true" />
                       </Button>
                       {canCloseShift ? (
                         <CloseRegisterShiftAction
@@ -344,17 +357,18 @@ export function RegisterShiftSelectionView() {
                     </div>
                   ) : canOpenShift ? (
                     <Button
-                      aria-label={`Открыть смену кассы ${register.name}`}
-                      className="mt-5 min-h-13 w-full text-base"
+                      aria-label={`Открыть кассу ${register.name}`}
+                      className="min-h-13 w-full justify-between px-5 text-base"
                       disabled={shiftQuery?.isPending}
                       onClick={() => openDialog(register)}
                       type="button"
                     >
-                      Открыть смену
+                      Открыть кассу
+                      <ArrowRight aria-hidden="true" />
                     </Button>
                   ) : (
-                    <p className="mt-5 min-h-13 rounded-lg bg-muted px-4 py-3 text-center text-sm font-medium text-muted-foreground">
-                      Нет права открывать смену
+                    <p className="min-h-13 rounded-lg bg-muted px-4 py-3 text-center text-sm font-medium text-muted-foreground">
+                      Нет права открывать кассу
                     </p>
                   )}
                 </article>
@@ -371,22 +385,20 @@ export function RegisterShiftSelectionView() {
         open={Boolean(selectedRegister)}
       >
         <DialogContent
-          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl"
+          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg"
           showCloseButton={!openingMutation.isPending}
         >
           <DialogHeader>
-            <DialogTitle>Открыть кассовую смену</DialogTitle>
+            <DialogTitle>Открыть кассу</DialogTitle>
             <DialogDescription>
-              {selectedRegister?.name} · {selectedRegister?.code}. Укажите
-              фактическую сумму наличных в кассе перед началом работы.
+              {selectedRegister?.name} · {selectedRegister?.code}. Пересчитайте
+              наличные перед началом работы.
             </DialogDescription>
           </DialogHeader>
 
           <form className="space-y-5" onSubmit={submitOpening}>
-            <div className="space-y-2.5">
-              <Label htmlFor="opening-cash">
-                Наличные в кассе на начало, ₸
-              </Label>
+            <FormField>
+              <Label htmlFor="opening-cash">Наличные в кассе, ₸</Label>
               <Input
                 aria-describedby={
                   validationError ? 'opening-cash-error' : undefined
@@ -409,7 +421,7 @@ export function RegisterShiftSelectionView() {
                   {validationError}
                 </p>
               ) : null}
-            </div>
+            </FormField>
 
             <NumericKeypad
               disabled={openingMutation.isPending}
@@ -436,7 +448,7 @@ export function RegisterShiftSelectionView() {
                 {openingMutation.isPending ? (
                   <LoaderCircle aria-hidden="true" className="animate-spin" />
                 ) : null}
-                Открыть и выбрать
+                Открыть и начать
               </Button>
             </DialogFooter>
           </form>

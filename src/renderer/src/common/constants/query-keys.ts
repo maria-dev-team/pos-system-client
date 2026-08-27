@@ -43,6 +43,7 @@ export const queryKeys = {
     all: () => ['sales'] as const,
     current: (cashierSessionId: string) =>
       ['sales', 'current', cashierSessionId] as const,
+    detail: (saleId: string) => ['sales', 'detail', saleId] as const,
     held: (cashierSessionId: string) =>
       ['sales', 'held', cashierSessionId] as const,
     recovery: (

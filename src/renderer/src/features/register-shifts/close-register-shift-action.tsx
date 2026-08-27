@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
+import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { queryKeys } from '@renderer/common/constants';
@@ -45,8 +46,7 @@ export function CloseRegisterShiftAction({
   const mutation = useMutation({
     mutationFn: (cash: string) =>
       closeRegisterShift(registerShiftId, { actualCash: cash }),
-    onError: (error) =>
-      httpErrorHandler(error, 'Не удалось закрыть кассовую смену.'),
+    onError: (error) => httpErrorHandler(error, 'Не удалось закрыть кассу.'),
     onSuccess: (registerShift) => {
       setClosedShift(registerShift);
     },
@@ -102,18 +102,19 @@ export function CloseRegisterShiftAction({
   return (
     <>
       <Button
-        aria-label="Закрыть кассовую смену"
-        className="min-h-12 w-full bg-destructive px-4 text-white hover:bg-destructive/90"
+        aria-label="Закрыть кассу"
+        className="min-h-11 w-full border-border bg-background px-4 text-muted-foreground hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
         onClick={() => setIsOpen(true)}
         type="button"
+        variant="ghost"
       >
         <CircleStop aria-hidden="true" />
-        Закрыть смену
+        Закрыть кассу
       </Button>
 
       <Dialog onOpenChange={changeOpen} open={isOpen}>
         <DialogContent
-          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl"
+          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg"
           showCloseButton={!mutation.isPending && !closedShift}
         >
           {closedShift ? (
@@ -128,7 +129,7 @@ export function CloseRegisterShiftAction({
                 <span className="mb-2 grid size-12 place-items-center rounded-full bg-success-muted text-success">
                   <CircleCheck aria-hidden="true" className="size-7" />
                 </span>
-                <DialogTitle>Смена закрыта</DialogTitle>
+                <DialogTitle>Касса закрыта</DialogTitle>
                 <DialogDescription>
                   Сверка сохранена на сервере. Проверьте итог перед выходом.
                 </DialogDescription>
@@ -161,22 +162,22 @@ export function CloseRegisterShiftAction({
                 </div>
               </div>
 
-              <Button className="min-h-13 text-base" onClick={finish}>
-                К списку смен
+              <Button className="min-h-13 w-full text-base" onClick={finish}>
+                К списку касс
               </Button>
             </div>
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>Закрыть кассовую смену</DialogTitle>
+                <DialogTitle>Закрыть кассу</DialogTitle>
                 <DialogDescription>
-                  Пересчитайте наличные в кассе. После закрытия сумму нельзя
+                  Пересчитайте наличные. После закрытия кассы сумму нельзя
                   изменить.
                 </DialogDescription>
               </DialogHeader>
 
               <form className="space-y-5" onSubmit={submit}>
-                <div className="space-y-2.5">
+                <FormField>
                   <Label htmlFor="actual-cash">Фактические наличные, ₸</Label>
                   <Input
                     aria-describedby={
@@ -200,7 +201,7 @@ export function CloseRegisterShiftAction({
                       {validationError}
                     </p>
                   ) : null}
-                </div>
+                </FormField>
 
                 <NumericKeypad
                   disabled={mutation.isPending}
@@ -230,7 +231,7 @@ export function CloseRegisterShiftAction({
                         className="animate-spin"
                       />
                     ) : null}
-                    Закрыть смену
+                    Закрыть кассу
                   </Button>
                 </DialogFooter>
               </form>
