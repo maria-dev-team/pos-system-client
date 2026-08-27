@@ -1,1 +1,1 @@
-export { useProductSearchQuery } from './product-query-options';
+export { useProductSearchQuery } from './hooks/use-product-search-query';

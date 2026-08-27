@@ -17,7 +17,10 @@ import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 
-import { type ReturnPaymentMode, buildReturnPayments } from './returns-input';
+import {
+  type ReturnPaymentMode,
+  buildReturnPayments,
+} from '../returns-calculations';
 
 type ReturnPaymentDialogProps = {
   onConfirm: (payments: ReturnPaymentPayload[]) => Promise<void> | void;

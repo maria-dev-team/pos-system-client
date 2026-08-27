@@ -20,7 +20,7 @@ import {
 } from '@renderer/common/api';
 
 import { ReturnsView } from './index';
-import { useReturnsPendingStore } from './returns-pending-store';
+import { useReturnsPendingStore } from './stores/returns-pending-store';
 
 vi.mock('@renderer/common/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@renderer/common/api')>();

@@ -4,10 +4,12 @@ import {
   buildReturnPayments,
   calculateReturnLineTotal,
   calculateReturnTotal,
+} from './returns-calculations';
+import {
   priceOverrideSchema,
   receiptNumberSchema,
   returnQuantitySchema,
-} from './returns-input';
+} from './returns.schema';
 
 describe('receipt number validation', () => {
   it.each(['1', '42', '9223372036854775807'])(

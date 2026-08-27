@@ -12,8 +12,8 @@ import {
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 
-import { useReturnsPendingStore } from './returns-pending-store';
-import { useReturnSubmission } from './use-return-submission';
+import { useReturnSubmission } from './hooks/use-return-submission';
+import { useReturnsPendingStore } from './stores/returns-pending-store';
 
 vi.mock('@renderer/common/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@renderer/common/api')>();

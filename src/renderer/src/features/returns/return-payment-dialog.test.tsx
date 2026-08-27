@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ReturnPaymentDialog } from './return-payment-dialog';
+import { ReturnPaymentDialog } from './components/return-payment-dialog';
 
 afterEach(cleanup);
 

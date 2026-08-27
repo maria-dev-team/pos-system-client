@@ -13,7 +13,7 @@ import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
 import {
   type PendingReturnCommand,
   useReturnsPendingStore,
-} from './returns-pending-store';
+} from '../stores/returns-pending-store';
 
 type ReturnDraft =
   | {

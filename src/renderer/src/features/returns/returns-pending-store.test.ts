@@ -5,7 +5,7 @@ import type { CreateReceiptReturnPayload } from '@renderer/common/api';
 import {
   returnsPendingStorageName,
   useReturnsPendingStore,
-} from './returns-pending-store';
+} from './stores/returns-pending-store';
 
 const payload: CreateReceiptReturnPayload = {
   items: [
