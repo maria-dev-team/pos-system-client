@@ -155,7 +155,7 @@ export function ReturnsView({
           </div>
           <div
             aria-label="Режим возврата"
-            className="grid grid-cols-2 gap-2"
+            className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/40 p-1"
             role="group"
           >
             <Button
