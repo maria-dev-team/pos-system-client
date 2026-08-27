@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import type { ProductResponse, SalePaymentPayload } from '@renderer/common/api';
+import { quantitySchema } from '@renderer/common/lib/quantity';
 
-import { priceOverrideSchema, quantitySchema } from './checkout-input';
+import { priceOverrideSchema } from './checkout-input';
 import {
   type CartItem,
   adjustCartItemQuantity,

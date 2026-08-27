@@ -5,9 +5,8 @@ import type {
   ProductUnit,
   SalePaymentPayload,
 } from '@renderer/common/api';
+import { quantitySchema } from '@renderer/common/lib/quantity';
 import { cashAmountSchema } from '@renderer/common/schemas/cash-amount.schema';
-
-import { quantitySchema } from './checkout-input';
 
 export type CartItem = {
   barcode: string;

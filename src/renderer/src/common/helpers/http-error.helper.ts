@@ -20,6 +20,8 @@ const messages: Record<ErrorCodeValue, string> = {
   [ErrorCode.CashierSessionNotFound]: 'Смена кассира не найдена.',
   [ErrorCode.CashierSessionRegisterOccupied]:
     'На этой кассе уже работает другой кассир.',
+  [ErrorCode.CashRefundInsufficient]:
+    'В кассе недостаточно наличных для возврата.',
   [ErrorCode.IncorrectOrganization]: 'Выбран неверный контекст организации.',
   [ErrorCode.InsufficientPermissions]:
     'У вас недостаточно прав для этого действия.',
@@ -38,6 +40,17 @@ const messages: Record<ErrorCodeValue, string> = {
     'Сначала завершите активную смену кассира.',
   [ErrorCode.RegisterShiftNotFound]: 'Кассовая смена не найдена.',
   [ErrorCode.RegisterShiftNotOpen]: 'Кассовая смена уже закрыта.',
+  [ErrorCode.ReceiptNotFound]: 'Чек не найден.',
+  [ErrorCode.ReceiptNumberInvalid]: 'Указан некорректный номер чека.',
+  [ErrorCode.ReturnIdempotencyConflict]:
+    'Сохранённую команду возврата нельзя изменить.',
+  [ErrorCode.ReturnIdempotencyKeyInvalid]:
+    'Не удалось создать идентификатор возврата.',
+  [ErrorCode.ReturnPriceOverrideSameValue]:
+    'Новая цена должна отличаться от цены каталога.',
+  [ErrorCode.ReturnQuantityExceeded]:
+    'Количество превышает доступное для возврата.',
+  [ErrorCode.ReturnTotalZero]: 'Сумма возврата должна быть больше нуля.',
   [ErrorCode.SaleAmountOverflow]: 'Сумма продажи слишком велика.',
   [ErrorCode.SaleCancellationReasonInvalid]:
     'Укажите корректную причину отмены продажи.',

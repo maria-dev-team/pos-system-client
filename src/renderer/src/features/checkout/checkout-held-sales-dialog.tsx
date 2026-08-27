@@ -13,9 +13,9 @@ import {
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
 import { formatCash } from '@renderer/common/helpers/format-cash';
+import { formatQuantity } from '@renderer/common/lib/quantity';
 import { cn } from '@renderer/common/lib/utils';
 
-import { formatQuantity } from './checkout-input';
 import { saleDetailsQueryOptions } from './checkout-query-options';
 
 type CheckoutHeldSalesDialogProps = {

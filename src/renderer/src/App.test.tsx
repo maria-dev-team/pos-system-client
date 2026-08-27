@@ -19,7 +19,9 @@ const api = vi.hoisted(() => ({
   cancelSale: vi.fn(),
   checkoutSale: vi.fn(),
   closeRegisterShift: vi.fn(),
+  createReceiptReturn: vi.fn(),
   createSale: vi.fn(),
+  createWithoutReceiptReturn: vi.fn(),
   endCashierSession: vi.fn(),
   getActiveRegisters: vi.fn(),
   getApiHealth: vi.fn(),
@@ -32,6 +34,9 @@ const api = vi.hoisted(() => ({
   getSale: vi.fn(),
   holdSale: vi.fn(),
   getMyOrganizations: vi.fn(),
+  getProduct: vi.fn(),
+  getReceipt: vi.fn(),
+  getReceipts: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   openRegisterShift: vi.fn(),
@@ -226,6 +231,10 @@ beforeEach(() => {
   api.getCurrentRegisterShift.mockResolvedValue(registerShiftResponse);
   api.getCurrentCashierSession.mockResolvedValue(cashierSessionResponse);
   api.getCurrentSale.mockResolvedValue(null);
+  api.getReceipts.mockResolvedValue({
+    meta: { has_more: false, limit: 20, offset: 0, total: 0 },
+    receipts: [],
+  });
   api.closeRegisterShift.mockResolvedValue(closedRegisterShiftResponse);
   api.endCashierSession.mockResolvedValue(endedCashierSessionResponse);
   api.logout.mockResolvedValue(undefined);
@@ -237,6 +246,105 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Maria POS authorization flow', () => {
+  it('navigates checkout to returns and back with the same search and cart', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: [
+        ...contextResponse.permissions,
+        'returns.create',
+        'sales.read',
+      ],
+    });
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    );
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    useCheckoutCartStore
+      .getState()
+      .addProduct(cashierSessionResponse.id, productResponse);
+    await user.click(screen.getByRole('button', { name: 'Возвраты' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Возвраты' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/returns');
+    expect(router.state.location.search).toEqual({
+      registerId: 'register-1',
+      registerShiftId: 'register-shift-1',
+    });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Вернуться к продажам' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Оформление продажи' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/checkout');
+    expect(router.state.location.search).toEqual({
+      registerId: 'register-1',
+      registerShiftId: 'register-shift-1',
+    });
+    expect(
+      useCheckoutCartStore.getState().sessions[cashierSessionResponse.id]
+        ?.items,
+    ).toHaveLength(1);
+  });
+
+  it('shows the returns access state on a direct active-session route', async () => {
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: ['returns.create'],
+    });
+    const { router } = renderApp();
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+
+    await router.navigate({
+      search: {
+        registerId: 'register-1',
+        registerShiftId: 'register-shift-1',
+      },
+      to: '/returns',
+    });
+
+    expect(
+      await screen.findByRole('heading', { name: 'Нет доступа к возвратам' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/returns');
+  });
+
+  it('does not open returns for a locked cashier session', async () => {
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentCashierSession.mockResolvedValue({
+      ...cashierSessionResponse,
+      locked_at: '2026-08-27T09:00:00.000Z',
+      status: 'LOCKED',
+    });
+    const { router } = renderApp();
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+
+    await router.navigate({
+      search: {
+        registerId: 'register-1',
+        registerShiftId: 'register-shift-1',
+      },
+      to: '/returns',
+    });
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Смена кассира заблокирована',
+      }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).not.toBe('/returns');
+  });
+
   it('routes a guest to login and accepts email or phone', async () => {
     renderApp();
 

@@ -13,6 +13,11 @@ describe('queryKeys', () => {
       'register-1',
     ]);
     expect(queryKeys.products.all()).toEqual(['products']);
+    expect(queryKeys.products.detail('product-1')).toEqual([
+      'products',
+      'detail',
+      'product-1',
+    ]);
     expect(
       queryKeys.products.search('organization-1', 'store-1', 'молоко'),
     ).toEqual(['products', 'search', 'organization-1', 'store-1', 'молоко']);
@@ -31,6 +36,24 @@ describe('queryKeys', () => {
       'sales',
       'held',
       'cashier-session-1',
+    ]);
+    expect(queryKeys.sales.receiptPages()).toEqual([
+      'sales',
+      'receipts',
+      'page',
+    ]);
+    expect(queryKeys.sales.receiptPage(20, 40)).toEqual([
+      'sales',
+      'receipts',
+      'page',
+      20,
+      40,
+    ]);
+    expect(queryKeys.sales.receipt('42')).toEqual([
+      'sales',
+      'receipts',
+      'detail',
+      '42',
     ]);
     expect(
       queryKeys.sales.recovery(

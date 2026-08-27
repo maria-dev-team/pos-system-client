@@ -5,6 +5,8 @@ import Keyboard, {
 } from 'react-simple-keyboard';
 import 'react-simple-keyboard/build/css/index.css';
 
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+
 type VirtualKeyboardProps = {
   compact?: boolean;
   disabled?: boolean;
@@ -102,5 +104,28 @@ export function VirtualKeyboard({
         useButtonTag
       />
     </div>
+  );
+}
+
+export function VirtualKeyboardOverlay({
+  open,
+  onOpenChange,
+  ...keyboardProps
+}: VirtualKeyboardProps & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="bottom-0 left-0 top-auto max-h-[50svh] w-full max-w-none translate-x-0 translate-y-0 overflow-y-auto rounded-b-none border-x-0 border-b-0 p-4 sm:max-w-none">
+        <DialogHeader>
+          <DialogTitle>Экранная клавиатура</DialogTitle>
+        </DialogHeader>
+        <VirtualKeyboard
+          {...keyboardProps}
+          onClose={() => onOpenChange(false)}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }

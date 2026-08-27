@@ -149,7 +149,9 @@ const itemFixture = (
   price_overridden_by_membership_id: null,
   product_id: 'product-1',
   quantity: '1',
+  return_disposition: null,
   sku: 'MILK-1',
+  source_sale_item_id: null,
   unit_code: 'pcs',
   unit_price: '650.00',
   ...overrides,
@@ -168,12 +170,16 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   id: 'sale-1',
   items: [],
   organization_id: 'organization-1',
+  original_sale_id: null,
   payments: [],
+  receipt_number: null,
   register_id: 'register-1',
   register_shift_id: 'register-shift-1',
   status: 'DRAFT',
   store_id: 'store-1',
   total: '0.00',
+  transaction_type: 'SALE',
+  return_reason: null,
   updated_at: '2026-08-24T10:00:00.000Z',
   version: 1,
   ...overrides,
@@ -206,6 +212,7 @@ function TestShell({ children }: { children: ReactNode }) {
 
 const renderCheckout = (
   options: {
+    onOpenReturns?: () => void;
     onRetrySession?: () => void;
     onSessionEnded?: () => void;
     queryClient?: QueryClient;
@@ -219,6 +226,7 @@ const renderCheckout = (
       <TestShell>
         <CheckoutView
           cashierSession={options.session ?? cashierSession}
+          onOpenReturns={options.onOpenReturns}
           onRetrySession={options.onRetrySession}
           onSessionEnded={onSessionEnded}
         />
@@ -283,7 +291,60 @@ afterEach(() => {
 });
 
 describe('local-first checkout', () => {
-  it('opens the search keyboard without an inner scroll container', async () => {
+  it('opens returns with the current cart intact when a return mode is permitted', async () => {
+    const user = userEvent.setup();
+    const onOpenReturns = vi.fn();
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture(['product.read', 'returns.create', 'sales.read']),
+    );
+    useCheckoutCartStore
+      .getState()
+      .addProduct(cashierSession.id, productFixture());
+    renderCheckout({ onOpenReturns });
+
+    await user.click(await screen.findByRole('button', { name: 'Возвраты' }));
+
+    expect(onOpenReturns).toHaveBeenCalledOnce();
+    expect(
+      useCheckoutCartStore.getState().sessions[cashierSession.id]?.items,
+    ).toHaveLength(1);
+  });
+
+  it('hides returns when the cashier has no permitted return mode', async () => {
+    renderCheckout({ onOpenReturns: vi.fn() });
+
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    expect(
+      screen.queryByRole('button', { name: 'Возвраты' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('blocks returns while a checkout result is unknown', async () => {
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture(['product.read', 'returns.create', 'sales.read']),
+    );
+    vi.mocked(getSale).mockReturnValue(deferred<SaleResponse>().promise);
+    useCheckoutCartStore.setState({
+      sessions: {
+        [cashierSession.id]: {
+          items: [],
+          pendingOperation: {
+            expectedVersion: 2,
+            payments: [{ amount: '650.00', method: 'CASHLESS' }],
+            saleId: 'sale-1',
+            type: 'checkout',
+          },
+        },
+      },
+    });
+    renderCheckout({ onOpenReturns: vi.fn() });
+
+    expect(
+      await screen.findByRole('button', { name: 'Возвраты' }),
+    ).toBeDisabled();
+  });
+
+  it('opens the search keyboard over the page', async () => {
     const user = userEvent.setup();
     renderCheckout();
 
@@ -293,11 +354,13 @@ describe('local-first checkout', () => {
       }),
     );
 
+    const dialog = screen.getByRole('dialog', {
+      name: 'Экранная клавиатура',
+    });
+    expect(dialog).toHaveClass('bottom-0', 'top-auto', 'max-h-[50svh]');
     const keyboard = screen.getByRole('group', {
       name: 'Виртуальная клавиатура',
     });
-    expect(keyboard.parentElement).toHaveClass('overflow-hidden');
-    expect(keyboard.parentElement).not.toHaveClass('overflow-auto');
     expect(keyboard.firstElementChild).toHaveClass(
       'maria-virtual-keyboard--compact',
     );
@@ -994,6 +1057,7 @@ describe('checkout sale transitions', () => {
           change: null,
           completed_at: '2026-08-24T10:10:00.000Z',
           created_at: '2026-08-24T10:10:00.000Z',
+          direction: 'INCOMING',
           id: 'payment-1',
           method: 'CASHLESS',
           received: null,
@@ -1690,6 +1754,7 @@ describe('checkout sale transitions', () => {
                     change: '50.00',
                     completed_at: '2026-08-24T10:10:00.000Z',
                     created_at: '2026-08-24T10:10:00.000Z',
+                    direction: 'INCOMING',
                     id: 'payment-cash',
                     method: 'CASH',
                     received: '700.00',

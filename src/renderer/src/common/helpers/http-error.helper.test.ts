@@ -84,6 +84,17 @@ describe('getHttpErrorMessage', () => {
       'SALE_CANCELLATION_REASON_INVALID',
       'Укажите корректную причину отмены продажи.',
     ],
+    ['RECEIPT_NOT_FOUND', 'Чек не найден.'],
+    ['RECEIPT_NUMBER_INVALID', 'Указан некорректный номер чека.'],
+    [
+      'RETURN_QUANTITY_EXCEEDED',
+      'Количество превышает доступное для возврата.',
+    ],
+    [
+      'RETURN_IDEMPOTENCY_CONFLICT',
+      'Сохранённую команду возврата нельзя изменить.',
+    ],
+    ['CASH_REFUND_INSUFFICIENT', 'В кассе недостаточно наличных для возврата.'],
     ['REGISTER_SHIFT_ALREADY_OPEN', 'Смена этой кассы уже открыта.'],
     ['REGISTER_SHIFT_ALREADY_CLOSED', 'Кассовая смена уже закрыта.'],
     [

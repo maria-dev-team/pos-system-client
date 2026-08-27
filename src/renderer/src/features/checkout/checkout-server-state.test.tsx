@@ -22,11 +22,11 @@ import {
   setSaleItemQuantity,
 } from '@renderer/common/api';
 import { queryKeys } from '@renderer/common/constants';
+import { useProductSearchQuery } from '@renderer/features/products';
 
 import {
   currentSaleQueryOptions,
   heldSalesQueryOptions,
-  useProductSearchQuery,
 } from './checkout-query-options';
 import { useSaleCommandMutation } from './use-sale-command-mutation';
 
@@ -61,12 +61,16 @@ const saleFixture = (version: number, id = 'sale-1'): SaleResponse => ({
   id,
   items: [],
   organization_id: 'organization-1',
+  original_sale_id: null,
   payments: [],
+  receipt_number: null,
   register_id: 'register-1',
   register_shift_id: 'register-shift-1',
   status: 'DRAFT',
   store_id: 'store-1',
   total: '0.00',
+  transaction_type: 'SALE',
+  return_reason: null,
   updated_at: `2026-08-24T10:00:0${version}.000Z`,
   version,
 });
