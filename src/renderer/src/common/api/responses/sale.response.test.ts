@@ -7,6 +7,7 @@ const pendingPayment = {
   change: null,
   completed_at: null,
   created_at: '2026-08-24T08:10:00.000Z',
+  direction: 'INCOMING',
   id: 'payment-1',
   method: 'CASH',
   received: null,

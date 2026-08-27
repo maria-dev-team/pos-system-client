@@ -1,3 +1,4 @@
+import type { ReturnDisposition } from '../types/sale.types';
 import type { ProductUnit } from './product.response';
 
 export type SaleItemResponse = {
@@ -11,7 +12,9 @@ export type SaleItemResponse = {
   price_overridden_by_membership_id: string | null;
   product_id: string;
   quantity: string;
+  return_disposition: ReturnDisposition | null;
   sku: string;
+  source_sale_item_id: string | null;
   unit_code: ProductUnit;
   unit_price: string;
 };
@@ -21,6 +24,7 @@ export type SalePaymentResponse = {
   change: string | null;
   completed_at: string | null;
   created_at: string;
+  direction: 'INCOMING' | 'OUTGOING';
   id: string;
   method: 'CASH' | 'CASHLESS';
   received: string | null;
@@ -51,12 +55,46 @@ export type SaleResponse = {
   id: string;
   items: SaleItemResponse[];
   organization_id: string;
+  original_sale_id: string | null;
   payments: SalePaymentResponse[];
+  receipt_number: string | null;
   register_id: string;
   register_shift_id: string;
   status: 'DRAFT' | 'HELD' | 'COMPLETED' | 'CANCELLED';
   store_id: string;
   total: string;
+  transaction_type: 'SALE' | 'RETURN';
+  return_reason: string | null;
   updated_at: string;
   version: number;
+};
+
+export type PaginationMetaResponse = {
+  has_more: boolean;
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type ReceiptSummaryResponse = {
+  cashier_membership_id: string;
+  completed_at: string;
+  currency: 'KZT';
+  id: string;
+  payments: Pick<SalePaymentResponse, 'amount' | 'method'>[];
+  receipt_number: string;
+  total: string;
+};
+
+export type ReceiptResponse = Omit<SaleResponse, 'items' | 'receipt_number'> & {
+  items: (SaleItemResponse & {
+    returnable_quantity: string;
+    returned_quantity: string;
+  })[];
+  receipt_number: string;
+};
+
+export type ReceiptsResponse = {
+  meta: PaginationMetaResponse;
+  receipts: ReceiptSummaryResponse[];
 };

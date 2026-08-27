@@ -52,3 +52,36 @@ export type SalePaymentPayload = {
 export type CheckoutSalePayload = SaleVersionPayload & {
   payments: SalePaymentPayload[];
 };
+
+export type ReturnDisposition = 'RESTOCK' | 'WRITE_OFF';
+
+export type ReturnPaymentPayload = {
+  amount: string;
+  method: PaymentMethod;
+};
+
+export type CreateReceiptReturnPayload = {
+  items: {
+    quantity: string;
+    returnDisposition: ReturnDisposition;
+    saleItemId: string;
+  }[];
+  payments: ReturnPaymentPayload[];
+  reason: string;
+};
+
+export type CreateWithoutReceiptReturnPayload = {
+  items: {
+    priceOverride?: { reason: string; unitPrice: string };
+    productId: string;
+    quantity: string;
+    returnDisposition: ReturnDisposition;
+  }[];
+  payments: ReturnPaymentPayload[];
+  reason: string;
+};
+
+export type ReceiptsQueryPayload = {
+  limit: number;
+  offset: number;
+};

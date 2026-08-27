@@ -16,6 +16,10 @@ export type {
 } from './product.response';
 export type {
   HeldSaleResponse,
+  PaginationMetaResponse,
+  ReceiptResponse,
+  ReceiptsResponse,
+  ReceiptSummaryResponse,
   SaleItemResponse,
   SalePaymentResponse,
   SaleResponse,

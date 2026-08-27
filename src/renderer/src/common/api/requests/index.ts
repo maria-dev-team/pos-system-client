@@ -4,6 +4,7 @@ export * from './health';
 export * from './organizations';
 export * from './register-shifts';
 export * from './registers';
+export * from './returns';
 export * from './products';
 export * from './sales';
 export * from './users';

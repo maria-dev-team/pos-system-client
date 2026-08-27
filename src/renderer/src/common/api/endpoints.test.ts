@@ -22,6 +22,14 @@ type CheckoutApi = {
   setSaleItemQuantity: (...args: unknown[]) => Promise<unknown>;
 };
 
+type ReturnsApi = {
+  createReceiptReturn: (...args: unknown[]) => Promise<unknown>;
+  createWithoutReceiptReturn: (...args: unknown[]) => Promise<unknown>;
+  getProduct: (...args: unknown[]) => Promise<unknown>;
+  getReceipt: (...args: unknown[]) => Promise<unknown>;
+  getReceipts: (...args: unknown[]) => Promise<unknown>;
+};
+
 const user = {
   created_at: '2026-08-23T00:00:00.000Z',
   email: 'cashier@maria.kz',
@@ -168,18 +176,24 @@ const sale = {
       price_overridden_by_membership_id: null,
       product_id: 'product-1',
       quantity: '2',
+      return_disposition: null,
       sku: 'MILK-1L',
+      source_sale_item_id: null,
       unit_code: 'pcs',
       unit_price: '450.00',
     },
   ],
   organization_id: 'organization-1',
+  original_sale_id: null,
   payments: [],
+  receipt_number: null,
   register_id: 'register-1',
   register_shift_id: 'register-shift-1',
   status: 'DRAFT' as const,
   store_id: 'store-1',
   total: '900.00',
+  transaction_type: 'SALE' as const,
+  return_reason: null,
   updated_at: '2026-08-24T08:10:00.000Z',
   version: 1,
 };
@@ -546,6 +560,151 @@ describe('API endpoints', () => {
     expect(JSON.parse(calls.at(15)?.data as string)).toEqual({
       expected_version: 7,
       reason: 'Клиент передумал',
+    });
+  });
+
+  it('uses receipt and return contracts with pagination, snake case and idempotency headers', async () => {
+    const calls: InternalAxiosRequestConfig[] = [];
+    const receiptSummary = {
+      cashier_membership_id: 'membership-1',
+      completed_at: '2026-08-24T08:15:00.000Z',
+      currency: 'KZT',
+      id: 'sale-1',
+      payments: [{ amount: '900.00', method: 'CASH' }],
+      receipt_number: '42',
+      total: '900.00',
+    };
+    const receipt = {
+      ...sale,
+      items: sale.items.map((item) => ({
+        ...item,
+        returnable_quantity: '1',
+        returned_quantity: '1',
+      })),
+      receipt_number: '42',
+    };
+    const completedReturn = {
+      ...sale,
+      completed_at: '2026-08-24T08:20:00.000Z',
+      original_sale_id: 'sale-1',
+      receipt_number: '43',
+      return_reason: 'Повреждена упаковка',
+      status: 'COMPLETED',
+      transaction_type: 'RETURN',
+    };
+
+    axios.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      calls.push(config);
+      const dataByUrl: Record<string, unknown> = {
+        '/v1/products/product-1': { data: { product } },
+        '/v1/returns/receipts/42': { data: { return: completedReturn } },
+        '/v1/returns/without-receipt': {
+          data: { return: completedReturn },
+        },
+        '/v1/sales/receipts': {
+          data: {
+            meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+            receipts: [receiptSummary],
+          },
+        },
+        '/v1/sales/receipts/42': { data: { receipt } },
+      };
+      return {
+        config,
+        data: dataByUrl[config.url!],
+        headers: {},
+        status: 200,
+        statusText: 'OK',
+      };
+    };
+    vi.resetModules();
+    vi.stubEnv('VITE_API_URL', 'http://localhost:4004');
+    const api = (await import('./requests')) as unknown as ReturnsApi;
+
+    expect(api).toMatchObject({
+      createReceiptReturn: expect.any(Function),
+      createWithoutReceiptReturn: expect.any(Function),
+      getProduct: expect.any(Function),
+      getReceipt: expect.any(Function),
+      getReceipts: expect.any(Function),
+    });
+
+    await expect(api.getReceipts({ limit: 20, offset: 0 })).resolves.toEqual({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      receipts: [receiptSummary],
+    });
+    await expect(api.getReceipt('42')).resolves.toEqual(receipt);
+    await expect(api.getProduct('product-1')).resolves.toEqual(product);
+    await expect(
+      api.createReceiptReturn('42', '123e4567-e89b-42d3-a456-426614174000', {
+        items: [
+          {
+            quantity: '1',
+            returnDisposition: 'WRITE_OFF',
+            saleItemId: 'sale-item-1',
+          },
+        ],
+        payments: [{ amount: '450.00', method: 'CASH' }],
+        reason: 'Повреждена упаковка',
+      }),
+    ).resolves.toEqual(completedReturn);
+    await expect(
+      api.createWithoutReceiptReturn('123e4567-e89b-42d3-a456-426614174001', {
+        items: [
+          {
+            priceOverride: {
+              reason: 'Актуальная цена',
+              unitPrice: '400.00',
+            },
+            productId: 'product-1',
+            quantity: '1',
+            returnDisposition: 'RESTOCK',
+          },
+        ],
+        payments: [{ amount: '400.00', method: 'CASHLESS' }],
+        reason: 'Возврат без чека',
+      }),
+    ).resolves.toEqual(completedReturn);
+
+    expect(calls.map(({ method, url }) => [method, url])).toEqual([
+      ['get', '/v1/sales/receipts'],
+      ['get', '/v1/sales/receipts/42'],
+      ['get', '/v1/products/product-1'],
+      ['post', '/v1/returns/receipts/42'],
+      ['post', '/v1/returns/without-receipt'],
+    ]);
+    expect(calls.at(0)?.params).toEqual({ limit: 20, offset: 0 });
+    expect(calls.at(3)?.headers.get('Idempotency-Key')).toBe(
+      '123e4567-e89b-42d3-a456-426614174000',
+    );
+    expect(calls.at(4)?.headers.get('Idempotency-Key')).toBe(
+      '123e4567-e89b-42d3-a456-426614174001',
+    );
+    expect(JSON.parse(calls.at(3)?.data as string)).toEqual({
+      items: [
+        {
+          quantity: '1',
+          return_disposition: 'WRITE_OFF',
+          sale_item_id: 'sale-item-1',
+        },
+      ],
+      payments: [{ amount: '450.00', method: 'CASH' }],
+      reason: 'Повреждена упаковка',
+    });
+    expect(JSON.parse(calls.at(4)?.data as string)).toEqual({
+      items: [
+        {
+          price_override: {
+            reason: 'Актуальная цена',
+            unit_price: '400.00',
+          },
+          product_id: 'product-1',
+          quantity: '1',
+          return_disposition: 'RESTOCK',
+        },
+      ],
+      payments: [{ amount: '400.00', method: 'CASHLESS' }],
+      reason: 'Возврат без чека',
     });
   });
 });

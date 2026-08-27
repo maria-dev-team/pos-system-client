@@ -42,7 +42,10 @@ import {
 import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
-import { VirtualKeyboard } from '@renderer/common/components/virtual-keyboard';
+import {
+  VirtualKeyboard,
+  VirtualKeyboardOverlay,
+} from '@renderer/common/components/virtual-keyboard';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import {
@@ -50,18 +53,18 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
-import { authContextQueryOptions } from '@renderer/features/auth';
-import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
-
-import { useCheckoutCartStore } from './checkout-cart-store';
-import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
 import {
   adjustQuantityByOne,
   formatQuantity,
-  priceOverrideSchema,
   quantitySchema,
-  saleCancellationSchema,
-} from './checkout-input';
+} from '@renderer/common/lib/quantity';
+import { authContextQueryOptions } from '@renderer/features/auth';
+import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
+import { useProductSearchQuery } from '@renderer/features/products';
+
+import { useCheckoutCartStore } from './checkout-cart-store';
+import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
+import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
 import {
   type CartItem,
   adjustCartItemQuantity,
@@ -73,7 +76,6 @@ import { CheckoutPaymentDialog } from './checkout-payment-dialog';
 import {
   currentSaleQueryOptions,
   heldSalesQueryOptions,
-  useProductSearchQuery,
 } from './checkout-query-options';
 import { useCheckoutSaleTransitions } from './use-checkout-sale-transitions';
 import {
@@ -85,6 +87,7 @@ const unitLabels = { kg: 'кг', l: 'л', m: 'м', pcs: 'шт.' } as const;
 
 type CheckoutViewProps = {
   cashierSession: CashierSessionResponse;
+  onOpenReturns?: () => void;
   onRetrySession?: () => void;
   onSessionEnded: () => void;
   onSessionEndedLocally?: () => void;
@@ -183,6 +186,7 @@ function LockedCheckout({
 
 function ActiveCheckout({
   cashierSession,
+  onOpenReturns,
   onSessionEnded,
   onSessionEndedLocally,
 }: CheckoutViewProps) {
@@ -430,6 +434,13 @@ function ActiveCheckout({
   const canHold = sale
     ? hasPermission('sales.hold')
     : hasPermission('sales.create') && hasPermission('sales.hold');
+  const canOpenReturns = Boolean(
+    onOpenReturns &&
+    hasPermission('returns.create') &&
+    (hasPermission('sales.read') ||
+      (hasPermission('returns.without_receipt') &&
+        hasPermission('product.read'))),
+  );
   const rows: CheckoutRow[] = sale
     ? sale.items.map((item) => ({ item, mode: 'server' }))
     : localItems.map((item) => ({ item, mode: 'local' }));
@@ -859,20 +870,17 @@ function ActiveCheckout({
           </div>
         ) : null}
 
-        {keyboardOpen ? (
-          <div className="mt-3 overflow-hidden rounded-xl bg-muted p-3">
-            <VirtualKeyboard
-              compact
-              maxLength={255}
-              onClose={() => {
-                setKeyboardOpen(false);
-                refocus();
-              }}
-              onValueChange={setSearch}
-              value={search}
-            />
-          </div>
-        ) : null}
+        <VirtualKeyboardOverlay
+          compact
+          maxLength={255}
+          onOpenChange={(open) => {
+            setKeyboardOpen(open);
+            if (!open) refocus();
+          }}
+          onValueChange={setSearch}
+          open={keyboardOpen}
+          value={search}
+        />
 
         <div className="mt-2 max-h-52 overflow-auto" aria-live="polite">
           {!canSearch ? (
@@ -1234,6 +1242,18 @@ function ActiveCheckout({
               <ReceiptText aria-hidden="true" />
               Отложенные чеки
             </Button>
+            {canOpenReturns ? (
+              <Button
+                className="min-h-12 w-full border-border bg-background"
+                disabled={pendingOperation !== undefined}
+                onClick={onOpenReturns}
+                type="button"
+                variant="ghost"
+              >
+                <RotateCcw aria-hidden="true" />
+                Возвраты
+              </Button>
+            ) : null}
             {!pendingOperation && rows.length > 0 && canHold ? (
               <Button
                 className="min-h-12 w-full border-border bg-background"

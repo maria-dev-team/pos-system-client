@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   adjustQuantityByOne,
   formatQuantity,
-  priceOverrideSchema,
   quantitySchema,
-  saleCancellationSchema,
-} from './checkout-input';
+} from '@renderer/common/lib/quantity';
+
+import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
 
 describe('quantitySchema', () => {
   it.each(['1', '999999', '1.2', '1.234'])(
