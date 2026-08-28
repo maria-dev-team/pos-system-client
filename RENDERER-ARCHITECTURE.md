@@ -293,23 +293,12 @@ queryKeys.registerShifts.current(registerId);
 queryKeys.sales.all();
 queryKeys.sales.current(cashierSessionId);
 queryKeys.sales.held(cashierSessionId);
-queryKeys.sales.recovery(
-  cashierSessionId,
-  type,
-  saleId,
-  expectedVersion,
-  paymentFingerprint,
-);
 ```
 
 Zustand хранит lifecycle auth session: access token, initialization/logout и
 pending flags. Access token сохраняется в `sessionStorage` только до JWT `exp`.
-
-До создания продажи Zustand также хранит локальную корзину отдельно по
-`cashierSessionId`. Она сохраняется в `localStorage`, не содержит временных
-`Sale`/`SaleItem` UUID и переживает reload и временную потерю сети. Persisted
-pending operation содержит только точный `saleId`, `expectedVersion`, тип команды
-и payload оплаты; платёжные реквизиты в неё не входят.
+Корзина, строки продажи, итог и статус терминальных операций в Zustand или
+`localStorage` не копируются.
 
 После смены organization/store инвалидируются context и зависимые queries.
 Ответы открытия и завершения смен записываются в соответствующий current cache
@@ -319,55 +308,46 @@ pending operation содержит только точный `saleId`, `expected
 
 ### Checkout и продажи
 
-Вход на `/checkout` выполняет только `GET /v1/sales/current`. `null` открывает
-persisted local cart, а найденный `DRAFT` становится server-owned чеком. Открытие
-экрана, поиск, локальное сканирование и локальные изменения никогда не вызывают
-`POST /v1/sales`.
+Вход на `/checkout` выполняет `GET /v1/sales/current`. Найденный `DRAFT` целиком
+становится текущим чеком; `null` означает, что активного чека нет. Первый выбранный
+товар сразу создаёт непустой `DRAFT` через `POST /v1/sales`, поэтому даже первая
+строка, её цена, количество и итог никогда не существуют только на клиенте.
 
-Локальная корзина хранит snapshot товара, количество и намерение изменить цену.
-Количество и денежные значения считаются через `decimal.js`: `pcs` допускает
-только целые, остальные единицы — до трёх знаков, денежная строка — до двух.
-Локальный итог является preview; после создания `SaleResponse` backend владеет
-строками, snapshot-ценами, итогом и `version`.
+Backend — единственный source of truth для строк, snapshot-цен, количества,
+итога, статуса и `version`. Клиент хранит только краткоживущее UI-состояние форм.
+После reload текущий чек восстанавливается обычным `GET /v1/sales/current`.
 
 Поиск и сканирование требуют `product.read`. Поиск начинается от двух символов,
 использует debounce 250 мс, limit 20 и scoped cache организации/магазина. Scanner
-сравнивает barcode как строку только по точному совпадению, выполняет быстрые
-сканы последовательно и освобождает поле до ответа, чтобы аппаратный сканер мог
-сразу отправить следующий код.
+сравнивает barcode как строку только по точному совпадению. До появления чека
+точное совпадение разрешается через catalog search и передаётся в атомарный
+`POST /v1/sales`; после этого используется серверная scan-команда.
 
-`POST /v1/sales` вызывается только явным действием «Оплатить» или «Отложить» и
-атомарно получает текущие local items в стабильном порядке. Потерянный ответ
-create сверяется через `GET /v1/sales/current`; найденный `DRAFT` принимается,
-`null` сохраняет local cart. Автоматического повторения create нет.
+Потерянный ответ первого create сверяется через `GET /v1/sales/current`;
+найденный `DRAFT` принимается без автоматического replay.
 
-После появления `DRAFT` все команды строки (`scan`, add, quantity, remove, price
-override/reset и cancel) используют один TanStack Mutation scope по `sale.id`.
+Все команды строки (`scan`, add, quantity, remove и price override/reset)
+используют один TanStack Mutation scope по `cashierSessionId`.
 Непосредственно перед командой читается актуальный `expected_version` из cache,
 а успешный полный response целиком заменяет cache. Клиент не пересчитывает
 server total и не объединяет server lines самостоятельно.
 
-Checkout поддерживает `CASH`, `CASHLESS` и mixed payment. До отправки persisted
-operation фиксирует точные `saleId`, `expectedVersion` и payments. Успешный
-`COMPLETED` очищает cart/pending и показывает серверные платежи и сдачу. «Новый
-чек» возвращает пустую local cart без автоматического POST.
+Checkout поддерживает `CASH`, `CASHLESS` и mixed payment. Платёж строится только
+из серверного total. Успешный `COMPLETED` очищает current-sale cache и показывает
+серверные платежи и сдачу. Новый чек появляется только с первым товаром.
 
-Hold выполняется как `create -> hold`; успешный `HELD` очищает local cart и
-инвалидирует список отложенных чеков. Held list запрашивается только при открытии
-диалога. Resume разрешён лишь при пустой local cart, без текущего `DRAFT` и
-pending operation.
+Успешный `HELD` очищает current-sale cache и инвалидирует список отложенных чеков.
+Held list запрашивается только при открытии диалога. Resume разрешён лишь без
+текущего `DRAFT`.
 
-При timeout/network error checkout или hold не повторяются автоматически.
-Persisted operation блокирует новые server-команды, пока кассир явно не проверит
-статус, не повторит идентичную команду или не вернётся к редактированию. При
-перезапуске sale читается по сохранённому ID: `COMPLETED`/`HELD` завершают
-recovery, `DRAFT` ждёт решения кассира, network error сохраняет recovery, а
-подтверждённый 404 очищает только устаревший pending metadata.
+При timeout/network error checkout, hold или cancel не повторяются автоматически.
+Клиент один раз читает sale по ID: ожидаемый terminal status принимается как успех,
+а `DRAFT` обновляет cache и оставляет кассиру возможность повторить действие.
 
-Локальная отмена очищает корзину после подтверждения без API и причины.
-Server `DRAFT` отменяется через API с причиной. Cashier session можно завершить
-только без local items, pending operation и `DRAFT`; register shift остаётся
-отдельным lifecycle.
+Отмена всегда требует причину и проходит через backend. Удаление последней строки
+не очищает интерфейс, а открывает тот же процесс отмены. Успешный `CANCELLED`
+очищает current-sale cache и запускает anti-fraud capture. Cashier session можно
+завершить только без текущего `DRAFT`; register shift остаётся отдельным lifecycle.
 
 ## Роутинг
 
@@ -402,7 +382,7 @@ shift.
 
 `/checkout` повторно проверяет organization, store, открытую register shift и
 связанные `registerId`/`registerShiftId`. `ACTIVE` session читает nullable current
-sale и восстанавливает local cart/recovery; `LOCKED` показывает блокирующее
+sale и восстанавливает серверный `DRAFT`; `LOCKED` показывает блокирующее
 состояние и не вызывает Sales/Product API. Отсутствующая или несовпадающая
 session возвращает на `/cashier-session`.
 
@@ -486,11 +466,10 @@ User action
 - routing и guards;
 - критичные auth/POS flows.
 
-Для checkout дополнительно проверяются: serialization команд продажи, persisted
-cart по cashier session, Decimal totals, точный barcode и последовательные сканы,
-nullable current sale, переход local -> server truth, payment builders,
-hold/resume, persisted recovery без автоматического replay, permissions, отмена
-и завершение cashier session.
+Для checkout дополнительно проверяются: атомарное создание первого server `DRAFT`,
+serialization и versioning команд, точный barcode, nullable current sale,
+payment builders от server total, hold/resume, reconciliation без replay,
+permissions, обязательная отмена последней позиции и завершение cashier session.
 
 Snapshot tests не заменяют поведенческие проверки.
 

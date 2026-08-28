@@ -2,8 +2,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Keyboard,
   LoaderCircle,
-  ReceiptText,
   RotateCcw,
 } from 'lucide-react';
 
@@ -65,7 +65,7 @@ export function ReturnsView({
     );
   }
 
-  if (recovery.pendingCommand) {
+  if (recovery.pendingCommand && !recovery.isSubmitting) {
     return (
       <main className="grid min-h-full place-items-center bg-workspace px-6 py-10">
         <section className="w-full max-w-lg rounded-2xl border border-border bg-card p-8 text-center shadow-[var(--shadow-surface)]">
@@ -179,7 +179,7 @@ export function ReturnsView({
           </div>
         </header>
 
-        <div className="grid min-h-0 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid min-h-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="min-w-0 space-y-5 rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)]">
             {mode === 'receipt' ? (
               <ReceiptReturnPanel {...receiptPanel} />
@@ -189,38 +189,37 @@ export function ReturnsView({
           </section>
 
           <aside className="h-fit rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)]">
-            <div className="flex items-center gap-3">
-              <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
-                <ReceiptText aria-hidden="true" />
-              </span>
-              <div>
-                <h2 className="font-bold">Текущий возврат</h2>
-                <p className="text-xs text-muted-foreground">
-                  {lineCount ? `${lineCount} позиций` : 'Выберите товары'}
-                </p>
+            <div className="border-b border-border pb-5">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-bold">К возврату</h2>
+                <span className="text-xs text-muted-foreground">
+                  {lineCount ? `${lineCount} позиций` : 'Нет товаров'}
+                </span>
               </div>
-            </div>
-            <div className="mt-5 rounded-2xl border border-primary/15 bg-primary/[0.045] p-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Предварительный итог
-              </p>
-              <p className="mt-2 text-3xl font-extrabold text-primary">
+              <p className="mt-2 text-3xl font-extrabold tabular-nums text-primary">
                 {formatCash(returnForm.previewTotal)}
               </p>
             </div>
             <FormField className="mt-5">
-              <Label htmlFor="return-reason">Причина возврата</Label>
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="return-reason">Причина возврата</Label>
+                <span className="text-xs text-muted-foreground">
+                  {returnForm.reason.length}/500
+                </span>
+              </div>
               <textarea
                 aria-label="Причина возврата"
-                className="min-h-24 w-full rounded-lg border border-input bg-background p-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
+                className="min-h-28 w-full resize-none rounded-lg border border-input bg-background p-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
                 id="return-reason"
                 maxLength={500}
                 onChange={(event) =>
                   returnForm.onReasonChange(event.target.value)
                 }
+                placeholder="Например: товар не подошёл по размеру"
                 value={returnForm.reason}
               />
               <Button
+                className="w-full justify-start border-border bg-muted/45 px-4 hover:bg-muted/75"
                 onClick={() =>
                   returnForm.onReasonKeyboardOpenChange(
                     !returnForm.showReasonKeyboard,
@@ -229,6 +228,7 @@ export function ReturnsView({
                 type="button"
                 variant="ghost"
               >
+                <Keyboard aria-hidden="true" />
                 Экранная клавиатура
               </Button>
               <VirtualKeyboardOverlay
@@ -254,7 +254,7 @@ export function ReturnsView({
               onClick={() => void returnForm.onOpenPayment()}
               type="button"
             >
-              Выбрать способ выплаты
+              Оформить возврат
             </Button>
           </aside>
         </div>

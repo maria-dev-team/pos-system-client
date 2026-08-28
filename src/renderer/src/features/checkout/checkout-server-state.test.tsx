@@ -354,6 +354,54 @@ describe('checkout sale queries', () => {
 });
 
 describe('sale command mutation', () => {
+  it('creates the first server DRAFT from one product and adopts the response', async () => {
+    const queryClient = createTestQueryClient();
+    const created = saleFixture(1);
+    queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), null);
+    vi.mocked(createSale).mockResolvedValue(created);
+    const { result } = renderHook(
+      () => useSaleCommandMutation(cashierSessionId, null),
+      { wrapper: wrapperFor(queryClient) },
+    );
+
+    await act(() =>
+      result.current.mutateAsync({ productId: 'product-1', type: 'add' }),
+    );
+
+    expect(createSale).toHaveBeenCalledWith({
+      items: [{ productId: 'product-1', quantity: '1' }],
+    });
+    expect(addSaleItem).not.toHaveBeenCalled();
+    expect(
+      queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),
+    ).toEqual(created);
+  });
+
+  it('reconciles an ambiguous first create without replaying it', async () => {
+    const queryClient = createTestQueryClient();
+    const created = saleFixture(1);
+    const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
+    queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), null);
+    vi.mocked(createSale).mockRejectedValue(networkError);
+    vi.mocked(getCurrentSale).mockResolvedValue(created);
+    const { result } = renderHook(
+      () => useSaleCommandMutation(cashierSessionId, null),
+      { wrapper: wrapperFor(queryClient) },
+    );
+
+    await expect(
+      act(() =>
+        result.current.mutateAsync({ productId: 'product-1', type: 'add' }),
+      ),
+    ).resolves.toEqual(created);
+
+    expect(createSale).toHaveBeenCalledOnce();
+    expect(getCurrentSale).toHaveBeenCalledOnce();
+    expect(
+      queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),
+    ).toEqual(created);
+  });
+
   it('rejects commands when the nullable current cache has no DRAFT', async () => {
     const queryClient = createTestQueryClient();
     queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), null);

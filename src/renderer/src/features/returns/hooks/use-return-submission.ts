@@ -6,6 +6,7 @@ import {
   type CreateWithoutReceiptReturnPayload,
   createReceiptReturn,
   createWithoutReceiptReturn,
+  triggerAntiFraudEvent,
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
@@ -33,6 +34,29 @@ const isAmbiguousReturnError = (error: unknown) =>
     error.code === 'ETIMEDOUT' ||
     error.response.status >= 500);
 
+const reportReturn = (
+  completedReturn: Awaited<ReturnType<typeof createReceiptReturn>>,
+  reason: string,
+): void => {
+  if (
+    completedReturn.transaction_type !== 'RETURN' ||
+    completedReturn.status !== 'COMPLETED'
+  ) {
+    return;
+  }
+
+  void triggerAntiFraudEvent({
+    externalEventId: `sale-refund:${completedReturn.id}`,
+    occurredAt: completedReturn.completed_at ?? new Date().toISOString(),
+    postBufferSeconds: 15,
+    preBufferSeconds: 15,
+    reason,
+    registerId: completedReturn.register_id,
+    saleId: completedReturn.id,
+    type: 'refund',
+  }).catch(() => undefined);
+};
+
 export function useReturnSubmission(cashierSessionId: string) {
   const queryClient = useQueryClient();
   const pendingCommand = useReturnsPendingStore(
@@ -48,6 +72,12 @@ export function useReturnSubmission(cashierSessionId: string) {
     if (command.type === 'receipt') {
       await queryClient.invalidateQueries({
         queryKey: queryKeys.sales.receipt(command.receiptNumber),
+        refetchType: 'none',
+      });
+      await queryClient.refetchQueries({
+        exact: true,
+        queryKey: queryKeys.sales.receipt(command.receiptNumber),
+        type: 'all',
       });
     }
   };
@@ -65,6 +95,7 @@ export function useReturnSubmission(cashierSessionId: string) {
               command.idempotencyKey,
               command.payload,
             );
+      reportReturn(result, command.payload.reason);
       await finish(command);
       return result;
     } catch (error) {

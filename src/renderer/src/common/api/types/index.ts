@@ -1,3 +1,7 @@
+export type {
+  AntiFraudEventType,
+  TriggerAntiFraudEventPayload,
+} from './anti-fraud.types';
 export type { LoginCredentials } from './auth.types';
 export type {
   EndCashierSessionPayload,
