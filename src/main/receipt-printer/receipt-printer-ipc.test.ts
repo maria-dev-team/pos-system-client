@@ -79,27 +79,37 @@ const request = (printWidthDots = 384) => ({
   receipt,
 });
 
-const rasterWindow = (contentHeight = 300) => {
-  const image = {
+const rasterWindow = (contentHeight = 300, scrollY = [0, 44]) => {
+  const firstBitmap = Buffer.from([1]);
+  const secondBitmap = Buffer.from([2]);
+  const firstImage = {
     resize: vi.fn().mockReturnThis(),
-    toBitmap: vi.fn().mockReturnValue(Buffer.alloc(1)),
+    toBitmap: vi.fn().mockReturnValue(firstBitmap),
+  };
+  const secondImage = {
+    resize: vi.fn().mockReturnThis(),
+    toBitmap: vi.fn().mockReturnValue(secondBitmap),
   };
   const printWindow = {
     destroy: vi.fn(),
     isDestroyed: vi.fn().mockReturnValue(false),
     loadURL: vi.fn().mockResolvedValue(undefined),
     webContents: {
-      capturePage: vi.fn().mockResolvedValue(image),
+      capturePage: vi
+        .fn()
+        .mockResolvedValueOnce(firstImage)
+        .mockResolvedValueOnce(secondImage),
       executeJavaScript: vi
         .fn()
         .mockResolvedValueOnce(contentHeight)
-        .mockResolvedValue(true),
+        .mockResolvedValueOnce(scrollY[0])
+        .mockResolvedValueOnce(scrollY[1]),
     },
   };
   electron.BrowserWindow.mockImplementation(function BrowserWindowMock() {
     return printWindow;
   } as never);
-  return { image, printWindow };
+  return { firstBitmap, firstImage, printWindow, secondBitmap, secondImage };
 };
 
 describe('registerReceiptPrinterIpc', () => {
@@ -196,8 +206,16 @@ describe('registerReceiptPrinterIpc', () => {
     expect(electron.BrowserWindow).not.toHaveBeenCalled();
   });
 
-  it('captures, encodes, and sends all raster bands before destroying the hidden window', async () => {
-    const { printWindow } = rasterWindow();
+  it('captures, encodes, and sends every source row when the bottom scroll is clamped', async () => {
+    const encodedFirstBand = Buffer.from([0x1d, 1]);
+    const encodedSecondBand = Buffer.from([0x1d, 2]);
+    const finalReceipt = Buffer.from([0x1b, 0x40]);
+    raster.encodeRasterBand
+      .mockReturnValueOnce(encodedFirstBand)
+      .mockReturnValueOnce(encodedSecondBand);
+    raster.buildEscPosReceipt.mockReturnValueOnce(finalReceipt);
+    const { firstBitmap, firstImage, printWindow, secondBitmap, secondImage } =
+      rasterWindow();
     const mainWebContents = register();
 
     await expect(
@@ -215,6 +233,21 @@ describe('registerReceiptPrinterIpc', () => {
         width: 384,
       }),
     );
+    expect(printWindow.webContents.executeJavaScript).toHaveBeenNthCalledWith(
+      1,
+      'document.fonts.ready.then(() => Math.ceil(document.documentElement.scrollHeight))',
+      true,
+    );
+    expect(printWindow.webContents.executeJavaScript).toHaveBeenNthCalledWith(
+      2,
+      'new Promise((resolve) => { scrollTo(0, 0); requestAnimationFrame(() => resolve(window.scrollY)); })',
+      true,
+    );
+    expect(printWindow.webContents.executeJavaScript).toHaveBeenNthCalledWith(
+      3,
+      'new Promise((resolve) => { scrollTo(0, 256); requestAnimationFrame(() => resolve(window.scrollY)); })',
+      true,
+    );
     expect(printWindow.webContents.capturePage).toHaveBeenNthCalledWith(
       1,
       { height: 256, width: 384, x: 0, y: 0 },
@@ -222,13 +255,69 @@ describe('registerReceiptPrinterIpc', () => {
     );
     expect(printWindow.webContents.capturePage).toHaveBeenNthCalledWith(
       2,
-      { height: 44, width: 384, x: 0, y: 0 },
+      { height: 44, width: 384, x: 0, y: 212 },
       { stayHidden: true },
     );
-    expect(raw.sendRawReceipt).toHaveBeenCalledWith(
-      'XP-58IIH',
-      expect.any(Buffer),
+    expect(firstImage.resize).toHaveBeenCalledWith({ height: 256, width: 384 });
+    expect(secondImage.resize).toHaveBeenCalledWith({ height: 44, width: 384 });
+    expect(firstImage.toBitmap).toHaveBeenCalledWith({ scaleFactor: 1 });
+    expect(secondImage.toBitmap).toHaveBeenCalledWith({ scaleFactor: 1 });
+    expect(raster.encodeRasterBand).toHaveBeenNthCalledWith(
+      1,
+      firstBitmap,
+      384,
+      256,
     );
+    expect(raster.encodeRasterBand).toHaveBeenNthCalledWith(
+      2,
+      secondBitmap,
+      384,
+      44,
+    );
+    expect(raster.buildEscPosReceipt).toHaveBeenCalledWith([
+      encodedFirstBand,
+      encodedSecondBand,
+    ]);
+    expect(raw.sendRawReceipt).toHaveBeenCalledWith('XP-58IIH', finalReceipt);
+    expect(printWindow.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an invalid actual scroll position without starting transport', async () => {
+    const { printWindow } = rasterWindow(300, [0, Number.NaN]);
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print')(
+        { sender: mainWebContents },
+        request(),
+      ),
+    ).resolves.toEqual({
+      code: 'PRINT_FAILED',
+      message: 'Не удалось подготовить чек для печати.',
+      ok: false,
+    });
+    expect(raw.sendRawReceipt).not.toHaveBeenCalled();
+    expect(printWindow.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('does not disclose capture failures to the cashier', async () => {
+    const { printWindow } = rasterWindow();
+    printWindow.webContents.capturePage
+      .mockReset()
+      .mockRejectedValue(new Error('internal path /tmp/cashier-data'));
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print')(
+        { sender: mainWebContents },
+        request(),
+      ),
+    ).resolves.toEqual({
+      code: 'PRINT_FAILED',
+      message: 'Не удалось подготовить чек для печати.',
+      ok: false,
+    });
+    expect(raw.sendRawReceipt).not.toHaveBeenCalled();
     expect(printWindow.destroy).toHaveBeenCalledOnce();
   });
 
@@ -293,5 +382,24 @@ describe('registerReceiptPrinterIpc', () => {
       ok: false,
     });
     expect(printWindow.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('does not disclose an unreviewed transport failure to the cashier', async () => {
+    rasterWindow();
+    raw.sendRawReceipt.mockRejectedValue(
+      new Error('internal queue diagnostic /var/spool/private'),
+    );
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print')(
+        { sender: mainWebContents },
+        request(),
+      ),
+    ).resolves.toEqual({
+      code: 'PRINT_FAILED',
+      message: 'Не удалось напечатать чек.',
+      ok: false,
+    });
   });
 });

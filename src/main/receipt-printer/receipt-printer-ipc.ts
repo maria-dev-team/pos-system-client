@@ -13,6 +13,14 @@ import {
 
 const GET_PRINTERS_CHANNEL = 'receipt-printer:get-printers';
 const PRINT_CHANNEL = 'receipt-printer:print';
+const RASTER_FAILURE_MESSAGE = 'Не удалось подготовить чек для печати.';
+const isCashierSafeTransportError = (error: unknown): error is Error =>
+  error instanceof Error &&
+  [
+    'Печать ESC/POS не поддерживается этой системой.',
+    'Системная очередь печати не ответила вовремя.',
+    'Системная очередь печати отклонила чек.',
+  ].includes(error.message);
 
 type ReceiptPrintRequest = {
   deviceName: string | null;
@@ -157,12 +165,24 @@ const printReceipt = async (
     const bands: Buffer[] = [];
     for (let y = 0; y < contentHeight; y += 256) {
       const height = Math.min(256, contentHeight - y);
-      await printWindow.webContents.executeJavaScript(
-        `new Promise((resolve) => { scrollTo(0, ${y}); requestAnimationFrame(() => resolve(true)); })`,
+      const actualScrollY = await printWindow.webContents.executeJavaScript(
+        `new Promise((resolve) => { scrollTo(0, ${y}); requestAnimationFrame(() => resolve(window.scrollY)); })`,
         true,
       );
+      if (
+        typeof actualScrollY !== 'number' ||
+        !Number.isFinite(actualScrollY) ||
+        actualScrollY < 0 ||
+        actualScrollY > y
+      ) {
+        throw new Error('Invalid receipt scroll position');
+      }
+      const captureY = y - actualScrollY;
+      if (captureY + height > 256) {
+        throw new Error('Invalid receipt capture position');
+      }
       const captured = await printWindow.webContents.capturePage(
-        { height, width: request.printWidthDots, x: 0, y: 0 },
+        { height, width: request.printWidthDots, x: 0, y: captureY },
         { stayHidden: true },
       );
       const bitmap = captured
@@ -170,20 +190,30 @@ const printReceipt = async (
         .toBitmap({ scaleFactor: 1 });
       bands.push(encodeRasterBand(bitmap, request.printWidthDots, height));
     }
-    await sendRawReceipt(request.deviceName, buildEscPosReceipt(bands));
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof DefaultPrinterNotFoundError) {
+    const encodedReceipt = buildEscPosReceipt(bands);
+    try {
+      await sendRawReceipt(request.deviceName, encodedReceipt);
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof DefaultPrinterNotFoundError) {
+        return {
+          code: 'PRINTER_NOT_FOUND',
+          message: 'Системный принтер по умолчанию не настроен.',
+          ok: false,
+        };
+      }
       return {
-        code: 'PRINTER_NOT_FOUND',
-        message: 'Системный принтер по умолчанию не настроен.',
+        code: 'PRINT_FAILED',
+        message: isCashierSafeTransportError(error)
+          ? error.message
+          : 'Не удалось напечатать чек.',
         ok: false,
       };
     }
+  } catch {
     return {
       code: 'PRINT_FAILED',
-      message:
-        error instanceof Error ? error.message : 'Не удалось напечатать чек.',
+      message: RASTER_FAILURE_MESSAGE,
       ok: false,
     };
   } finally {

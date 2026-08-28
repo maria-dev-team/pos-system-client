@@ -42,9 +42,18 @@ contextBridge.exposeInMainWorld('camera', {
 
 contextBridge.exposeInMainWorld('receiptPrinter', {
   getPrinters: () => ipcRenderer.invoke('receipt-printer:get-printers'),
-  print: (request: {
+  print: ({
+    deviceName,
+    printWidthDots,
+    receipt,
+  }: {
     deviceName: string | null;
     printWidthDots: number;
     receipt: PrintableReceipt;
-  }) => ipcRenderer.invoke('receipt-printer:print', request),
+  }) =>
+    ipcRenderer.invoke('receipt-printer:print', {
+      deviceName,
+      printWidthDots,
+      receipt,
+    }),
 });
