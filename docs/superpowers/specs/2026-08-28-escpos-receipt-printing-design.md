@@ -32,7 +32,7 @@ Direct USB was rejected because Windows would require replacing the normal print
 1. The renderer sends the existing validated `PrintableReceipt` and printer settings through the existing preload API.
 2. The main process renders the existing CSP-protected receipt HTML in a hidden sandboxed `BrowserWindow` whose CSS width equals the configured print-head width.
 3. The document height is measured after loading. Chromium scrolls and captures the document in bands of at most 256 CSS pixels so long receipts do not require one very tall native image.
-4. Each band is normalized to the configured pixel dimensions, converted from BGRA to monochrome with a fixed luminance threshold, and packed left-to-right into ESC/POS raster bytes.
+4. Each band is normalized to the configured pixel dimensions, converted from its native bitmap to monochrome with a fixed threshold, and packed left-to-right into ESC/POS raster bytes.
 5. The encoder emits `ESC @`, one or more `GS v 0` bands, and a small final feed. It emits no leading feed and no fixed page height.
 6. Windows submits the bytes through Winspool as datatype `RAW`. macOS pipes the bytes to `/usr/bin/lp` with the `raw` option.
 7. The hidden window and any temporary Windows spool file are removed in `finally` paths. Printing never mutates or closes the completed sale.
@@ -74,7 +74,7 @@ window.receiptPrinter.print({
 
 ## Raster Encoding
 
-The target width is rounded up to whole bytes, with unused rightmost bits left white. BGRA pixels are alpha-composited against white and become black when their luminance is below `192`; no dithering is needed for the first version because the document contains only text and CSS rules.
+The target width is rounded up to whole bytes, with unused rightmost bits left white. The HTML has an opaque white background and only monochrome content. Electron documents native bitmap channel order as platform-dependent, so the encoder deliberately uses the minimum of the first three bytes for each four-byte pixel; this produces the same grayscale value for RGB, BGR, ARGB, and ABGR layouts. A pixel becomes black below `192`. No dithering is needed for the first version because the document contains only text and CSS rules.
 
 Each ESC/POS `GS v 0` command contains at most 256 raster rows. This keeps job chunks below the XP-58IIH input-buffer limits while preserving arbitrary receipt length. The encoder appends three feed lines for manual tear-off. It does not send a cut command.
 
