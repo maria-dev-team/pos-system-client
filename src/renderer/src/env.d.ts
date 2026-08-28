@@ -20,7 +20,7 @@ interface Window {
     >;
     print: (request: {
       deviceName: string | null;
-      printWidthDots: number;
+      paperWidthMm: 58 | 80;
       receipt: {
         cashier: string;
         completedAt: string;

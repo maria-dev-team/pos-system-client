@@ -2,12 +2,12 @@ const STORAGE_KEY = 'maria.receipt-printer';
 
 export type ReceiptPrinterSettings = {
   deviceName: string | null;
-  printWidthDots: number;
+  paperWidthMm: 58 | 80;
 };
 
 export const defaultReceiptPrinterSettings: ReceiptPrinterSettings = {
   deviceName: null,
-  printWidthDots: 384,
+  paperWidthMm: 58,
 };
 
 const isSettings = (value: unknown): value is ReceiptPrinterSettings => {
@@ -17,11 +17,27 @@ const isSettings = (value: unknown): value is ReceiptPrinterSettings => {
     (settings.deviceName === null ||
       (typeof settings.deviceName === 'string' &&
         settings.deviceName.length > 0)) &&
-    typeof settings.printWidthDots === 'number' &&
-    Number.isInteger(settings.printWidthDots) &&
-    settings.printWidthDots >= 128 &&
-    settings.printWidthDots <= 832
+    (settings.paperWidthMm === 58 || settings.paperWidthMm === 80)
   );
+};
+
+const migrateDotSettings = (value: unknown): ReceiptPrinterSettings | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const settings = value as Record<string, unknown>;
+  if (
+    settings.deviceName !== null &&
+    (typeof settings.deviceName !== 'string' ||
+      settings.deviceName.length === 0)
+  ) {
+    return null;
+  }
+  if (settings.printWidthDots !== 384 && settings.printWidthDots !== 576) {
+    return null;
+  }
+  return {
+    deviceName: settings.deviceName as string | null,
+    paperWidthMm: settings.printWidthDots === 576 ? 80 : 58,
+  };
 };
 
 export const readReceiptPrinterSettings = (): ReceiptPrinterSettings => {
@@ -29,7 +45,9 @@ export const readReceiptPrinterSettings = (): ReceiptPrinterSettings => {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (!stored) return defaultReceiptPrinterSettings;
     const parsed: unknown = JSON.parse(stored);
-    return isSettings(parsed) ? parsed : defaultReceiptPrinterSettings;
+    return isSettings(parsed)
+      ? parsed
+      : (migrateDotSettings(parsed) ?? defaultReceiptPrinterSettings);
   } catch {
     return defaultReceiptPrinterSettings;
   }

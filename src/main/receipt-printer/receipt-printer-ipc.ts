@@ -1,19 +1,12 @@
-import {
-  BrowserWindow,
-  type BrowserWindow as ElectronBrowserWindow,
-  ipcMain,
-} from 'electron';
+import { type BrowserWindow as ElectronBrowserWindow, ipcMain } from 'electron';
 
-import { buildEscPosReceipt, encodeRasterBand } from './escpos-raster';
+import { buildEscPosTextReceipt } from './escpos-text';
 import { DefaultPrinterNotFoundError, sendRawReceipt } from './raw-printer';
-import {
-  type PrintableReceipt,
-  renderReceiptDocument,
-} from './receipt-document';
+import type { PrintableReceipt, ReceiptPaperWidthMm } from './receipt-document';
 
 const GET_PRINTERS_CHANNEL = 'receipt-printer:get-printers';
 const PRINT_CHANNEL = 'receipt-printer:print';
-const RASTER_FAILURE_MESSAGE = 'Не удалось подготовить чек для печати.';
+const ENCODING_FAILURE_MESSAGE = 'Не удалось подготовить чек для печати.';
 const isCashierSafeTransportError = (error: unknown): error is Error =>
   error instanceof Error &&
   [
@@ -24,7 +17,7 @@ const isCashierSafeTransportError = (error: unknown): error is Error =>
 
 type ReceiptPrintRequest = {
   deviceName: string | null;
-  printWidthDots: number;
+  paperWidthMm: ReceiptPaperWidthMm;
   receipt: PrintableReceipt;
 };
 
@@ -110,10 +103,7 @@ const isPrintableReceipt = (value: unknown): value is PrintableReceipt => {
 const isPrintRequest = (value: unknown): value is ReceiptPrintRequest =>
   isRecord(value) &&
   (value.deviceName === null || isText(value.deviceName, 500)) &&
-  typeof value.printWidthDots === 'number' &&
-  Number.isInteger(value.printWidthDots) &&
-  value.printWidthDots >= 128 &&
-  value.printWidthDots <= 832 &&
+  (value.paperWidthMm === 58 || value.paperWidthMm === 80) &&
   isPrintableReceipt(value.receipt);
 
 const assertSender = (
@@ -128,103 +118,38 @@ const assertSender = (
 const printReceipt = async (
   request: ReceiptPrintRequest,
 ): Promise<ReceiptPrintResult> => {
-  let printWindow: ElectronBrowserWindow | undefined;
-
+  let encodedReceipt: Buffer;
   try {
-    printWindow = new BrowserWindow({
-      backgroundColor: '#ffffff',
-      height: 256,
-      show: false,
-      useContentSize: true,
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
-      width: request.printWidthDots,
-    });
-    const html = renderReceiptDocument(request.receipt);
-    await printWindow.loadURL(
-      `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`,
+    encodedReceipt = buildEscPosTextReceipt(
+      request.receipt,
+      request.paperWidthMm,
     );
-    const contentHeight = await printWindow.webContents.executeJavaScript(
-      'document.fonts.ready.then(() => Math.ceil(document.documentElement.scrollHeight))',
-      true,
-    );
-    if (
-      typeof contentHeight !== 'number' ||
-      !Number.isFinite(contentHeight) ||
-      contentHeight <= 0
-    ) {
-      return {
-        code: 'PRINT_FAILED',
-        message: 'Не удалось определить размер чека.',
-        ok: false,
-      };
-    }
-    const contentWidth = await printWindow.webContents.executeJavaScript(
-      'document.documentElement.clientWidth',
-      true,
-    );
-    if (contentWidth !== request.printWidthDots) {
-      throw new Error('Invalid receipt content width');
-    }
-    const bands: Buffer[] = [];
-    for (let y = 0; y < contentHeight; y += 256) {
-      const height = Math.min(256, contentHeight - y);
-      const actualScrollY = await printWindow.webContents.executeJavaScript(
-        `new Promise((resolve) => { scrollTo(0, ${y}); requestAnimationFrame(() => resolve(window.scrollY)); })`,
-        true,
-      );
-      if (
-        typeof actualScrollY !== 'number' ||
-        !Number.isFinite(actualScrollY) ||
-        actualScrollY < 0 ||
-        actualScrollY > y
-      ) {
-        throw new Error('Invalid receipt scroll position');
-      }
-      const captureY = y - actualScrollY;
-      if (captureY + height > 256) {
-        throw new Error('Invalid receipt capture position');
-      }
-      const captured = await printWindow.webContents.capturePage(
-        { height, width: request.printWidthDots, x: 0, y: captureY },
-        { stayHidden: true },
-      );
-      const bitmap = captured
-        .resize({ height, width: request.printWidthDots })
-        .toBitmap({ scaleFactor: 1 });
-      bands.push(encodeRasterBand(bitmap, request.printWidthDots, height));
-    }
-    const encodedReceipt = buildEscPosReceipt(bands);
-    try {
-      await sendRawReceipt(request.deviceName, encodedReceipt);
-      return { ok: true };
-    } catch (error) {
-      if (error instanceof DefaultPrinterNotFoundError) {
-        return {
-          code: 'PRINTER_NOT_FOUND',
-          message: 'Системный принтер по умолчанию не настроен.',
-          ok: false,
-        };
-      }
-      return {
-        code: 'PRINT_FAILED',
-        message: isCashierSafeTransportError(error)
-          ? error.message
-          : 'Не удалось напечатать чек.',
-        ok: false,
-      };
-    }
   } catch {
     return {
       code: 'PRINT_FAILED',
-      message: RASTER_FAILURE_MESSAGE,
+      message: ENCODING_FAILURE_MESSAGE,
       ok: false,
     };
-  } finally {
-    if (printWindow && !printWindow.isDestroyed()) printWindow.destroy();
+  }
+
+  try {
+    await sendRawReceipt(request.deviceName, encodedReceipt);
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof DefaultPrinterNotFoundError) {
+      return {
+        code: 'PRINTER_NOT_FOUND',
+        message: 'Системный принтер по умолчанию не настроен.',
+        ok: false,
+      };
+    }
+    return {
+      code: 'PRINT_FAILED',
+      message: isCashierSafeTransportError(error)
+        ? error.message
+        : 'Не удалось напечатать чек.',
+      ok: false,
+    };
   }
 };
 

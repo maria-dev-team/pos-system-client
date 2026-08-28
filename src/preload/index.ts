@@ -44,16 +44,16 @@ contextBridge.exposeInMainWorld('receiptPrinter', {
   getPrinters: () => ipcRenderer.invoke('receipt-printer:get-printers'),
   print: ({
     deviceName,
-    printWidthDots,
+    paperWidthMm,
     receipt,
   }: {
     deviceName: string | null;
-    printWidthDots: number;
+    paperWidthMm: 58 | 80;
     receipt: PrintableReceipt;
   }) =>
     ipcRenderer.invoke('receipt-printer:print', {
       deviceName,
-      printWidthDots,
+      paperWidthMm,
       receipt,
     }),
 });

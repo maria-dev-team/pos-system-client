@@ -18,12 +18,14 @@ import {
   DialogTitle,
 } from '@renderer/common/components/ui/dialog';
 import { FormField } from '@renderer/common/components/ui/form-field';
-import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
-import { renderReceiptDocument } from '../../../../main/receipt-printer/receipt-document';
+import {
+  receiptColumnsForPaper,
+  renderReceiptText,
+} from '../../../../main/receipt-printer/receipt-document';
 import {
   readReceiptPrinterSettings,
   writeReceiptPrinterSettings,
@@ -80,8 +82,8 @@ function ReceiptPrinterSettingsDialog({
   const [deviceName, setDeviceName] = useState(
     initialSettings.deviceName ?? '',
   );
-  const [printWidth, setPrintWidth] = useState(
-    String(initialSettings.printWidthDots),
+  const [paperWidthMm, setPaperWidthMm] = useState(
+    initialSettings.paperWidthMm,
   );
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -135,18 +137,11 @@ function ReceiptPrinterSettingsDialog({
       .catch(() => setError('Не удалось получить список принтеров.'));
   }, [initialSettings.deviceName, open]);
 
-  const parsedWidth = Number(printWidth);
-  const validWidth =
-    Number.isInteger(parsedWidth) && parsedWidth >= 128 && parsedWidth <= 832;
   const currentSettings = () => ({
     deviceName: deviceName || null,
-    printWidthDots: parsedWidth,
+    paperWidthMm,
   });
   const save = () => {
-    if (!validWidth) {
-      setError('Укажите целую ширину от 128 до 832 точек.');
-      return;
-    }
     if (!writeReceiptPrinterSettings(currentSettings())) {
       setError('Не удалось сохранить настройки принтера.');
       return;
@@ -155,12 +150,8 @@ function ReceiptPrinterSettingsDialog({
     onOpenChange(false);
   };
   const previewTest = () => {
-    if (!window.receiptPrinter || !validWidth) {
-      setError(
-        window.receiptPrinter
-          ? 'Укажите целую ширину от 128 до 832 точек.'
-          : 'Печать недоступна в этом окружении.',
-      );
+    if (!window.receiptPrinter) {
+      setError('Печать недоступна в этом окружении.');
       return;
     }
     setError(undefined);
@@ -171,12 +162,8 @@ function ReceiptPrinterSettingsDialog({
   };
   const printTest = async () => {
     const bridge = window.receiptPrinter;
-    if (!bridge || !validWidth || !previewReceipt) {
-      setError(
-        bridge
-          ? 'Укажите целую ширину от 128 до 832 точек.'
-          : 'Печать недоступна в этом окружении.',
-      );
+    if (!bridge || !previewReceipt) {
+      setError('Печать недоступна в этом окружении.');
       return;
     }
     setIsTesting(true);
@@ -235,34 +222,18 @@ function ReceiptPrinterSettingsDialog({
             ) : null}
           </FormField>
           <FormField>
-            <Label htmlFor="receipt-printer-width">Ширина печати, точек</Label>
-            <Input
-              aria-invalid={Boolean(printWidth) && !validWidth}
+            <Label htmlFor="receipt-printer-width">Ширина бумаги</Label>
+            <select
+              className="h-12 w-full rounded-lg border border-input bg-background px-4 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
               id="receipt-printer-width"
-              inputMode="numeric"
-              max="832"
-              min="128"
-              onChange={(event) => setPrintWidth(event.target.value)}
-              step="1"
-              type="number"
-              value={printWidth}
-            />
-            <div className="flex gap-2">
-              {[
-                [384, '58 мм — 384 точки'],
-                [576, '80 мм — 576 точек'],
-              ].map(([width, label]) => (
-                <Button
-                  key={width}
-                  className="h-10 px-3 text-sm"
-                  onClick={() => setPrintWidth(String(width))}
-                  type="button"
-                  variant="ghost"
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
+              onChange={(event) =>
+                setPaperWidthMm(Number(event.target.value) as 58 | 80)
+              }
+              value={paperWidthMm}
+            >
+              <option value="58">58 мм</option>
+              <option value="80">80 мм</option>
+            </select>
           </FormField>
           {error ? (
             <p className="text-sm font-medium text-destructive" role="alert">
@@ -304,18 +275,18 @@ function ReceiptPrinterSettingsDialog({
             <DialogHeader>
               <DialogTitle>Предпросмотр тестового чека</DialogTitle>
               <DialogDescription>
-                Ширина печати: {parsedWidth} точек. Ниже показан документ,
-                который будет передан системе печати.
+                Ширина бумаги: {paperWidthMm} мм. Ниже показан текст, который
+                будет передан системе печати.
               </DialogDescription>
             </DialogHeader>
             <div className="flex max-h-[65vh] justify-center overflow-auto rounded-xl bg-muted p-4">
-              <iframe
-                className="h-[60vh] shrink-0 border-0 bg-white shadow-sm"
-                sandbox=""
-                srcDoc={renderReceiptDocument(previewReceipt)}
-                style={{ width: `${parsedWidth}px` }}
-                title="Содержимое тестового чека"
-              />
+              <pre
+                aria-label="Содержимое тестового чека"
+                className="shrink-0 whitespace-pre bg-white p-3 font-mono text-xs text-black shadow-sm"
+                style={{ width: `${receiptColumnsForPaper(paperWidthMm)}ch` }}
+              >
+                {renderReceiptText(previewReceipt, paperWidthMm)}
+              </pre>
             </div>
             {error ? (
               <p className="text-sm font-medium text-destructive" role="alert">

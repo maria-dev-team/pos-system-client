@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import * as receiptDocument from './receipt-document';
 
-const { renderReceiptDocument } = receiptDocument;
 type PrintableReceipt = receiptDocument.PrintableReceipt;
+
+const renderReceiptText = (
+  receiptDocument as unknown as {
+    renderReceiptText: (
+      receipt: PrintableReceipt,
+      paperWidthMm: 58 | 80,
+    ) => string;
+  }
+).renderReceiptText;
 
 const receipt: PrintableReceipt = {
   cashier: 'Айжан Қасымова',
@@ -46,33 +54,27 @@ const receipt: PrintableReceipt = {
   total: '1150.00',
 };
 
-describe('renderReceiptDocument', () => {
-  it('renders a safe non-fiscal receipt in line order', () => {
-    const html = renderReceiptDocument(receipt);
+describe('renderReceiptText', () => {
+  it('formats and wraps a 58 mm receipt within 32 characters', () => {
+    const text = renderReceiptText(receipt, 58);
 
-    expect(html).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
-    expect(html).toContain('НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ');
-    expect(html).toContain('Айжан Қасымова');
-    expect(html).toContain('Әже наны');
-    expect(html).toContain('Ұзын тауар &lt;script&gt;alert(1)&lt;/script&gt;');
-    expect(html).not.toContain('<script>alert(1)</script>');
-    expect(html.indexOf('Әже наны')).toBeLessThan(html.indexOf('Ұзын тауар'));
-    expect(html).toContain('1 шт. × 250,00 ₸');
-    expect(html).toContain('Получено: 1 200,00 ₸');
-    expect(html).toContain('Сдача: 50,00 ₸');
+    expect(text).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
+    expect(text).toContain('НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ');
+    expect(text).toContain('Айжан Қасымова');
+    expect(text).toContain('Әже наны');
+    expect(text).toContain('Ұзын тауар');
+    expect(text).toContain('<script>alert(1)</script>');
+    expect(text.indexOf('Әже наны')).toBeLessThan(text.indexOf('Ұзын тауар'));
+    expect(text).toContain('1 шт. x 250,00 KZT');
+    expect(text).toContain('Получено: 1 200,00 KZT');
+    expect(text).toContain('Сдача: 50,00 KZT');
+    expect(text.split('\n').every((line) => [...line].length <= 32)).toBe(true);
   });
-});
 
-describe('receipt document layout', () => {
-  it('uses an opaque, edge-to-edge raster canvas', () => {
-    const html = renderReceiptDocument(receipt);
+  it('uses 48 columns for 80 mm paper', () => {
+    const text = renderReceiptText(receipt, 80);
 
-    expect(html).toContain('html, body { background: #fff;');
-    expect(html).toContain('scrollbar-width: none;');
-    expect(html).toContain('html::-webkit-scrollbar { display: none; }');
-    expect(html).toContain('padding: 0 8px;');
-    expect(html).toContain('flex: 0 1 auto;');
-    expect(html).toContain('overflow-wrap: anywhere;');
-    expect(receiptDocument).not.toHaveProperty('calculateReceiptPageSize');
+    expect(text).toContain('-'.repeat(48));
+    expect(text.split('\n').every((line) => [...line].length <= 48)).toBe(true);
   });
 });

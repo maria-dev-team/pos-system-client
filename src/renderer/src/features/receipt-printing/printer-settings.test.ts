@@ -9,34 +9,33 @@ import {
 describe('receipt printer settings', () => {
   beforeEach(() => window.localStorage.clear());
 
-  it('defaults to the system printer and 384 dots', () => {
+  it('defaults to the system printer and 58 mm paper', () => {
     expect(defaultReceiptPrinterSettings).toEqual({
       deviceName: null,
-      printWidthDots: 384,
+      paperWidthMm: 58,
     });
     expect(readReceiptPrinterSettings()).toEqual(defaultReceiptPrinterSettings);
   });
 
-  it('persists a selected system device and custom width', () => {
+  it('persists a selected system device and supported paper width', () => {
     expect(
       writeReceiptPrinterSettings({
         deviceName: 'XP-58IIH',
-        printWidthDots: 512,
+        paperWidthMm: 80,
       }),
     ).toBe(true);
 
     expect(readReceiptPrinterSettings()).toEqual({
       deviceName: 'XP-58IIH',
-      printWidthDots: 512,
+      paperWidthMm: 80,
     });
   });
 
   it('ignores malformed or unsafe stored values', () => {
     for (const stored of [
-      { deviceName: 'XP-58IIH', printWidthDots: 127 },
-      { deviceName: 'XP-58IIH', printWidthDots: 833 },
-      { deviceName: 'XP-58IIH', printWidthDots: 384.5 },
-      { deviceName: 'XP-58IIH', pageWidthMm: 58 },
+      { deviceName: 'XP-58IIH', paperWidthMm: 57 },
+      { deviceName: 'XP-58IIH', paperWidthMm: 81 },
+      { deviceName: 'XP-58IIH', paperWidthMm: '58' },
     ]) {
       window.localStorage.setItem(
         'maria.receipt-printer',
@@ -44,9 +43,21 @@ describe('receipt printer settings', () => {
       );
       expect(readReceiptPrinterSettings()).toEqual({
         deviceName: null,
-        printWidthDots: 384,
+        paperWidthMm: 58,
       });
     }
+  });
+
+  it('migrates the internal dot presets without exposing them again', () => {
+    window.localStorage.setItem(
+      'maria.receipt-printer',
+      JSON.stringify({ deviceName: 'XP-58IIH', printWidthDots: 576 }),
+    );
+
+    expect(readReceiptPrinterSettings()).toEqual({
+      deviceName: 'XP-58IIH',
+      paperWidthMm: 80,
+    });
   });
 
   it('reports when settings cannot be stored', () => {
@@ -59,7 +70,7 @@ describe('receipt printer settings', () => {
     expect(
       writeReceiptPrinterSettings({
         deviceName: null,
-        printWidthDots: 384,
+        paperWidthMm: 58,
       }),
     ).toBe(false);
     setItem.mockRestore();

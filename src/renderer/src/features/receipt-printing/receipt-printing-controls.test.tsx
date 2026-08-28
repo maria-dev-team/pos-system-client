@@ -196,7 +196,7 @@ describe('receipt printing controls', () => {
     delete window.receiptPrinter;
   });
 
-  it('saves the 80 mm, 576 dot preset for the selected printer', async () => {
+  it('saves the selected 80 mm paper width without exposing dots', async () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
@@ -205,19 +205,19 @@ describe('receipt printing controls', () => {
       await screen.findByLabelText('Принтер'),
       'XP-58IIH',
     );
-    await user.click(screen.getByRole('button', { name: '80 мм — 576 точек' }));
+    await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
 
     expect(
       JSON.parse(window.localStorage.getItem('maria.receipt-printer') ?? ''),
-    ).toEqual({ deviceName: 'XP-58IIH', printWidthDots: 576 });
+    ).toEqual({ deviceName: 'XP-58IIH', paperWidthMm: 80 });
   });
 
   it('resets a disappeared stored printer before saving', async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
       'maria.receipt-printer',
-      JSON.stringify({ deviceName: 'Removed printer', printWidthDots: 384 }),
+      JSON.stringify({ deviceName: 'Removed printer', paperWidthMm: 58 }),
     );
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
@@ -231,7 +231,7 @@ describe('receipt printing controls', () => {
 
     expect(
       JSON.parse(window.localStorage.getItem('maria.receipt-printer') ?? ''),
-    ).toEqual({ deviceName: null, printWidthDots: 384 });
+    ).toEqual({ deviceName: null, paperWidthMm: 58 });
   });
 
   it('keeps the settings open when storage is unavailable', async () => {
@@ -259,7 +259,7 @@ describe('receipt printing controls', () => {
     vi.mocked(window.receiptPrinter!.print).mockReturnValue(printing.promise);
     window.localStorage.setItem(
       'maria.receipt-printer',
-      JSON.stringify({ deviceName: 'XP-58IIH', printWidthDots: 512 }),
+      JSON.stringify({ deviceName: 'XP-58IIH', paperWidthMm: 80 }),
     );
     renderWithClient(
       <ReceiptPrintButton
@@ -276,7 +276,7 @@ describe('receipt printing controls', () => {
       expect(window.receiptPrinter?.print).toHaveBeenCalledWith(
         expect.objectContaining({
           deviceName: 'XP-58IIH',
-          printWidthDots: 512,
+          paperWidthMm: 80,
           receipt: expect.objectContaining({
             cashier: 'Айжан Қасымова',
             receiptNumber: '42',
@@ -289,7 +289,7 @@ describe('receipt printing controls', () => {
     await waitFor(() => expect(printButton).toBeEnabled());
   });
 
-  it('previews at the default 384 dot width before sending the current form settings', async () => {
+  it('previews a 58 mm text receipt before sending the current settings', async () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
@@ -305,15 +305,11 @@ describe('receipt printing controls', () => {
     });
     expect(window.receiptPrinter?.print).not.toHaveBeenCalled();
     expect(
-      within(preview)
-        .getByTitle('Содержимое тестового чека')
-        .getAttribute('srcdoc'),
-    ).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
-    expect(within(preview).getByTitle('Содержимое тестового чека')).toHaveStyle(
-      {
-        width: '384px',
-      },
-    );
+      within(preview).getByLabelText('Содержимое тестового чека'),
+    ).toHaveTextContent('НЕФИСКАЛЬНЫЙ ЧЕК');
+    expect(
+      within(preview).getByText(/Ширина бумаги: 58 мм/),
+    ).toBeInTheDocument();
 
     await user.click(within(preview).getByRole('button', { name: 'Печатать' }));
 
@@ -321,21 +317,19 @@ describe('receipt printing controls', () => {
       expect(window.receiptPrinter?.print).toHaveBeenCalledWith(
         expect.objectContaining({
           deviceName: 'XP-58IIH',
-          printWidthDots: 384,
+          paperWidthMm: 58,
           receipt: expect.objectContaining({ receiptNumber: 'TEST' }),
         }),
       ),
     );
   });
 
-  it('prints a custom 512 dot test receipt', async () => {
+  it('prints an 80 mm test receipt', async () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
     await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
-    const width = screen.getByLabelText('Ширина печати, точек');
-    await user.clear(width);
-    await user.type(width, '512');
+    await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
     await user.click(screen.getByRole('button', { name: 'Тестовая печать' }));
     const preview = await screen.findByRole('dialog', {
       name: 'Предпросмотр тестового чека',
@@ -344,27 +338,9 @@ describe('receipt printing controls', () => {
 
     await waitFor(() =>
       expect(window.receiptPrinter?.print).toHaveBeenCalledWith(
-        expect.objectContaining({ printWidthDots: 512 }),
+        expect.objectContaining({ paperWidthMm: 80 }),
       ),
     );
-  });
-
-  it('keeps the dialog open for a non-integer width', async () => {
-    const user = userEvent.setup();
-    renderWithClient(<ReceiptPrinterSettingsButton />);
-
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
-    const width = screen.getByLabelText('Ширина печати, точек');
-    await user.clear(width);
-    await user.type(width, '384.5');
-    await user.click(screen.getByRole('button', { name: 'Сохранить' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Укажите целую ширину от 128 до 832 точек.',
-    );
-    expect(
-      screen.getByRole('dialog', { name: 'Принтер чека' }),
-    ).toBeInTheDocument();
   });
 
   it('recovers when the test print bridge rejects', async () => {
@@ -394,7 +370,7 @@ describe('receipt printing controls', () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
       'maria.receipt-printer',
-      JSON.stringify({ deviceName: 'XP-58IIH', printWidthDots: 384 }),
+      JSON.stringify({ deviceName: 'XP-58IIH', paperWidthMm: 58 }),
     );
     vi.mocked(window.receiptPrinter!.print).mockResolvedValue({
       code: 'PRINTER_NOT_FOUND',
