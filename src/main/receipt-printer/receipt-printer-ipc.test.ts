@@ -89,6 +89,7 @@ const request = (
 
 const rasterWindow = (
   contentHeight = 300,
+  contentWidth = 384,
   scrollY = [0, 44],
 ): {
   firstBitmap: Buffer;
@@ -124,6 +125,7 @@ const rasterWindow = (
       executeJavaScript: vi
         .fn()
         .mockResolvedValueOnce(contentHeight)
+        .mockResolvedValueOnce(contentWidth)
         .mockResolvedValueOnce(scrollY[0])
         .mockResolvedValueOnce(scrollY[1]),
     },
@@ -196,6 +198,29 @@ describe('registerReceiptPrinterIpc', () => {
     expect(raw.sendRawReceipt).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['items', { ...receipt, items: Array(1) }],
+    ['payments', { ...receipt, payments: Array(1) }],
+  ])(
+    'rejects a sparse %s array before rendering or transport',
+    async (_, sparseReceipt) => {
+      const mainWebContents = register();
+
+      await expect(
+        handlerFor('receipt-printer:print')(
+          { sender: mainWebContents },
+          { ...request(), receipt: sparseReceipt },
+        ),
+      ).resolves.toEqual({
+        code: 'PRINT_FAILED',
+        message: 'Некорректные данные чека.',
+        ok: false,
+      });
+      expect(electron.BrowserWindow).not.toHaveBeenCalled();
+      expect(raw.sendRawReceipt).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not silently fall back when the selected printer is missing', async () => {
     const mainWebContents = register();
 
@@ -262,11 +287,16 @@ describe('registerReceiptPrinterIpc', () => {
     );
     expect(printWindow.webContents.executeJavaScript).toHaveBeenNthCalledWith(
       2,
-      'new Promise((resolve) => { scrollTo(0, 0); requestAnimationFrame(() => resolve(window.scrollY)); })',
+      'document.documentElement.clientWidth',
       true,
     );
     expect(printWindow.webContents.executeJavaScript).toHaveBeenNthCalledWith(
       3,
+      'new Promise((resolve) => { scrollTo(0, 0); requestAnimationFrame(() => resolve(window.scrollY)); })',
+      true,
+    );
+    expect(printWindow.webContents.executeJavaScript).toHaveBeenNthCalledWith(
+      4,
       'new Promise((resolve) => { scrollTo(0, 256); requestAnimationFrame(() => resolve(window.scrollY)); })',
       true,
     );
@@ -304,8 +334,67 @@ describe('registerReceiptPrinterIpc', () => {
     expect(printWindow.destroy).toHaveBeenCalledOnce();
   });
 
+  it('captures long right-column values at the minimum 128-dot width', async () => {
+    const longReceipt = {
+      ...receipt,
+      cashier: 'Очень длинное имя кассира которое должно переноситься',
+      payments: [
+        {
+          amount: '123456789012345678901234567890',
+          change: null,
+          method: 'CASHLESS' as const,
+          received: null,
+        },
+      ],
+      receiptNumber: 'RECEIPT-123456789012345678901234567890',
+      total: '123456789012345678901234567890',
+    };
+    const { printWindow } = rasterWindow(100, 128, [0]);
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print')(
+        { sender: mainWebContents },
+        { ...request(128), receipt: longReceipt },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(electron.BrowserWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 128 }),
+    );
+    expect(printWindow.webContents.capturePage).toHaveBeenCalledWith(
+      { height: 100, width: 128, x: 0, y: 0 },
+      { stayHidden: true },
+    );
+    expect(decodeURIComponent(printWindow.loadURL.mock.calls[0][0])).toContain(
+      'Очень длинное имя кассира которое должно переноситься',
+    );
+    expect(decodeURIComponent(printWindow.loadURL.mock.calls[0][0])).toContain(
+      '123 456 789 012 345 678 901 234 567 890,00 ₸',
+    );
+  });
+
+  it('maps a mismatched Chromium content width to a cashier-safe failure', async () => {
+    const { printWindow } = rasterWindow(300, 383);
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print')(
+        { sender: mainWebContents },
+        request(),
+      ),
+    ).resolves.toEqual({
+      code: 'PRINT_FAILED',
+      message: 'Не удалось подготовить чек для печати.',
+      ok: false,
+    });
+    expect(printWindow.webContents.capturePage).not.toHaveBeenCalled();
+    expect(raw.sendRawReceipt).not.toHaveBeenCalled();
+    expect(printWindow.destroy).toHaveBeenCalledOnce();
+  });
+
   it('rejects an invalid actual scroll position without starting transport', async () => {
-    const { printWindow } = rasterWindow(300, [0, Number.NaN]);
+    const { printWindow } = rasterWindow(300, 384, [0, Number.NaN]);
     const mainWebContents = register();
 
     await expect(

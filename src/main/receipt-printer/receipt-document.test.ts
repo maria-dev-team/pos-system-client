@@ -68,7 +68,11 @@ describe('receipt document layout', () => {
     const html = renderReceiptDocument(receipt);
 
     expect(html).toContain('html, body { background: #fff;');
+    expect(html).toContain('scrollbar-width: none;');
+    expect(html).toContain('html::-webkit-scrollbar { display: none; }');
     expect(html).toContain('padding: 0 8px;');
+    expect(html).toContain('flex: 0 1 auto;');
+    expect(html).toContain('overflow-wrap: anywhere;');
     expect(receiptDocument).not.toHaveProperty('calculateReceiptPageSize');
   });
 });

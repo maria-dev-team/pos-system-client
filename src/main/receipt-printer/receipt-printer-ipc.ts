@@ -92,13 +92,13 @@ const isPrintableReceipt = (value: unknown): value is PrintableReceipt => {
     value.currency === 'KZT' &&
     value.items.length > 0 &&
     value.items.length <= 500 &&
-    value.items.every(isReceiptItem) &&
+    Array.from(value.items).every(isReceiptItem) &&
     isNullableText(value.organization.binIin) &&
     isText(value.organization.displayName) &&
     isNullableText(value.organization.legalName) &&
     value.payments.length > 0 &&
     value.payments.length <= 20 &&
-    value.payments.every(isReceiptPayment) &&
+    Array.from(value.payments).every(isReceiptPayment) &&
     isText(value.receiptNumber, 100) &&
     isNullableText(value.store.address) &&
     isText(value.store.name) &&
@@ -161,6 +161,13 @@ const printReceipt = async (
         message: 'Не удалось определить размер чека.',
         ok: false,
       };
+    }
+    const contentWidth = await printWindow.webContents.executeJavaScript(
+      'document.documentElement.clientWidth',
+      true,
+    );
+    if (contentWidth !== request.printWidthDots) {
+      throw new Error('Invalid receipt content width');
     }
     const bands: Buffer[] = [];
     for (let y = 0; y < contentHeight; y += 256) {

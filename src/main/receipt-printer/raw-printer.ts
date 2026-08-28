@@ -210,6 +210,7 @@ export const sendRawReceipt = async (
       ],
       {
         ...process.env,
+        MARIA_RECEIPT_COMPILE_ONLY: '0',
         MARIA_RECEIPT_PATH: path,
         MARIA_RECEIPT_PRINTER: deviceName ?? '',
       },

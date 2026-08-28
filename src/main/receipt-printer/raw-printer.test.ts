@@ -123,6 +123,7 @@ describe('sendRawReceipt', () => {
       ],
       expect.objectContaining({
         env: expect.objectContaining({
+          MARIA_RECEIPT_COMPILE_ONLY: '0',
           MARIA_RECEIPT_PATH: '/tmp/maria-receipt-job.bin',
           MARIA_RECEIPT_PRINTER: 'XP-58IIH"; exit 1',
         }),

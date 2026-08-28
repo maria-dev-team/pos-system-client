@@ -116,6 +116,8 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
     <style>
       @page { margin: 0; }
       * { box-sizing: border-box; }
+      html { scrollbar-width: none; }
+      html::-webkit-scrollbar { display: none; }
       html, body { background: #fff; margin: 0; padding: 0; width: 100%; }
       body {
         color: #000;
@@ -137,7 +139,9 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
       }
       .meta span, .item-totals span, .payment-total span { min-width: 0; }
       .meta strong, .item-totals strong, .payment-total strong, .grand-total strong {
-        flex: none;
+        flex: 0 1 auto;
+        min-width: 0;
+        overflow-wrap: anywhere;
         text-align: right;
       }
       .item, .payment { margin-top: 1.5mm; }
