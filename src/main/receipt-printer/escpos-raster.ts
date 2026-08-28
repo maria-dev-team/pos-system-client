@@ -30,8 +30,7 @@ export const encodeRasterBand = (
       );
       if (gray < 192) {
         const byteOffset = y * rowBytes + Math.floor(x / 8);
-        raster[byteOffset] =
-          (raster[byteOffset] ?? 0) | (0x80 >> (x % 8));
+        raster[byteOffset] = (raster[byteOffset] ?? 0) | (0x80 >> (x % 8));
       }
     }
   }

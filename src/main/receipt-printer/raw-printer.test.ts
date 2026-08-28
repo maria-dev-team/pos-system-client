@@ -42,7 +42,14 @@ const spawn = dependencies.spawn;
 const unlink = dependencies.unlink;
 const writeFile = dependencies.writeFile;
 
-const nextChild = (exitCode: number | null) => {
+const nextChild = (
+  exitCode: number | null,
+): EventEmitter & {
+  kill: ReturnType<typeof vi.fn>;
+  stderr: PassThrough;
+  stdin: PassThrough;
+  stdinChunks: Buffer[];
+} => {
   const child = new EventEmitter() as EventEmitter & {
     kill: ReturnType<typeof vi.fn>;
     stderr: PassThrough;

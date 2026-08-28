@@ -115,14 +115,14 @@ const runProcess = (
     let settled = false;
     let abortError: Error | null = null;
     let terminationTimer: NodeJS.Timeout | undefined;
-    const finish = (error?: Error, code: number | null = null) => {
+    const finish = (error?: Error, code: number | null = null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (terminationTimer) clearTimeout(terminationTimer);
       error ? reject(error) : resolve(code);
     };
-    const abort = (error: Error) => {
+    const abort = (error: Error): void => {
       if (settled || abortError) return;
       abortError = error;
       try {

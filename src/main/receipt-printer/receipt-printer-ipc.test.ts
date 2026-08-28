@@ -64,7 +64,9 @@ const printer = {
   name: 'XP-58IIH',
 };
 
-const register = (getPrintersAsync = vi.fn().mockResolvedValue([printer])) => {
+const register = (
+  getPrintersAsync = vi.fn().mockResolvedValue([printer]),
+): { getPrintersAsync: typeof getPrintersAsync } => {
   const mainWebContents = { getPrintersAsync };
   registerReceiptPrinterIpc({
     on: vi.fn(),
@@ -73,13 +75,33 @@ const register = (getPrintersAsync = vi.fn().mockResolvedValue([printer])) => {
   return mainWebContents;
 };
 
-const request = (printWidthDots = 384) => ({
+const request = (
+  printWidthDots = 384,
+): {
+  deviceName: string;
+  printWidthDots: number;
+  receipt: PrintableReceipt;
+} => ({
   deviceName: 'XP-58IIH',
   printWidthDots,
   receipt,
 });
 
-const rasterWindow = (contentHeight = 300, scrollY = [0, 44]) => {
+const rasterWindow = (
+  contentHeight = 300,
+  scrollY = [0, 44],
+): {
+  firstBitmap: Buffer;
+  firstImage: Record<string, ReturnType<typeof vi.fn>>;
+  printWindow: {
+    destroy: ReturnType<typeof vi.fn>;
+    isDestroyed: ReturnType<typeof vi.fn>;
+    loadURL: ReturnType<typeof vi.fn>;
+    webContents: Record<string, ReturnType<typeof vi.fn>>;
+  };
+  secondBitmap: Buffer;
+  secondImage: Record<string, ReturnType<typeof vi.fn>>;
+} => {
   const firstBitmap = Buffer.from([1]);
   const secondBitmap = Buffer.from([2]);
   const firstImage = {
