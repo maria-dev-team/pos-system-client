@@ -1,8 +1,13 @@
 import { EventEmitter } from 'node:events';
+import { win32 } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DefaultPrinterNotFoundError, sendRawReceipt } from './raw-printer';
+import {
+  DefaultPrinterNotFoundError,
+  WINDOWS_RAW_PRINT_SCRIPT,
+  sendRawReceipt,
+} from './raw-printer';
 
 const dependencies = vi.hoisted(() => ({
   getPath: vi.fn().mockReturnValue('/tmp'),
@@ -133,6 +138,7 @@ describe('sendRawReceipt', () => {
     await expect(
       sendRawReceipt(null, Buffer.from([1]), 'win32'),
     ).rejects.toThrow(DefaultPrinterNotFoundError);
+    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
   });
 
   it('cleans up when the Windows queue rejects the job', async () => {
@@ -149,28 +155,182 @@ describe('sendRawReceipt', () => {
     spawn.mockReturnValue(child);
     const result = sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32');
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
-    const expected = expect(result).rejects.toThrow(
-      'Системная очередь печати отклонила чек.',
+    const outcome = result.then(
+      () => null,
+      (error: Error) => error,
     );
     child.emit('error');
 
-    await expected;
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(unlink).not.toHaveBeenCalled();
+    child.emit('close', null);
+    await expect(outcome).resolves.toMatchObject({
+      message: 'Системная очередь печати отклонила чек.',
+    });
     expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
   });
 
-  it('kills and cleans up when the Windows queue times out', async () => {
+  it('maps a synchronous spawn failure to a cashier-safe error and cleans up', async () => {
+    spawn.mockImplementation(() => {
+      throw new Error('invalid executable');
+    });
+
+    await expect(
+      sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32'),
+    ).rejects.toThrow('Системная очередь печати отклонила чек.');
+    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+  });
+
+  it('kills after a stderr failure and waits for close before cleaning up', async () => {
+    const child = nextChild(null);
+    spawn.mockReturnValue(child);
+    const result = sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32');
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+    const outcome = result.then(
+      () => null,
+      (error: Error) => error,
+    );
+
+    child.stderr.emit('error', new Error('stderr failed'));
+
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(unlink).not.toHaveBeenCalled();
+    child.emit('close', null);
+    await expect(outcome).resolves.toMatchObject({
+      message: 'Системная очередь печати отклонила чек.',
+    });
+    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+  });
+
+  it('maps a Windows write failure without deleting an unowned path', async () => {
+    writeFile.mockRejectedValueOnce(new Error('disk failed'));
+
+    await expect(
+      sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32'),
+    ).rejects.toThrow('Системная очередь печати отклонила чек.');
+    expect(spawn).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('does not delete an existing Windows job file after EEXIST', async () => {
+    const error = Object.assign(new Error('already exists'), {
+      code: 'EEXIST',
+    });
+    writeFile.mockRejectedValueOnce(error);
+
+    await expect(
+      sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32'),
+    ).rejects.toThrow('Системная очередь печати отклонила чек.');
+    expect(spawn).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+  });
+
+  it('waits for close after a Windows timeout before cleaning up', async () => {
     vi.useFakeTimers();
     const child = nextChild(null);
     spawn.mockReturnValue(child);
     const result = sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32');
-    const expected = expect(result).rejects.toThrow(
-      'Системная очередь печати не ответила вовремя.',
+    const outcome = result.then(
+      () => null,
+      (error: Error) => error,
     );
 
     await vi.advanceTimersByTimeAsync(30_000);
 
-    await expected;
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(unlink).not.toHaveBeenCalled();
+    child.emit('close', null);
+    await expect(outcome).resolves.toMatchObject({
+      message: 'Системная очередь печати не ответила вовремя.',
+    });
+    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+  });
+
+  it('uses a bounded termination grace before Windows timeout cleanup', async () => {
+    vi.useFakeTimers();
+    const child = nextChild(null);
+    spawn.mockReturnValue(child);
+    const result = sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32');
+    const outcome = result.then(
+      () => null,
+      (error: Error) => error,
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(unlink).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(outcome).resolves.toMatchObject({
+      message: 'Системная очередь печати не ответила вовремя.',
+    });
     expect(child.kill).toHaveBeenCalledOnce();
     expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
   });
+
+  it('maps a non-zero macOS queue result to a cashier-safe error', async () => {
+    spawn.mockReturnValue(nextChild(1));
+
+    await expect(
+      sendRawReceipt('XP-58IIH', Buffer.from([1]), 'darwin'),
+    ).rejects.toThrow('Системная очередь печати отклонила чек.');
+  });
+
+  it('kills after a macOS queue error and waits for close', async () => {
+    const child = nextChild(null);
+    spawn.mockReturnValue(child);
+    const result = sendRawReceipt('XP-58IIH', Buffer.from([1]), 'darwin');
+    const outcome = result.then(
+      () => null,
+      (error: Error) => error,
+    );
+
+    child.emit('error', new Error('lp failed'));
+
+    expect(child.kill).toHaveBeenCalledOnce();
+    child.emit('close', null);
+    await expect(outcome).resolves.toMatchObject({
+      message: 'Системная очередь печати отклонила чек.',
+    });
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'compiles the exact production Winspool helper without submitting a job',
+    async () => {
+      const { execFile } =
+        await vi.importActual<typeof import('node:child_process')>(
+          'node:child_process',
+        );
+      const powershell = win32.join(
+        process.env.SystemRoot || 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+        'powershell.exe',
+      );
+
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          powershell,
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-Command',
+            WINDOWS_RAW_PRINT_SCRIPT,
+          ],
+          {
+            env: {
+              ...process.env,
+              MARIA_RECEIPT_COMPILE_ONLY: '1',
+              MARIA_RECEIPT_PATH: '',
+              MARIA_RECEIPT_PRINTER: '',
+            },
+            windowsHide: true,
+          },
+          (error) => (error ? reject(error) : resolve()),
+        );
+      });
+    },
+  );
 });

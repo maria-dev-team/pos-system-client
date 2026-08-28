@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { unlink, writeFile } from 'node:fs/promises';
 import { join, win32 } from 'node:path';
 
-const WINDOWS_RAW_PRINT_SCRIPT = `$ErrorActionPreference = 'Stop'
+const TERMINATION_GRACE_MS = 1_000;
+
+export const WINDOWS_RAW_PRINT_SCRIPT = `$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -46,7 +48,8 @@ public static class MariaRawPrinter {
   }
 
   public static void Print(string printerName, string path) {
-    if (!OpenPrinter(printerName, out var printer, IntPtr.Zero))
+    IntPtr printer;
+    if (!OpenPrinter(printerName, out printer, IntPtr.Zero))
       throw new Win32Exception(Marshal.GetLastWin32Error());
     var documentStarted = false;
     var pageStarted = false;
@@ -61,8 +64,9 @@ public static class MariaRawPrinter {
       var pinned = GCHandle.Alloc(data, GCHandleType.Pinned);
       try {
         var offset = 0;
+        int written;
         while (offset < data.Length) {
-          if (!WritePrinter(printer, IntPtr.Add(pinned.AddrOfPinnedObject(), offset), data.Length - offset, out var written) || written <= 0)
+          if (!WritePrinter(printer, IntPtr.Add(pinned.AddrOfPinnedObject(), offset), data.Length - offset, out written) || written <= 0)
             throw new Win32Exception(Marshal.GetLastWin32Error());
           offset += written;
         }
@@ -70,13 +74,19 @@ public static class MariaRawPrinter {
         pinned.Free();
       }
     } finally {
-      if (pageStarted) EndPagePrinter(printer);
-      if (documentStarted) EndDocPrinter(printer);
-      ClosePrinter(printer);
+      Win32Exception cleanupFailure = null;
+      if (pageStarted && !EndPagePrinter(printer))
+        cleanupFailure = new Win32Exception(Marshal.GetLastWin32Error());
+      if (documentStarted && !EndDocPrinter(printer) && cleanupFailure == null)
+        cleanupFailure = new Win32Exception(Marshal.GetLastWin32Error());
+      if (!ClosePrinter(printer) && cleanupFailure == null)
+        cleanupFailure = new Win32Exception(Marshal.GetLastWin32Error());
+      if (cleanupFailure != null) throw cleanupFailure;
     }
   }
 }
 '@
+if ($env:MARIA_RECEIPT_COMPILE_ONLY -eq '1') { exit 0 }
 $printer = $env:MARIA_RECEIPT_PRINTER
 if ([string]::IsNullOrWhiteSpace($printer)) {
   try { $printer = [MariaRawPrinter]::DefaultPrinter() } catch { exit 2 }
@@ -90,32 +100,65 @@ const runProcess = (
   input?: Buffer,
 ): Promise<number | null> =>
   new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      env,
-      shell: false,
-      stdio: ['pipe', 'ignore', 'pipe'],
-      windowsHide: true,
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(command, args, {
+        env,
+        shell: false,
+        stdio: ['pipe', 'ignore', 'pipe'],
+        windowsHide: true,
+      });
+    } catch {
+      reject(new Error('Системная очередь печати отклонила чек.'));
+      return;
+    }
     let settled = false;
+    let abortError: Error | null = null;
+    let terminationTimer: NodeJS.Timeout | undefined;
     const finish = (error?: Error, code: number | null = null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (terminationTimer) clearTimeout(terminationTimer);
       error ? reject(error) : resolve(code);
     };
+    const abort = (error: Error) => {
+      if (settled || abortError) return;
+      abortError = error;
+      try {
+        child.kill();
+      } catch {
+        // The bounded grace still settles a process whose handle is invalid.
+      }
+      terminationTimer = setTimeout(
+        () => finish(abortError ?? error),
+        TERMINATION_GRACE_MS,
+      );
+    };
     const timer = setTimeout(() => {
-      child.kill();
-      finish(new Error('Системная очередь печати не ответила вовремя.'));
+      abort(new Error('Системная очередь печати не ответила вовремя.'));
     }, 30_000);
     child.once('error', () =>
-      finish(new Error('Системная очередь печати отклонила чек.')),
+      abort(new Error('Системная очередь печати отклонила чек.')),
     );
-    child.once('close', (code) => finish(undefined, code));
-    child.stderr.resume();
-    child.stdin.once('error', () =>
-      finish(new Error('Системная очередь печати отклонила чек.')),
+    child.once('close', (code) => finish(abortError ?? undefined, code));
+    const { stderr, stdin } = child;
+    if (!stderr || !stdin) {
+      abort(new Error('Системная очередь печати отклонила чек.'));
+      return;
+    }
+    stderr.once('error', () =>
+      abort(new Error('Системная очередь печати отклонила чек.')),
     );
-    child.stdin.end(input);
+    stdin.once('error', () =>
+      abort(new Error('Системная очередь печати отклонила чек.')),
+    );
+    try {
+      stderr.resume();
+      stdin.end(input);
+    } catch {
+      abort(new Error('Системная очередь печати отклонила чек.'));
+    }
   });
 
 export class DefaultPrinterNotFoundError extends Error {
@@ -139,8 +182,14 @@ export const sendRawReceipt = async (
   }
 
   const path = join(app.getPath('temp'), `maria-receipt-${randomUUID()}.bin`);
-  await writeFile(path, data, { flag: 'wx' });
+  let ownsPath = false;
   try {
+    try {
+      await writeFile(path, data, { flag: 'wx' });
+      ownsPath = true;
+    } catch {
+      throw new Error('Системная очередь печати отклонила чек.');
+    }
     const systemRoot = process.env.SystemRoot || 'C:\\Windows';
     const powershell = win32.join(
       systemRoot,
@@ -174,6 +223,6 @@ export const sendRawReceipt = async (
       throw new Error('Системная очередь печати отклонила чек.');
     }
   } finally {
-    await unlink(path).catch(() => undefined);
+    if (ownsPath) await unlink(path).catch(() => undefined);
   }
 };
