@@ -52,21 +52,5 @@ export const queryKeys = {
     receiptPage: (limit: number, offset: number) =>
       ['sales', 'receipts', 'page', limit, offset] as const,
     receiptPages: () => ['sales', 'receipts', 'page'] as const,
-    recovery: (
-      cashierSessionId: string,
-      type?: 'checkout' | 'hold',
-      saleId?: string,
-      expectedVersion?: number,
-      paymentFingerprint?: string | null,
-    ) =>
-      [
-        'sales',
-        'recovery',
-        cashierSessionId,
-        type ?? null,
-        saleId ?? null,
-        expectedVersion ?? null,
-        paymentFingerprint ?? null,
-      ] as const,
   },
 };

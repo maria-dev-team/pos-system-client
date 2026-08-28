@@ -32,6 +32,7 @@ export class CameraManager {
   private refreshTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private refreshGeneration = 0;
+  private cameraReplacement: Promise<void> = Promise.resolve();
   private readonly bufferRoot = join(app.getPath('userData'), 'camera-buffer');
   private readonly clipsRoot = join(app.getPath('userData'), 'camera-clips');
 
@@ -46,7 +47,7 @@ export class CameraManager {
     this.captureTimer = null;
     this.heartbeatTimer = null;
     if (!context) {
-      void this.clearContext(this.refreshGeneration);
+      void this.clearContext(this.refreshGeneration).catch(() => undefined);
       return;
     }
     this.authContext = context;
@@ -99,11 +100,20 @@ export class CameraManager {
   }
 
   private async replaceCamera(camera: CameraConfig | null): Promise<void> {
+    const replacement = this.cameraReplacement.then(() =>
+      this.replaceCameraNow(camera),
+    );
+    this.cameraReplacement = replacement.catch(() => undefined);
+    return replacement;
+  }
+
+  private async replaceCameraNow(camera: CameraConfig | null): Promise<void> {
     if (this.sameCamera(this.camera, camera)) return;
-    if (this.buffer) {
+    const previousBuffer = this.buffer;
+    this.buffer = null;
+    if (previousBuffer) {
       await this.setStatus('offline');
-      await this.buffer.stop();
-      this.buffer = null;
+      await previousBuffer.stop().catch(() => undefined);
     }
     this.camera = camera;
     this.currentStatus = null;

@@ -10,7 +10,6 @@ import { TooltipProvider } from '@renderer/common/components/ui/tooltip';
 import { createQueryClient } from '@renderer/common/lib/query-client';
 import { createAppRouter } from '@renderer/common/router';
 import { useAuthStore } from '@renderer/features/auth';
-import { useCheckoutCartStore } from '@renderer/features/checkout';
 
 import App from './App';
 
@@ -50,6 +49,7 @@ const api = vi.hoisted(() => ({
   selectContext: vi.fn(),
   setSaleItemQuantity: vi.fn(),
   startCashierSession: vi.fn(),
+  triggerAntiFraudEvent: vi.fn(),
 }));
 
 vi.mock('@renderer/common/api', () => api);
@@ -94,6 +94,8 @@ const contextResponse = {
     'register_shift.close',
     'register_shift.open',
     'sales.cancel',
+    'sales.create',
+    'sales.modify',
     'sales.price.override',
   ],
   position: 'Кассир',
@@ -215,7 +217,6 @@ const renderApp = () => {
 beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
-  useCheckoutCartStore.setState({ sessions: {} });
   useAuthStore.setState({
     accessToken: null,
     isInitialized: false,
@@ -241,12 +242,13 @@ beforeEach(() => {
   api.openRegisterShift.mockResolvedValue(registerShiftResponse);
   api.searchProducts.mockResolvedValue(productSearchResponse);
   api.startCashierSession.mockResolvedValue(cashierSessionResponse);
+  api.triggerAntiFraudEvent.mockResolvedValue(undefined);
 });
 
 afterEach(cleanup);
 
 describe('Maria POS authorization flow', () => {
-  it('navigates checkout to returns and back with the same search and cart', async () => {
+  it('navigates checkout to returns and back within the active session', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
     api.getAuthContext.mockResolvedValue({
@@ -265,9 +267,6 @@ describe('Maria POS authorization flow', () => {
       }),
     );
     await screen.findByRole('heading', { name: 'Оформление продажи' });
-    useCheckoutCartStore
-      .getState()
-      .addProduct(cashierSessionResponse.id, productResponse);
     await user.click(screen.getByRole('button', { name: 'Возвраты' }));
 
     expect(
@@ -290,10 +289,7 @@ describe('Maria POS authorization flow', () => {
       registerId: 'register-1',
       registerShiftId: 'register-shift-1',
     });
-    expect(
-      useCheckoutCartStore.getState().sessions[cashierSessionResponse.id]
-        ?.items,
-    ).toHaveLength(1);
+    expect(api.getCurrentSale).toHaveBeenCalled();
   });
 
   it('shows the returns access state on a direct active-session route', async () => {

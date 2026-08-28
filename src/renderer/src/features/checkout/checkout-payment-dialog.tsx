@@ -22,12 +22,11 @@ import {
   createCashlessPayment,
   createMixedPayments,
   getCashChange,
-} from './checkout-local-cart';
+} from './checkout-payment';
 
 type PaymentMode = 'CASH' | 'CASHLESS' | 'MIXED';
 
 type CheckoutPaymentDialogProps = {
-  localPreviewTotal?: string;
   onConfirm: (payments: SalePaymentPayload[]) => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -43,7 +42,6 @@ const modes = [
 ] as const;
 
 function PaymentForm({
-  localPreviewTotal,
   onConfirm,
   onOpenChange,
   pending,
@@ -91,9 +89,6 @@ function PaymentForm({
       ? (payments?.find((payment) => payment.method === 'CASHLESS')?.amount ??
         null)
       : null;
-  const showLocalPreview =
-    localPreviewTotal !== undefined &&
-    formatCash(localPreviewTotal) !== formatCash(sale.total);
   const visibleServerError =
     serverErrorMessage && serverErrorMessage !== dismissedServerError
       ? serverErrorMessage
@@ -139,7 +134,7 @@ function PaymentForm({
         </DialogDescription>
       </DialogHeader>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div>
         <div
           aria-label="Сумма на сервере"
           className="rounded-2xl border border-primary/15 bg-primary/5 p-5"
@@ -151,17 +146,6 @@ function PaymentForm({
             {formatCash(sale.total)}
           </p>
         </div>
-        {showLocalPreview ? (
-          <div
-            aria-label="Локальная сумма"
-            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4"
-          >
-            <p className="text-sm text-muted-foreground">Локальный расчёт</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatCash(localPreviewTotal)}
-            </p>
-          </div>
-        ) : null}
       </div>
 
       <form className="space-y-5" onSubmit={submit}>

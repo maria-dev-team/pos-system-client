@@ -30,6 +30,10 @@ type ReturnsApi = {
   getReceipts: (...args: unknown[]) => Promise<unknown>;
 };
 
+type AntiFraudApi = {
+  triggerAntiFraudEvent: (...args: unknown[]) => Promise<unknown>;
+};
+
 const user = {
   created_at: '2026-08-23T00:00:00.000Z',
   email: 'cashier@maria.kz',
@@ -560,6 +564,50 @@ describe('API endpoints', () => {
     expect(JSON.parse(calls.at(15)?.data as string)).toEqual({
       expected_version: 7,
       reason: 'Клиент передумал',
+    });
+  });
+
+  it('triggers a register-scoped anti-fraud capture event', async () => {
+    const calls: InternalAxiosRequestConfig[] = [];
+    axios.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      calls.push(config);
+      return {
+        config,
+        data: { data: { event: { id: 'anti-fraud-event-1' } } },
+        headers: {},
+        status: 201,
+        statusText: 'Created',
+      };
+    };
+    vi.resetModules();
+    vi.stubEnv('VITE_API_URL', 'http://localhost:4004');
+    const api = (await import('./requests')) as unknown as AntiFraudApi;
+
+    await expect(
+      api.triggerAntiFraudEvent({
+        externalEventId: 'sale-cancel:sale-1',
+        occurredAt: '2026-08-24T10:05:00.000Z',
+        postBufferSeconds: 15,
+        preBufferSeconds: 15,
+        reason: 'Клиент передумал',
+        registerId: 'register-1',
+        saleId: 'sale-1',
+        type: 'cancel',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls.map(({ method, url }) => [method, url])).toEqual([
+      ['post', '/v1/anti-fraud/events/trigger'],
+    ]);
+    expect(JSON.parse(calls[0]?.data as string)).toEqual({
+      external_event_id: 'sale-cancel:sale-1',
+      occurred_at: '2026-08-24T10:05:00.000Z',
+      post_buffer_seconds: 15,
+      pre_buffer_seconds: 15,
+      reason: 'Клиент передумал',
+      register_id: 'register-1',
+      sale_id: 'sale-1',
+      type: 'cancel',
     });
   });
 
