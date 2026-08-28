@@ -2,6 +2,8 @@ import { LoaderCircle, Search } from 'lucide-react';
 import type { Dispatch, FormEventHandler, SetStateAction } from 'react';
 
 import type {
+  AuthContextResponse,
+  CashierSessionResponse,
   ProductResponse,
   ProductSearchResponse,
   ReceiptResponse,
@@ -13,6 +15,7 @@ import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import { ReceiptPrintButton } from '@renderer/features/receipt-printing';
 
 import type { ReceiptSelection, WithoutReceiptLine } from '../returns.types';
 import { ReceiptItems, WithoutReceiptItems } from './return-items';
@@ -33,6 +36,8 @@ const readableDate = (value: string) =>
   }).format(new Date(value));
 
 export type ReceiptReturnPanelProps = {
+  cashierSession: CashierSessionResponse;
+  context: AuthContextResponse;
   disabled: boolean;
   onNextPage: () => void;
   onPreviousPage: () => void;
@@ -52,6 +57,8 @@ export type ReceiptReturnPanelProps = {
 };
 
 export function ReceiptReturnPanel({
+  cashierSession,
+  context,
   disabled,
   onNextPage,
   onPreviousPage,
@@ -166,7 +173,16 @@ export function ReceiptReturnPanel({
 
       {selectedReceiptNumber ? (
         <div className="border-t border-border pt-5">
-          <h2 className="mb-3 font-bold">Чек №{selectedReceiptNumber}</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-bold">Чек №{selectedReceiptNumber}</h2>
+            {receiptDetail.data ? (
+              <ReceiptPrintButton
+                cashierSession={cashierSession}
+                context={context}
+                sale={receiptDetail.data}
+              />
+            ) : null}
+          </div>
           {receiptDetail.isPending ? (
             <p className="py-8 text-center text-muted-foreground">
               Загружаем чек

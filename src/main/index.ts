@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url';
 
 import icon from '../../resources/icon.png?asset';
 import { registerCameraIpc } from './camera';
+import { registerReceiptPrinterIpc } from './receipt-printer';
 import { resolveRendererFilePath } from './renderer-protocol';
 
 const apiUrl = (
@@ -54,6 +55,7 @@ function createWindow(): void {
   });
 
   registerCameraIpc(mainWindow, apiUrl);
+  registerReceiptPrinterIpc(mainWindow);
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();

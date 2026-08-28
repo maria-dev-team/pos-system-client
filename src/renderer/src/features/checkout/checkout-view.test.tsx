@@ -590,7 +590,6 @@ describe('local-first checkout', () => {
     expect(
       screen.getByRole('button', { name: 'Завершить работу на кассе' }),
     ).toBeInTheDocument();
-
     await user.type(input, '001234{Enter}');
 
     expect(
@@ -1116,6 +1115,9 @@ describe('checkout sale transitions', () => {
     );
     expect(
       screen.getByRole('button', { name: 'Завершить работу на кассе' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Печать чека' }),
     ).toBeInTheDocument();
     expect(
       useCheckoutCartStore.getState().sessions[cashierSession.id],

@@ -18,6 +18,7 @@ import { Label } from '@renderer/common/components/ui/label';
 import { VirtualKeyboardOverlay } from '@renderer/common/components/virtual-keyboard';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import { ReceiptPrinterSettingsButton } from '@renderer/features/receipt-printing';
 
 import { PriceOverrideDialogs } from './components/price-override-dialogs';
 import {
@@ -153,36 +154,43 @@ export function ReturnsView({
               </p>
             </div>
           </div>
-          <div
-            aria-label="Режим возврата"
-            className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/40 p-1"
-            role="group"
-          >
-            <Button
-              aria-pressed={mode === 'receipt'}
-              disabled={!access.canReceipt}
-              onClick={() => onModeChange('receipt')}
-              type="button"
-              variant={mode === 'receipt' ? 'default' : 'ghost'}
+          <div className="flex flex-wrap items-center gap-3">
+            <ReceiptPrinterSettingsButton />
+            <div
+              aria-label="Режим возврата"
+              className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/40 p-1"
+              role="group"
             >
-              По чеку
-            </Button>
-            <Button
-              aria-pressed={mode === 'withoutReceipt'}
-              disabled={!access.canWithoutReceipt}
-              onClick={() => onModeChange('withoutReceipt')}
-              type="button"
-              variant={mode === 'withoutReceipt' ? 'default' : 'ghost'}
-            >
-              Без чека
-            </Button>
+              <Button
+                aria-pressed={mode === 'receipt'}
+                disabled={!access.canReceipt}
+                onClick={() => onModeChange('receipt')}
+                type="button"
+                variant={mode === 'receipt' ? 'default' : 'ghost'}
+              >
+                По чеку
+              </Button>
+              <Button
+                aria-pressed={mode === 'withoutReceipt'}
+                disabled={!access.canWithoutReceipt}
+                onClick={() => onModeChange('withoutReceipt')}
+                type="button"
+                variant={mode === 'withoutReceipt' ? 'default' : 'ghost'}
+              >
+                Без чека
+              </Button>
+            </div>
           </div>
         </header>
 
         <div className="grid min-h-0 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           <section className="min-w-0 space-y-5 rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)]">
             {mode === 'receipt' ? (
-              <ReceiptReturnPanel {...receiptPanel} />
+              <ReceiptReturnPanel
+                {...receiptPanel}
+                cashierSession={cashierSession}
+                context={context}
+              />
             ) : (
               <WithoutReceiptReturnPanel {...withoutReceiptPanel} />
             )}

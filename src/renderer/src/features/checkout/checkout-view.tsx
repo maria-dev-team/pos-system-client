@@ -61,6 +61,10 @@ import {
 import { authContextQueryOptions } from '@renderer/features/auth';
 import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
 import { useProductSearchQuery } from '@renderer/features/products';
+import {
+  ReceiptPrintButton,
+  ReceiptPrinterSettingsButton,
+} from '@renderer/features/receipt-printing';
 
 import { useCheckoutCartStore } from './checkout-cart-store';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
@@ -616,8 +620,14 @@ function ActiveCheckout({
               ))}
             </div>
             <div
-              className={`mt-6 grid gap-3 ${pendingOperation ? '' : 'sm:grid-cols-2'}`}
+              className={`mt-6 grid gap-3 ${pendingOperation ? '' : 'sm:grid-cols-3'}`}
             >
+              <ReceiptPrintButton
+                cashierSession={cashierSession}
+                className="min-h-12"
+                context={context.data}
+                sale={visibleCompletedSale}
+              />
               <Button
                 className="min-h-12"
                 onClick={() => {
@@ -1254,6 +1264,7 @@ function ActiveCheckout({
                 Возвраты
               </Button>
             ) : null}
+            <ReceiptPrinterSettingsButton className="min-h-12 w-full border-border bg-background" />
             {!pendingOperation && rows.length > 0 && canHold ? (
               <Button
                 className="min-h-12 w-full border-border bg-background"

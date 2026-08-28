@@ -268,6 +268,9 @@ describe('ReturnsView', () => {
       await screen.findByRole('button', { name: 'Открыть чек №42' }),
     );
     expect(await screen.findByText('Молоко')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Печать чека' }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText('Выбрать Хлеб')).toBeDisabled();
 
     await user.click(screen.getByLabelText('Выбрать Молоко'));
