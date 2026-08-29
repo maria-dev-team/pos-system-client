@@ -1,6 +1,22 @@
 const RASTER_HEADER = Buffer.from([0x1d, 0x76, 0x30, 0x00]);
 export const MAX_RASTER_BAND_HEIGHT_DOTS = 64;
 
+const encodeRasterCommand = (
+  raster: Buffer,
+  rowBytes: number,
+  height: number,
+): Buffer =>
+  Buffer.concat([
+    RASTER_HEADER,
+    Buffer.from([
+      rowBytes & 0xff,
+      (rowBytes >> 8) & 0xff,
+      height & 0xff,
+      (height >> 8) & 0xff,
+    ]),
+    raster,
+  ]);
+
 export const encodeRasterBand = (
   bitmap: Buffer,
   width: number,
@@ -44,16 +60,15 @@ export const encodeRasterBand = (
     if (raster[offset] === 0x13) raster[offset] = 0x12;
   }
 
-  return Buffer.concat([
-    RASTER_HEADER,
-    Buffer.from([
-      rowBytes & 0xff,
-      (rowBytes >> 8) & 0xff,
-      height & 0xff,
-      (height >> 8) & 0xff,
-    ]),
-    raster,
-  ]);
+  if (height === 0x13) {
+    const splitAt = rowBytes * 18;
+    return Buffer.concat([
+      encodeRasterCommand(raster.subarray(0, splitAt), rowBytes, 18),
+      encodeRasterCommand(raster.subarray(splitAt), rowBytes, 1),
+    ]);
+  }
+
+  return encodeRasterCommand(raster, rowBytes, height);
 };
 
 export const buildEscPosReceipt = (bands: readonly Buffer[]): Buffer =>

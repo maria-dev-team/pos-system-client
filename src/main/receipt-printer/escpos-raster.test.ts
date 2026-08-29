@@ -44,6 +44,18 @@ describe('encodeRasterBand', () => {
     expect(encodeRasterBand(bitmap, 8, 1).at(-1)).toBe(0x12);
   });
 
+  it('does not emit XOFF as the raster height', () => {
+    const encoded = encodeRasterBand(Buffer.alloc(8 * 19 * 4, 255), 8, 19);
+
+    expect(encoded.includes(0x13)).toBe(false);
+    expect(encoded.subarray(0, 8)).toEqual(
+      Buffer.from([0x1d, 0x76, 0x30, 0x00, 0x01, 0x00, 0x12, 0x00]),
+    );
+    expect(encoded.subarray(26, 34)).toEqual(
+      Buffer.from([0x1d, 0x76, 0x30, 0x00, 0x01, 0x00, 0x01, 0x00]),
+    );
+  });
+
   it('rejects malformed or over-height bands', () => {
     expect(() => encodeRasterBand(Buffer.alloc(3), 1, 1)).toThrow(
       'Invalid raster bitmap',
