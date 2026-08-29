@@ -18,6 +18,10 @@ CLAUDE.md
 # Local reference docs
 /docs/
 
+# Locally provisioned release binaries
+/resources/ffmpeg
+/resources/ffmpeg.exe
+
 # IDE
 .idea
 .vscode
