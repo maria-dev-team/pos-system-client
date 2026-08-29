@@ -1,12 +1,22 @@
-import { type BrowserWindow as ElectronBrowserWindow, ipcMain } from 'electron';
+import {
+  BrowserWindow,
+  type BrowserWindow as ElectronBrowserWindow,
+  ipcMain,
+} from 'electron';
 
-import { buildEscPosTextReceipt } from './escpos-text';
+import { buildEscPosReceipt, encodeRasterBand } from './escpos-raster';
 import { DefaultPrinterNotFoundError, sendRawReceipt } from './raw-printer';
-import type { PrintableReceipt, ReceiptPaperWidthMm } from './receipt-document';
+import {
+  type PrintableReceipt,
+  type ReceiptPaperWidthMm,
+  receiptPaperProfiles,
+  renderReceiptDocument,
+} from './receipt-document';
 
 const GET_PRINTERS_CHANNEL = 'receipt-printer:get-printers';
 const PRINT_CHANNEL = 'receipt-printer:print';
-const ENCODING_FAILURE_MESSAGE = 'Не удалось подготовить чек для печати.';
+const RASTER_FAILURE_MESSAGE = 'Не удалось подготовить чек для печати.';
+const MAX_RASTER_BAND_HEIGHT_DOTS = 256;
 const isCashierSafeTransportError = (error: unknown): error is Error =>
   error instanceof Error &&
   [
@@ -118,38 +128,124 @@ const assertSender = (
 const printReceipt = async (
   request: ReceiptPrintRequest,
 ): Promise<ReceiptPrintResult> => {
-  let encodedReceipt: Buffer;
-  try {
-    encodedReceipt = buildEscPosTextReceipt(
-      request.receipt,
-      request.paperWidthMm,
-    );
-  } catch {
-    return {
-      code: 'PRINT_FAILED',
-      message: ENCODING_FAILURE_MESSAGE,
-      ok: false,
-    };
-  }
+  let printWindow: ElectronBrowserWindow | undefined;
 
   try {
-    await sendRawReceipt(request.deviceName, encodedReceipt);
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof DefaultPrinterNotFoundError) {
+    const profile = receiptPaperProfiles[request.paperWidthMm];
+    const rasterScale = profile.printWidthDots / profile.layoutWidthCss;
+    const sourceBandHeight = Math.floor(
+      MAX_RASTER_BAND_HEIGHT_DOTS / rasterScale,
+    );
+    printWindow = new BrowserWindow({
+      backgroundColor: '#ffffff',
+      height: sourceBandHeight,
+      show: false,
+      useContentSize: true,
+      webPreferences: {
+        backgroundThrottling: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+      width: profile.layoutWidthCss,
+    });
+    const html = renderReceiptDocument(request.receipt);
+    await printWindow.loadURL(
+      `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`,
+    );
+    const contentHeight = await printWindow.webContents.executeJavaScript(
+      'document.fonts.ready.then(() => Math.ceil(document.documentElement.scrollHeight))',
+      true,
+    );
+    if (
+      typeof contentHeight !== 'number' ||
+      !Number.isFinite(contentHeight) ||
+      contentHeight <= 0
+    ) {
       return {
-        code: 'PRINTER_NOT_FOUND',
-        message: 'Системный принтер по умолчанию не настроен.',
+        code: 'PRINT_FAILED',
+        message: 'Не удалось определить размер чека.',
         ok: false,
       };
     }
+    const contentWidth = await printWindow.webContents.executeJavaScript(
+      'document.documentElement.clientWidth',
+      true,
+    );
+    if (contentWidth !== profile.layoutWidthCss) {
+      throw new Error('Invalid receipt content width');
+    }
+
+    const bands: Buffer[] = [];
+    for (let y = 0; y < contentHeight; y += sourceBandHeight) {
+      const sourceHeight = Math.min(sourceBandHeight, contentHeight - y);
+      const actualScrollY = await printWindow.webContents.executeJavaScript(
+        `new Promise((resolve) => { scrollTo(0, ${y}); requestAnimationFrame(() => resolve(window.scrollY)); })`,
+        true,
+      );
+      if (
+        typeof actualScrollY !== 'number' ||
+        !Number.isFinite(actualScrollY) ||
+        actualScrollY < 0 ||
+        actualScrollY > y
+      ) {
+        throw new Error('Invalid receipt scroll position');
+      }
+      const captureY = y - actualScrollY;
+      if (captureY + sourceHeight > sourceBandHeight) {
+        throw new Error('Invalid receipt capture position');
+      }
+      const outputHeight =
+        Math.round((y + sourceHeight) * rasterScale) -
+        Math.round(y * rasterScale);
+      if (outputHeight <= 0 || outputHeight > MAX_RASTER_BAND_HEIGHT_DOTS) {
+        throw new Error('Invalid receipt raster height');
+      }
+      const captured = await printWindow.webContents.capturePage(
+        {
+          height: sourceHeight,
+          width: profile.layoutWidthCss,
+          x: 0,
+          y: captureY,
+        },
+        { stayHidden: true },
+      );
+      const bitmap = captured
+        .resize({ height: outputHeight, width: profile.printWidthDots })
+        .toBitmap({ scaleFactor: 1 });
+      bands.push(
+        encodeRasterBand(bitmap, profile.printWidthDots, outputHeight),
+      );
+    }
+    const encodedReceipt = buildEscPosReceipt(bands);
+
+    try {
+      await sendRawReceipt(request.deviceName, encodedReceipt);
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof DefaultPrinterNotFoundError) {
+        return {
+          code: 'PRINTER_NOT_FOUND',
+          message: 'Системный принтер по умолчанию не настроен.',
+          ok: false,
+        };
+      }
+      return {
+        code: 'PRINT_FAILED',
+        message: isCashierSafeTransportError(error)
+          ? error.message
+          : 'Не удалось напечатать чек.',
+        ok: false,
+      };
+    }
+  } catch {
     return {
       code: 'PRINT_FAILED',
-      message: isCashierSafeTransportError(error)
-        ? error.message
-        : 'Не удалось напечатать чек.',
+      message: RASTER_FAILURE_MESSAGE,
       ok: false,
     };
+  } finally {
+    if (printWindow && !printWindow.isDestroyed()) printWindow.destroy();
   }
 };
 

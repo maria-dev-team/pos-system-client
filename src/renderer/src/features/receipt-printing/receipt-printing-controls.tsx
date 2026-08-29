@@ -23,8 +23,8 @@ import { organizationsQueryOptions } from '@renderer/features/organizations';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
 import {
-  receiptColumnsForPaper,
-  renderReceiptText,
+  receiptPaperProfiles,
+  renderReceiptDocument,
 } from '../../../../main/receipt-printer/receipt-document';
 import {
   readReceiptPrinterSettings,
@@ -275,18 +275,20 @@ function ReceiptPrinterSettingsDialog({
             <DialogHeader>
               <DialogTitle>Предпросмотр тестового чека</DialogTitle>
               <DialogDescription>
-                Ширина бумаги: {paperWidthMm} мм. Ниже показан текст, который
-                будет передан системе печати.
+                Ширина бумаги: {paperWidthMm} мм. Ниже показан документ, который
+                будет преобразован в растр.
               </DialogDescription>
             </DialogHeader>
             <div className="flex max-h-[65vh] justify-center overflow-auto rounded-xl bg-muted p-4">
-              <pre
-                aria-label="Содержимое тестового чека"
-                className="shrink-0 whitespace-pre bg-white p-3 font-mono text-xs text-black shadow-sm"
-                style={{ width: `${receiptColumnsForPaper(paperWidthMm)}ch` }}
-              >
-                {renderReceiptText(previewReceipt, paperWidthMm)}
-              </pre>
+              <iframe
+                className="h-[60vh] shrink-0 border-0 bg-white shadow-sm"
+                sandbox=""
+                srcDoc={renderReceiptDocument(previewReceipt)}
+                style={{
+                  width: `${receiptPaperProfiles[paperWidthMm].layoutWidthCss}px`,
+                }}
+                title="Содержимое тестового чека"
+              />
             </div>
             {error ? (
               <p className="text-sm font-medium text-destructive" role="alert">

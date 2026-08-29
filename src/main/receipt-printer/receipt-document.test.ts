@@ -4,14 +4,11 @@ import * as receiptDocument from './receipt-document';
 
 type PrintableReceipt = receiptDocument.PrintableReceipt;
 
-const renderReceiptText = (
+const renderReceiptDocument = (
   receiptDocument as unknown as {
-    renderReceiptText: (
-      receipt: PrintableReceipt,
-      paperWidthMm: 58 | 80,
-    ) => string;
+    renderReceiptDocument?: (receipt: PrintableReceipt) => string;
   }
-).renderReceiptText;
+).renderReceiptDocument;
 
 const receipt: PrintableReceipt = {
   cashier: 'Айжан Қасымова',
@@ -54,27 +51,51 @@ const receipt: PrintableReceipt = {
   total: '1150.00',
 };
 
-describe('renderReceiptText', () => {
-  it('formats and wraps a 58 mm receipt within 32 characters', () => {
-    const text = renderReceiptText(receipt, 58);
+describe('receipt raster profiles', () => {
+  it('maps 58 and 80 mm paper to their 203 dpi printable areas', () => {
+    expect(receiptDocument.receiptPaperProfiles).toMatchObject({
+      58: {
+        dpi: 203,
+        layoutWidthCss: 181,
+        printableWidthMm: 48,
+        printWidthDots: 384,
+      },
+      80: {
+        dpi: 203,
+        layoutWidthCss: 272,
+        printableWidthMm: 72,
+        printWidthDots: 576,
+      },
+    });
+  });
+});
 
-    expect(text).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
-    expect(text).toContain('НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ');
-    expect(text).toContain('Айжан Қасымова');
-    expect(text).toContain('Әже наны');
-    expect(text).toContain('Ұзын тауар');
-    expect(text).toContain('<script>alert(1)</script>');
-    expect(text.indexOf('Әже наны')).toBeLessThan(text.indexOf('Ұзын тауар'));
-    expect(text).toContain('1 шт. x 250,00 KZT');
-    expect(text).toContain('Получено: 1 200,00 KZT');
-    expect(text).toContain('Сдача: 50,00 KZT');
-    expect(text.split('\n').every((line) => [...line].length <= 32)).toBe(true);
+describe('renderReceiptDocument', () => {
+  it('renders Kazakh text and escapes receipt data in line order', () => {
+    const html = renderReceiptDocument?.(receipt);
+
+    expect(html).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
+    expect(html).toContain('НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ');
+    expect(html).toContain('Айжан Қасымова');
+    expect(html).toContain('Әже наны');
+    expect(html).toContain('Ұзын тауар &lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html?.indexOf('Әже наны')).toBeLessThan(
+      html?.indexOf('Ұзын тауар') ?? -1,
+    );
+    expect(html).toContain('1 шт. × 250,00 ₸');
+    expect(html).toContain('Получено: 1 200,00 ₸');
+    expect(html).toContain('Сдача: 50,00 ₸');
   });
 
-  it('uses 48 columns for 80 mm paper', () => {
-    const text = renderReceiptText(receipt, 80);
+  it('uses a scrollbar-free opaque canvas without a fixed page height', () => {
+    const html = renderReceiptDocument?.(receipt);
 
-    expect(text).toContain('-'.repeat(48));
-    expect(text.split('\n').every((line) => [...line].length <= 48)).toBe(true);
+    expect(html).toContain('html, body { background: #fff;');
+    expect(html).toContain('scrollbar-width: none;');
+    expect(html).toContain('html::-webkit-scrollbar { display: none; }');
+    expect(html).toContain('padding: 0 8px;');
+    expect(html).toContain('overflow-wrap: anywhere;');
+    expect(html).not.toContain('height: 90mm');
   });
 });

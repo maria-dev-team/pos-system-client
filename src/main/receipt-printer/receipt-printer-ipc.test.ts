@@ -4,6 +4,7 @@ import type { PrintableReceipt } from './receipt-document';
 import { registerReceiptPrinterIpc } from './receipt-printer-ipc';
 
 const electron = vi.hoisted(() => ({
+  BrowserWindow: vi.fn(),
   handle: vi.fn(),
   removeHandler: vi.fn(),
 }));
@@ -13,6 +14,7 @@ const raw = vi.hoisted(() => {
 });
 
 vi.mock('electron', () => ({
+  BrowserWindow: electron.BrowserWindow,
   ipcMain: { handle: electron.handle, removeHandler: electron.removeHandler },
 }));
 vi.mock('./raw-printer', () => raw);
@@ -75,6 +77,53 @@ const request = (
   paperWidthMm: unknown;
   receipt: PrintableReceipt;
 } => ({ deviceName: 'XP-58IIH', paperWidthMm, receipt });
+
+const rasterWindow = (): {
+  firstImage: Record<string, ReturnType<typeof vi.fn>>;
+  printWindow: {
+    destroy: ReturnType<typeof vi.fn>;
+    isDestroyed: ReturnType<typeof vi.fn>;
+    loadURL: ReturnType<typeof vi.fn>;
+    webContents: Record<string, ReturnType<typeof vi.fn>>;
+  };
+  secondImage: Record<string, ReturnType<typeof vi.fn>>;
+} => {
+  const firstBitmap = Buffer.alloc(384 * 255 * 4, 255);
+  const secondBitmap = Buffer.alloc(384 * 2 * 4, 255);
+  const firstResized = {
+    toBitmap: vi.fn().mockReturnValue(firstBitmap),
+  };
+  const secondResized = {
+    toBitmap: vi.fn().mockReturnValue(secondBitmap),
+  };
+  const firstImage = {
+    resize: vi.fn().mockReturnValue(firstResized),
+  };
+  const secondImage = {
+    resize: vi.fn().mockReturnValue(secondResized),
+  };
+  const printWindow = {
+    destroy: vi.fn(),
+    isDestroyed: vi.fn().mockReturnValue(false),
+    loadURL: vi.fn().mockResolvedValue(undefined),
+    webContents: {
+      capturePage: vi
+        .fn()
+        .mockResolvedValueOnce(firstImage)
+        .mockResolvedValueOnce(secondImage),
+      executeJavaScript: vi
+        .fn()
+        .mockResolvedValueOnce(121)
+        .mockResolvedValueOnce(181)
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(1),
+    },
+  };
+  electron.BrowserWindow.mockImplementation(function BrowserWindowMock() {
+    return printWindow;
+  } as never);
+  return { firstImage, printWindow, secondImage };
+};
 
 describe('registerReceiptPrinterIpc', () => {
   beforeEach(() => {
@@ -185,7 +234,8 @@ describe('registerReceiptPrinterIpc', () => {
     expect(raw.sendRawReceipt).not.toHaveBeenCalled();
   });
 
-  it('builds and sends a text ESC/POS receipt without opening a render window', async () => {
+  it('renders at 96 CSS dpi and scales both axes to the 203 dpi 58 mm raster', async () => {
+    const { firstImage, printWindow, secondImage } = rasterWindow();
     const mainWebContents = register();
 
     await expect(
@@ -197,16 +247,44 @@ describe('registerReceiptPrinterIpc', () => {
 
     const encoded = raw.sendRawReceipt.mock.calls[0]?.[1] as Buffer;
     expect(raw.sendRawReceipt).toHaveBeenCalledWith('XP-58IIH', encoded);
-    expect(encoded.subarray(0, 15)).toEqual(
-      Buffer.from([
-        0x1b, 0x40, 0x1c, 0x2e, 0x1b, 0x74, 0x17, 0x1d, 0x4c, 0x00, 0x00, 0x1d,
-        0x57, 0x80, 0x01,
-      ]),
+    expect(electron.BrowserWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        height: 120,
+        show: false,
+        webPreferences: expect.objectContaining({
+          backgroundThrottling: false,
+        }),
+        width: 181,
+      }),
     );
-    expect(encoded.includes(Buffer.from([0x1d, 0x76, 0x30]))).toBe(false);
+    expect(printWindow.webContents.capturePage).toHaveBeenNthCalledWith(
+      1,
+      { height: 120, width: 181, x: 0, y: 0 },
+      { stayHidden: true },
+    );
+    expect(printWindow.webContents.capturePage).toHaveBeenNthCalledWith(
+      2,
+      { height: 1, width: 181, x: 0, y: 119 },
+      { stayHidden: true },
+    );
+    expect(firstImage.resize).toHaveBeenCalledWith({
+      height: 255,
+      width: 384,
+    });
+    expect(secondImage.resize).toHaveBeenCalledWith({
+      height: 2,
+      width: 384,
+    });
+    expect(encoded.subarray(0, 10)).toEqual(
+      Buffer.from([0x1b, 0x40, 0x1d, 0x76, 0x30, 0x00, 0x30, 0x00, 0xff, 0x00]),
+    );
+    expect(encoded.subarray(-3)).toEqual(Buffer.from([0x1b, 0x64, 0x03]));
+    expect(encoded.includes(Buffer.from([0x1b, 0x74, 0x17]))).toBe(false);
+    expect(printWindow.destroy).toHaveBeenCalledOnce();
   });
 
   it('maps a missing default system printer to a cashier-safe result', async () => {
+    rasterWindow();
     raw.sendRawReceipt.mockRejectedValue(
       new raw.DefaultPrinterNotFoundError('not configured'),
     );
@@ -225,6 +303,7 @@ describe('registerReceiptPrinterIpc', () => {
   });
 
   it('returns a cashier-safe transport failure', async () => {
+    rasterWindow();
     raw.sendRawReceipt.mockRejectedValue(
       new Error('Системная очередь печати отклонила чек.'),
     );
@@ -243,6 +322,7 @@ describe('registerReceiptPrinterIpc', () => {
   });
 
   it('does not disclose an unreviewed transport failure to the cashier', async () => {
+    rasterWindow();
     raw.sendRawReceipt.mockRejectedValue(
       new Error('internal queue diagnostic /var/spool/private'),
     );

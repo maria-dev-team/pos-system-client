@@ -34,72 +34,26 @@ export type PrintableReceipt = {
 export type ReceiptPaperWidthMm = 58 | 80;
 
 export const receiptPaperProfiles = {
-  58: { columns: 32, printWidthDots: 384 },
-  80: { columns: 48, printWidthDots: 576 },
+  58: {
+    dpi: 203,
+    layoutWidthCss: 181,
+    printableWidthMm: 48,
+    printWidthDots: 384,
+  },
+  80: {
+    dpi: 203,
+    layoutWidthCss: 272,
+    printableWidthMm: 72,
+    printWidthDots: 576,
+  },
 } as const;
-
-export const receiptColumnsForPaper = (
-  paperWidthMm: ReceiptPaperWidthMm,
-): number => receiptPaperProfiles[paperWidthMm].columns;
-
-const characters = (value: string): string[] => [...value];
-
-const wrapText = (value: string, width: number): string[] => {
-  const words = value.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [''];
-
-  const lines: string[] = [];
-  let line = '';
-  for (const word of words) {
-    let rest = word;
-    if (
-      line &&
-      characters(line).length + characters(rest).length + 1 <= width
-    ) {
-      line += ` ${rest}`;
-      continue;
-    }
-    if (line) {
-      lines.push(line);
-      line = '';
-    }
-    while (characters(rest).length > width) {
-      const chunk = characters(rest);
-      lines.push(chunk.slice(0, width).join(''));
-      rest = chunk.slice(width).join('');
-    }
-    line = rest;
-  }
-  if (line) lines.push(line);
-  return lines;
-};
-
-const center = (value: string, width: number): string[] =>
-  wrapText(value, width).map((line) =>
-    line.padStart(
-      line.length + Math.floor((width - characters(line).length) / 2),
-    ),
-  );
-
-const twoColumns = (left: string, right: string, width: number): string[] => {
-  const rightWidth = characters(right).length;
-  if (rightWidth >= width) {
-    return [...wrapText(left, width), ...wrapText(right, width)];
-  }
-  const leftLines = wrapText(left, width - rightWidth - 1);
-  const last = leftLines.pop() ?? '';
-  return [
-    ...leftLines,
-    `${last}${' '.repeat(width - characters(last).length - rightWidth)}${right}`,
-  ];
-};
 
 const formatMoney = (value: string): string => {
   const [integer = '0', fraction = ''] = value.split('.');
   const sign = integer.startsWith('-') ? '-' : '';
   const digits = sign ? integer.slice(1) : integer;
   const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return `${sign}${grouped},${fraction.padEnd(2, '0').slice(0, 2)} KZT`;
+  return `${sign}${grouped},${fraction.padEnd(2, '0').slice(0, 2)} ₸`;
 };
 
 const formatQuantity = (value: string): string => {
@@ -108,73 +62,130 @@ const formatQuantity = (value: string): string => {
   return normalizedFraction ? `${integer},${normalizedFraction}` : integer;
 };
 
-export const renderReceiptText = (
-  receipt: PrintableReceipt,
-  paperWidthMm: ReceiptPaperWidthMm,
-): string => {
-  const width = receiptColumnsForPaper(paperWidthMm);
-  const separator = '-'.repeat(width);
-  const lines: string[] = [];
-  const addCentered = (value: string | null): void => {
-    if (value) lines.push(...center(value, width));
-  };
+const escapeHtml = (value: string): string =>
+  value.replace(/[&<>'"]/g, (character) => {
+    switch (character) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case "'":
+        return '&#39;';
+      default:
+        return '&quot;';
+    }
+  });
 
-  addCentered(receipt.organization.displayName);
-  addCentered(receipt.organization.legalName);
-  addCentered(
+const receiptLine = (label: string, value: string): string =>
+  `<div class="meta"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`;
+
+export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
+  const organizationDetails = [
+    receipt.organization.legalName,
     receipt.organization.binIin
       ? `БИН/ИИН ${receipt.organization.binIin}`
       : null,
-  );
-  addCentered(receipt.store.name);
-  addCentered(receipt.store.address);
-  addCentered('НЕФИСКАЛЬНЫЙ ЧЕК');
-  lines.push(separator);
-
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => `<div>${escapeHtml(value)}</div>`)
+    .join('');
+  const items = [...receipt.items]
+    .sort((left, right) => left.lineNumber - right.lineNumber)
+    .map(
+      (item) => `<section class="item">
+        <div class="item-name">${item.lineNumber}. ${escapeHtml(item.name)}</div>
+        <div class="item-totals">
+          <span>${escapeHtml(formatQuantity(item.quantity))} ${escapeHtml(item.unitLabel)} × ${escapeHtml(formatMoney(item.unitPrice))}</span>
+          <strong>${escapeHtml(formatMoney(item.lineTotal))}</strong>
+        </div>
+      </section>`,
+    )
+    .join('');
+  const payments = receipt.payments
+    .map((payment) => {
+      const details = [
+        payment.received
+          ? `<div>Получено: ${escapeHtml(formatMoney(payment.received))}</div>`
+          : '',
+        payment.change
+          ? `<div>Сдача: ${escapeHtml(formatMoney(payment.change))}</div>`
+          : '',
+      ].join('');
+      return `<section class="payment">
+        <div class="payment-total"><span>${payment.method === 'CASH' ? 'Наличные' : 'Безналичные'}</span><strong>${escapeHtml(formatMoney(payment.amount))}</strong></div>
+        ${details}
+      </section>`;
+    })
+    .join('');
   const completedAt = new Intl.DateTimeFormat('ru-RU', {
     dateStyle: 'short',
     timeStyle: 'short',
     timeZone: receipt.timeZone,
   }).format(new Date(receipt.completedAt));
-  lines.push(...twoColumns('Чек №', receipt.receiptNumber, width));
-  lines.push(...twoColumns('Дата', completedAt, width));
-  lines.push(...twoColumns('Кассир', receipt.cashier, width));
-  lines.push(separator);
 
-  for (const item of [...receipt.items].sort(
-    (left, right) => left.lineNumber - right.lineNumber,
-  )) {
-    lines.push(...wrapText(`${item.lineNumber}. ${item.name}`, width));
-    lines.push(
-      ...twoColumns(
-        `${formatQuantity(item.quantity)} ${item.unitLabel} x ${formatMoney(item.unitPrice)}`,
-        formatMoney(item.lineTotal),
-        width,
-      ),
-    );
-  }
-  lines.push(separator);
-
-  for (const payment of receipt.payments) {
-    lines.push(
-      ...twoColumns(
-        payment.method === 'CASH' ? 'Наличные' : 'Безналичные',
-        formatMoney(payment.amount),
-        width,
-      ),
-    );
-    if (payment.received) {
-      lines.push(
-        ...wrapText(`Получено: ${formatMoney(payment.received)}`, width),
-      );
-    }
-    if (payment.change) {
-      lines.push(...wrapText(`Сдача: ${formatMoney(payment.change)}`, width));
-    }
-  }
-  lines.push(separator);
-  lines.push(...twoColumns('ИТОГО', formatMoney(receipt.total), width));
-  lines.push(...center('НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ', width));
-
-  return lines.join('\n');
+  return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+    <style>
+      @page { margin: 0; }
+      * { box-sizing: border-box; }
+      html { scrollbar-width: none; }
+      html::-webkit-scrollbar { display: none; }
+      html, body { background: #fff; margin: 0; padding: 0; width: 100%; }
+      body {
+        color: #000;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 10pt;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+        padding: 0 8px;
+      }
+      .center { text-align: center; }
+      .title { font-size: 13pt; font-weight: 800; margin-top: 2mm; }
+      .separator { border-top: 0.25mm dashed #000; margin: 2mm 0; }
+      .meta, .item-totals, .payment-total, .grand-total {
+        align-items: baseline;
+        display: flex;
+        gap: 2mm;
+        justify-content: space-between;
+      }
+      .meta span, .item-totals span, .payment-total span { min-width: 0; }
+      .meta strong, .item-totals strong, .payment-total strong, .grand-total strong {
+        flex: 0 1 auto;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        text-align: right;
+      }
+      .item, .payment { margin-top: 1.5mm; }
+      .item-name { font-weight: 700; }
+      .item-totals, .payment { font-size: 9pt; }
+      .grand-total { font-size: 13pt; font-weight: 800; }
+      .notice { font-size: 8pt; font-weight: 700; margin-top: 3mm; }
+    </style>
+  </head>
+  <body>
+    <header class="center">
+      <div>${escapeHtml(receipt.organization.displayName)}</div>
+      ${organizationDetails}
+      <div>${escapeHtml(receipt.store.name)}</div>
+      ${receipt.store.address ? `<div>${escapeHtml(receipt.store.address)}</div>` : ''}
+      <div class="title">НЕФИСКАЛЬНЫЙ ЧЕК</div>
+    </header>
+    <div class="separator"></div>
+    ${receiptLine('Чек №', receipt.receiptNumber)}
+    ${receiptLine('Дата', completedAt)}
+    ${receiptLine('Кассир', receipt.cashier)}
+    <div class="separator"></div>
+    ${items}
+    <div class="separator"></div>
+    ${payments}
+    <div class="separator"></div>
+    <div class="grand-total"><span>ИТОГО</span><strong>${escapeHtml(formatMoney(receipt.total))}</strong></div>
+    <div class="center notice">НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ</div>
+  </body>
+</html>`;
 };

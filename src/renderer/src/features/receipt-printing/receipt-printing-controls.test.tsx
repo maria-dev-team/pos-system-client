@@ -289,7 +289,7 @@ describe('receipt printing controls', () => {
     await waitFor(() => expect(printButton).toBeEnabled());
   });
 
-  it('previews a 58 mm text receipt before sending the current settings', async () => {
+  it('previews the same 58 mm document that will be rasterized', async () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
@@ -304,9 +304,16 @@ describe('receipt printing controls', () => {
       name: 'Предпросмотр тестового чека',
     });
     expect(window.receiptPrinter?.print).not.toHaveBeenCalled();
-    expect(
-      within(preview).getByLabelText('Содержимое тестового чека'),
-    ).toHaveTextContent('НЕФИСКАЛЬНЫЙ ЧЕК');
+    const documentPreview = within(preview).getByTitle(
+      'Содержимое тестового чека',
+    );
+    expect(documentPreview.getAttribute('srcdoc')).toContain(
+      'НЕФИСКАЛЬНЫЙ ЧЕК',
+    );
+    expect(documentPreview.getAttribute('srcdoc')).toContain(
+      'Ә Ғ Қ Ң Ө Ұ Ү Һ І',
+    );
+    expect(documentPreview).toHaveStyle({ width: '181px' });
     expect(
       within(preview).getByText(/Ширина бумаги: 58 мм/),
     ).toBeInTheDocument();
