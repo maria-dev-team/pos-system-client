@@ -39,6 +39,10 @@ export const encodeRasterBand = (
       }
     }
   }
+  for (let offset = 0; offset < raster.length; offset += 1) {
+    // XP-58IIH treats DC3/XOFF as flow control even inside raster data.
+    if (raster[offset] === 0x13) raster[offset] = 0x12;
+  }
 
   return Buffer.concat([
     RASTER_HEADER,

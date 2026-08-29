@@ -29,6 +29,21 @@ describe('encodeRasterBand', () => {
     expect(encodeRasterBand(bitmap, 2, 1, 160).at(-1)).toBe(0x80);
   });
 
+  it('does not emit the XOFF control byte inside raster data', () => {
+    const bitmap = Buffer.from([
+      ...pixel(255),
+      ...pixel(255),
+      ...pixel(255),
+      ...pixel(0),
+      ...pixel(255),
+      ...pixel(255),
+      ...pixel(0),
+      ...pixel(0),
+    ]);
+
+    expect(encodeRasterBand(bitmap, 8, 1).at(-1)).toBe(0x12);
+  });
+
   it('rejects malformed or over-height bands', () => {
     expect(() => encodeRasterBand(Buffer.alloc(3), 1, 1)).toThrow(
       'Invalid raster bitmap',
