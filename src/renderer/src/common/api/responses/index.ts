@@ -1,6 +1,10 @@
 export type { AuthContextResponse } from './auth-context.response';
 export type { AuthResponse, LoginResponse } from './auth.response';
 export type { CashierSessionResponse } from './cashier-session.response';
+export type {
+  CategoryResponse,
+  CategorySearchResponse,
+} from './category.response';
 export type { HealthResponse } from './health.response';
 export type {
   OrganizationMembershipResponse,
