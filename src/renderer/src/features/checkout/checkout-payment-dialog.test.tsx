@@ -223,25 +223,10 @@ describe('CheckoutPaymentDialog', () => {
     );
   });
 
-  it('shows local preview only when it differs from the authoritative total', () => {
-    const { rerender } = renderDialog({ localPreviewTotal: '90.00' });
-
+  it('shows only the authoritative server total', () => {
+    renderDialog();
     expect(screen.getByLabelText('Сумма на сервере')).toHaveTextContent(
       '100,00 ₸',
-    );
-    expect(screen.getByLabelText('Локальная сумма')).toHaveTextContent(
-      '90,00 ₸',
-    );
-
-    rerender(
-      <CheckoutPaymentDialog
-        localPreviewTotal="100.00"
-        onConfirm={vi.fn()}
-        onOpenChange={vi.fn()}
-        open
-        pending={false}
-        sale={saleFixture()}
-      />,
     );
     expect(screen.queryByLabelText('Локальная сумма')).not.toBeInTheDocument();
   });

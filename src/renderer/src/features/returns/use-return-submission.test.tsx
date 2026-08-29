@@ -9,6 +9,7 @@ import {
   type SaleResponse,
   createReceiptReturn,
   createWithoutReceiptReturn,
+  triggerAntiFraudEvent,
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 
@@ -21,6 +22,7 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
     ...actual,
     createReceiptReturn: vi.fn(),
     createWithoutReceiptReturn: vi.fn(),
+    triggerAntiFraudEvent: vi.fn(),
   };
 });
 
@@ -90,6 +92,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(idempotencyKey);
   useReturnsPendingStore.setState({ pendingBySession: {} });
+  vi.mocked(triggerAntiFraudEvent).mockResolvedValue(undefined);
 });
 
 afterEach(cleanup);
@@ -101,6 +104,9 @@ describe('return submission recovery', () => {
     vi.mocked(createReceiptReturn)
       .mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'))
       .mockResolvedValueOnce(completedReturn);
+    vi.mocked(triggerAntiFraudEvent).mockRejectedValue(
+      new Error('Camera unavailable'),
+    );
     const { result } = renderHook(() => useReturnSubmission(cashierSessionId), {
       wrapper: wrapperFor(client),
     });
@@ -139,6 +145,16 @@ describe('return submission recovery', () => {
       payload,
     );
     expect(globalThis.crypto.randomUUID).toHaveBeenCalledOnce();
+    expect(triggerAntiFraudEvent).toHaveBeenCalledWith({
+      externalEventId: 'sale-refund:return-1',
+      occurredAt: '2026-08-27T10:00:00.000Z',
+      postBufferSeconds: 15,
+      preBufferSeconds: 15,
+      reason: 'Товар не подошёл',
+      registerId: 'register-1',
+      saleId: 'return-1',
+      type: 'refund',
+    });
     expect(
       useReturnsPendingStore.getState().pendingBySession[cashierSessionId],
     ).toBeUndefined();

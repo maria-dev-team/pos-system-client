@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
   CheckCircle2,
@@ -66,16 +66,8 @@ import {
   ReceiptPrinterSettingsButton,
 } from '@renderer/features/receipt-printing';
 
-import { useCheckoutCartStore } from './checkout-cart-store';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
 import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
-import {
-  type CartItem,
-  adjustCartItemQuantity,
-  findProductByExactBarcode,
-  getCartLineTotal,
-  getCartTotal,
-} from './checkout-local-cart';
 import { CheckoutPaymentDialog } from './checkout-payment-dialog';
 import {
   currentSaleQueryOptions,
@@ -89,6 +81,12 @@ import {
 
 const unitLabels = { kg: 'кг', l: 'л', m: 'м', pcs: 'шт.' } as const;
 
+const cancellationReasonOptions = [
+  'Покупатель передумал',
+  'Ошибка при добавлении товара',
+  'Дублирующий чек',
+] as const;
+
 type CheckoutViewProps = {
   cashierSession: CashierSessionResponse;
   onOpenReturns?: () => void;
@@ -97,27 +95,18 @@ type CheckoutViewProps = {
   onSessionEndedLocally?: () => void;
 };
 
-type CheckoutRow =
-  | { item: CartItem; mode: 'local' }
-  | { item: SaleItemResponse; mode: 'server' };
+type CheckoutRow = { item: SaleItemResponse };
 
-const rowUnit = (row: CheckoutRow) =>
-  row.mode === 'local' ? row.item.unit : row.item.unit_code;
+const rowUnit = (row: CheckoutRow) => row.item.unit_code;
 
-const rowUnitPrice = (row: CheckoutRow) =>
-  row.mode === 'local'
-    ? (row.item.priceOverride?.unitPrice ?? row.item.catalogUnitPrice)
-    : row.item.unit_price;
+const rowUnitPrice = (row: CheckoutRow) => row.item.unit_price;
 
-const rowLineTotal = (row: CheckoutRow) =>
-  row.mode === 'local' ? getCartLineTotal(row.item) : row.item.line_total;
+const rowLineTotal = (row: CheckoutRow) => row.item.line_total;
 
 const rowIsOverridden = (row: CheckoutRow) =>
-  row.mode === 'local'
-    ? row.item.priceOverride !== undefined
-    : row.item.price_override_reason !== null ||
-      row.item.price_overridden_by_membership_id !== null ||
-      row.item.unit_price !== row.item.base_unit_price;
+  row.item.price_override_reason !== null ||
+  row.item.price_overridden_by_membership_id !== null ||
+  row.item.unit_price !== row.item.base_unit_price;
 
 function SessionEndAction({
   cashierSession,
@@ -131,10 +120,7 @@ function SessionEndAction({
     <EndCashierSessionAction
       cashierSession={cashierSession}
       onEndedLocally={onSessionEndedLocally}
-      onEnded={() => {
-        useCheckoutCartStore.getState().deleteSession(cashierSession.id);
-        onSessionEnded();
-      }}
+      onEnded={onSessionEnded}
     />
   );
 }
@@ -146,16 +132,10 @@ function LockedCheckout({
   onSessionEndedLocally,
 }: CheckoutViewProps) {
   const queryClient = useQueryClient();
-  const localSession = useCheckoutCartStore(
-    (state) => state.sessions[cashierSession.id],
-  );
   const currentSale = queryClient.getQueryData<SaleResponse | null>(
     queryKeys.sales.current(cashierSession.id),
   );
-  const canEnd =
-    (localSession?.items.length ?? 0) === 0 &&
-    localSession?.pendingOperation === undefined &&
-    currentSale?.status !== 'DRAFT';
+  const canEnd = currentSale?.status !== 'DRAFT';
 
   return (
     <main className="grid min-h-full place-items-center bg-workspace p-6">
@@ -199,11 +179,6 @@ function ActiveCheckout({
   const context = useQuery(authContextQueryOptions());
   const currentSale = useQuery(currentSaleQueryOptions(cashierSession.id));
   const transitions = useCheckoutSaleTransitions(cashierSession.id);
-  const localSession = useCheckoutCartStore(
-    (state) => state.sessions[cashierSession.id],
-  );
-  const localItems = localSession?.items ?? [];
-  const pendingOperation = localSession?.pendingOperation;
   const sale = currentSale.data?.status === 'DRAFT' ? currentSale.data : null;
   const currentKey = queryKeys.sales.current(cashierSession.id);
   const [search, setSearch] = useState('');
@@ -223,24 +198,26 @@ function ActiveCheckout({
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelKeyboardOpen, setCancelKeyboardOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
   const heldSales = useQuery({
     ...heldSalesQueryOptions(cashierSession.id),
     enabled: heldOpen,
   });
   const [paymentSale, setPaymentSale] = useState<SaleResponse | null>(null);
-  const [paymentLocalTotal, setPaymentLocalTotal] = useState<
-    string | undefined
-  >();
   const [paymentError, setPaymentError] = useState<string>();
   const [transitionError, setTransitionError] = useState<string>();
   const [completedSale, setCompletedSale] = useState<SaleResponse | null>(null);
-  const [dismissedCompletedSaleId, setDismissedCompletedSaleId] = useState<
-    string | null
-  >(null);
   const canSearch = Boolean(
     context.data?.isSystemPosition ||
     context.data?.permissions.includes('product.read'),
+  );
+  const canAddProduct = Boolean(
+    context.data &&
+    (context.data.isSystemPosition ||
+      context.data.permissions.includes(
+        sale ? 'sales.modify' : 'sales.create',
+      )),
   );
 
   const refocus = () => window.setTimeout(() => inputRef.current?.focus());
@@ -249,16 +226,17 @@ function ActiveCheckout({
     setRemoveItem(null);
     setPriceItem(null);
     setCancelOpen(false);
+    setCancelKeyboardOpen(false);
     refocus();
   };
   const openCancel = () => {
     setCancelOpen(true);
     setCancelReason('');
     setCancelError(null);
+    setCancelKeyboardOpen(false);
   };
   const finishCancelled = () => {
     void queryClient.cancelQueries({ exact: true, queryKey: currentKey });
-    useCheckoutCartStore.getState().deleteSession(cashierSession.id);
     queryClient.setQueryData<SaleResponse | null>(currentKey, null);
     setCancelError(null);
     setCancelOpen(false);
@@ -266,14 +244,7 @@ function ActiveCheckout({
   };
 
   const command = useSaleCommandMutation(cashierSession.id, sale, {
-    onError: (error, submitted, reconciledSale) => {
-      if (
-        submitted.type === 'cancel' &&
-        reconciledSale?.status === 'CANCELLED'
-      ) {
-        finishCancelled();
-        return;
-      }
+    onError: (error, submitted) => {
       if (
         submitted.type === 'remove' &&
         getHttpErrorCode(error) === ErrorCode.SaleEmpty
@@ -302,14 +273,10 @@ function ActiveCheckout({
         setPriceError(message);
         return;
       }
-      if (submitted.type === 'cancel') {
-        setCancelError(message);
-        return;
-      }
       httpErrorHandler(error, 'Не удалось изменить чек.');
       refocus();
     },
-    onSuccess: (updatedSale, submitted) => {
+    onSuccess: (_updatedSale, submitted) => {
       if (submitted.type === 'scan' || submitted.type === 'add') {
         if (submitted.type === 'scan') {
           setScanIssue((issue) =>
@@ -329,17 +296,13 @@ function ActiveCheckout({
       } else if (submitted.type === 'overridePrice') {
         setPriceError(null);
         setPriceItem(null);
-      } else if (submitted.type === 'cancel') {
-        if (updatedSale.status === 'CANCELLED') {
-          finishCancelled();
-        }
       }
-      if (submitted.type !== 'cancel') refocus();
+      refocus();
     },
   });
 
-  const localScan = useMutation({
-    mutationFn: async (barcode: string) => {
+  const scanFirstProduct = async (barcode: string) => {
+    try {
       const result = await searchProducts({
         limit: 20,
         offset: 0,
@@ -348,52 +311,51 @@ function ActiveCheckout({
       const exact = result.products.find(
         (product) => product.barcode === barcode,
       );
-      const product = findProductByExactBarcode(result.products, barcode);
       if (!exact) {
-        return { barcode, message: `Товар с кодом ${barcode} не найден` };
+        setScanIssue({
+          barcode,
+          message: `Товар с кодом ${barcode} не найден`,
+        });
+        return;
       }
       if (!exact.is_active) {
-        return { barcode, message: `Товар с кодом ${barcode} неактивен` };
+        setScanIssue({
+          barcode,
+          message: `Товар с кодом ${barcode} неактивен`,
+        });
+        return;
       }
       if (exact.retail_price === null) {
-        return { barcode, message: `У товара с кодом ${barcode} нет цены` };
+        setScanIssue({
+          barcode,
+          message: `У товара с кодом ${barcode} нет цены`,
+        });
+        return;
       }
-      if (
-        !product ||
-        !useCheckoutCartStore.getState().addProduct(cashierSession.id, product)
-      ) {
-        return { barcode, message: `Не удалось добавить товар ${barcode}` };
-      }
-      return { barcode, message: null };
-    },
-    onSuccess: ({ barcode, message }) => {
-      if (message) {
-        setScanIssue({ barcode, message });
-      } else {
-        setScanIssue((issue) => (issue?.barcode === barcode ? null : issue));
-        setSearch((value) => (value.trim() === barcode ? '' : value));
-      }
-      refocus();
-    },
-    onError: (_error, barcode) => {
+      await command.mutateAsync({ productId: exact.id, type: 'add' });
+      setScanIssue((issue) => (issue?.barcode === barcode ? null : issue));
+      setSearch((value) => (value.trim() === barcode ? '' : value));
+    } catch (error) {
       setScanIssue({
         barcode,
-        message: `Не удалось найти товар с кодом ${barcode}`,
+        message: getHttpErrorMessage(
+          error,
+          `Не удалось добавить товар с кодом ${barcode}`,
+        ),
       });
+    } finally {
       refocus();
-    },
-    scope: { id: `local-scan:${cashierSession.id}` },
-  });
+    }
+  };
   const products = useProductSearchQuery(
     search,
     canSearch &&
-      !localScan.isPending &&
+      canAddProduct &&
       !command.isPending &&
-      !transitions.prepare.isPending &&
+      !transitions.cancel.isPending &&
       !transitions.checkout.isPending &&
       !transitions.hold.isPending &&
-      !transitions.resume.isPending &&
-      pendingOperation === undefined,
+      !transitions.resume.isPending,
     context.data?.organizationId,
     context.data?.storeId,
   );
@@ -432,12 +394,9 @@ function ActiveCheckout({
   const hasPermission = (permission: string) =>
     context.data.isSystemPosition ||
     context.data.permissions.includes(permission);
-  const canPay = sale
-    ? hasPermission('sales.complete')
-    : hasPermission('sales.create') && hasPermission('sales.complete');
-  const canHold = sale
-    ? hasPermission('sales.hold')
-    : hasPermission('sales.create') && hasPermission('sales.hold');
+  const canPay = Boolean(sale && hasPermission('sales.complete'));
+  const canCancelCurrent = canCancel && Boolean(sale);
+  const canHold = Boolean(sale && hasPermission('sales.hold'));
   const canOpenReturns = Boolean(
     onOpenReturns &&
     hasPermission('returns.create') &&
@@ -445,34 +404,16 @@ function ActiveCheckout({
       (hasPermission('returns.without_receipt') &&
         hasPermission('product.read'))),
   );
-  const rows: CheckoutRow[] = sale
-    ? sale.items.map((item) => ({ item, mode: 'server' }))
-    : localItems.map((item) => ({ item, mode: 'local' }));
+  const rows: CheckoutRow[] = sale?.items.map((item) => ({ item })) ?? [];
   const transitionPending =
-    transitions.prepare.isPending ||
+    transitions.cancel.isPending ||
     transitions.checkout.isPending ||
     transitions.hold.isPending ||
-    transitions.resume.isPending ||
-    transitions.isRetryPending ||
-    transitions.recovery.isFetching;
-  const isBusy =
-    command.isPending ||
-    localScan.isPending ||
-    transitionPending ||
-    pendingOperation !== undefined;
-  const scannerBlocked =
-    command.isPending || transitionPending || pendingOperation !== undefined;
-  const canResume =
-    hasPermission('sales.hold') &&
-    !sale &&
-    localItems.length === 0 &&
-    pendingOperation === undefined &&
-    !transitionPending;
-  const canEndSession =
-    !sale &&
-    localItems.length === 0 &&
-    pendingOperation === undefined &&
-    !isBusy;
+    transitions.resume.isPending;
+  const isBusy = command.isPending || transitionPending;
+  const scannerBlocked = command.isPending || transitionPending;
+  const canResume = hasPermission('sales.hold') && !sale && !transitionPending;
+  const canEndSession = !sale && !isBusy;
 
   const showTransitionError = (error: unknown, fallback: string) =>
     setTransitionError(getHttpErrorMessage(error, fallback));
@@ -481,27 +422,20 @@ function ActiveCheckout({
     if (result.status === 'COMPLETED') {
       setPaymentSale(null);
       setPaymentError(undefined);
-      setDismissedCompletedSaleId(null);
       setCompletedSale(result);
     } else if (result.status === 'HELD') {
       setHeldOpen(false);
       toast.success('Чек отложен');
       refocus();
+    } else if (result.status === 'CANCELLED') {
+      finishCancelled();
     }
   };
-  const openPayment = async () => {
-    if (!canPay || rows.length === 0 || pendingOperation) return;
-    const localPreview = sale ? undefined : getCartTotal(localItems);
+  const openPayment = () => {
+    if (!canPay || !sale || rows.length === 0) return;
     setPaymentError(undefined);
     setTransitionError(undefined);
-    try {
-      const prepared = await transitions.prepare.mutateAsync();
-      setPaymentLocalTotal(localPreview);
-      setPaymentSale(prepared);
-    } catch (error) {
-      showTransitionError(error, 'Не удалось подготовить чек.');
-      refocus();
-    }
+    setPaymentSale(sale);
   };
   const confirmPayment = async (payments: SalePaymentPayload[]) => {
     setPaymentError(undefined);
@@ -509,28 +443,20 @@ function ActiveCheckout({
     try {
       finishTransition(await transitions.checkout.mutateAsync(payments));
     } catch (error) {
-      const unresolved =
-        useCheckoutCartStore.getState().sessions[cashierSession.id]
-          ?.pendingOperation;
       const message = getHttpErrorMessage(error, 'Не удалось оплатить чек.');
-      if (unresolved) {
-        setPaymentSale(null);
-        setTransitionError(message);
+      const authoritative = queryClient.getQueryData<SaleResponse | null>(
+        currentKey,
+      );
+      if (authoritative?.status === 'DRAFT') {
+        setPaymentSale(authoritative);
       } else {
-        const authoritative = queryClient.getQueryData<SaleResponse | null>(
-          currentKey,
-        );
-        if (authoritative?.status === 'DRAFT') {
-          setPaymentSale((current) =>
-            current?.id === authoritative.id ? authoritative : current,
-          );
-        }
-        setPaymentError(message);
+        setPaymentSale(null);
       }
+      setPaymentError(message);
     }
   };
   const holdCurrent = async () => {
-    if (!canHold || rows.length === 0 || pendingOperation) return;
+    if (!canHold || rows.length === 0) return;
     setTransitionError(undefined);
     try {
       finishTransition(await transitions.hold.mutateAsync());
@@ -549,21 +475,7 @@ function ActiveCheckout({
       showTransitionError(error, 'Не удалось возобновить чек.');
     }
   };
-  const retryPending = async () => {
-    setTransitionError(undefined);
-    try {
-      finishTransition(await transitions.retryPending());
-    } catch (error) {
-      showTransitionError(error, 'Не удалось повторить операцию.');
-    }
-  };
-
-  const recoveredCompletedSale =
-    transitions.recovery.data?.status === 'COMPLETED' &&
-    transitions.recovery.data.id !== dismissedCompletedSaleId
-      ? transitions.recovery.data
-      : null;
-  const visibleCompletedSale = completedSale ?? recoveredCompletedSale;
+  const visibleCompletedSale = completedSale;
 
   if (visibleCompletedSale) {
     return (
@@ -619,9 +531,7 @@ function ActiveCheckout({
                 </div>
               ))}
             </div>
-            <div
-              className={`mt-6 grid gap-3 ${pendingOperation ? '' : 'sm:grid-cols-3'}`}
-            >
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
               <ReceiptPrintButton
                 cashierSession={cashierSession}
                 className="min-h-12"
@@ -631,7 +541,6 @@ function ActiveCheckout({
               <Button
                 className="min-h-12"
                 onClick={() => {
-                  setDismissedCompletedSaleId(visibleCompletedSale.id);
                   setCompletedSale(null);
                   refocus();
                 }}
@@ -639,13 +548,11 @@ function ActiveCheckout({
               >
                 Новый чек
               </Button>
-              {pendingOperation === undefined ? (
-                <SessionEndAction
-                  cashierSession={cashierSession}
-                  onSessionEndedLocally={onSessionEndedLocally}
-                  onSessionEnded={onSessionEnded}
-                />
-              ) : null}
+              <SessionEndAction
+                cashierSession={cashierSession}
+                onSessionEndedLocally={onSessionEndedLocally}
+                onSessionEnded={onSessionEnded}
+              />
             </div>
           </div>
         </section>
@@ -657,44 +564,23 @@ function ActiveCheckout({
     command.mutate(nextCommand);
   const submitScan = () => {
     const barcode = search.trim();
-    if (!barcode || !canSearch || scannerBlocked) return;
+    if (!barcode || !canSearch || !canAddProduct || scannerBlocked) return;
     setSearch('');
     if (sale) submitCommand({ barcode, type: 'scan' });
-    else localScan.mutate(barcode);
+    else void scanFirstProduct(barcode);
   };
   const selectProduct = (product: ProductResponse) => {
-    if (sale) {
-      submitCommand({ productId: product.id, type: 'add' });
-      return;
-    }
-    if (
-      useCheckoutCartStore.getState().addProduct(cashierSession.id, product)
-    ) {
-      setSearch('');
-      refocus();
-    } else {
-      toast.error('Не удалось добавить товар');
-    }
+    if (!canAddProduct) return;
+    submitCommand({ productId: product.id, type: 'add' });
   };
   const openRemove = (row: CheckoutRow) => {
-    if (row.mode === 'server' && sale?.items.length === 1) {
+    if (sale?.items.length === 1) {
       openCancel();
       return;
     }
     setRemoveItem(row);
   };
   const adjustQuantity = (row: CheckoutRow, delta: -1 | 1) => {
-    if (row.mode === 'local') {
-      const next = adjustCartItemQuantity(row.item, delta);
-      if (!next) {
-        openRemove(row);
-        return;
-      }
-      useCheckoutCartStore
-        .getState()
-        .setQuantity(cashierSession.id, row.item.productId, next.quantity);
-      return;
-    }
     const next = adjustQuantityByOne(row.item.quantity, delta);
     if (!next) {
       openRemove(row);
@@ -722,18 +608,6 @@ function ActiveCheckout({
       return;
     }
     setQuantityError(null);
-    if (quantityItem.mode === 'local') {
-      useCheckoutCartStore
-        .getState()
-        .setQuantity(
-          cashierSession.id,
-          quantityItem.item.productId,
-          parsed.data,
-        );
-      setQuantityItem(null);
-      refocus();
-      return;
-    }
     submitCommand({
       itemId: quantityItem.item.id,
       quantity: parsed.data,
@@ -742,14 +616,6 @@ function ActiveCheckout({
   };
   const removeRow = () => {
     if (!removeItem) return;
-    if (removeItem.mode === 'local') {
-      useCheckoutCartStore
-        .getState()
-        .remove(cashierSession.id, removeItem.item.productId);
-      setRemoveItem(null);
-      refocus();
-      return;
-    }
     submitCommand({ itemId: removeItem.item.id, type: 'remove' });
   };
   const openPrice = (row: CheckoutRow) => {
@@ -770,18 +636,6 @@ function ActiveCheckout({
       return;
     }
     setPriceError(null);
-    if (priceItem.mode === 'local') {
-      useCheckoutCartStore
-        .getState()
-        .overridePrice(
-          cashierSession.id,
-          priceItem.item.productId,
-          parsed.data,
-        );
-      setPriceItem(null);
-      refocus();
-      return;
-    }
     submitCommand({
       itemId: priceItem.item.id,
       reason: parsed.data.reason,
@@ -790,30 +644,22 @@ function ActiveCheckout({
     });
   };
   const resetPrice = (row: CheckoutRow) => {
-    if (row.mode === 'local') {
-      useCheckoutCartStore
-        .getState()
-        .resetPrice(cashierSession.id, row.item.productId);
-      refocus();
-      return;
-    }
     submitCommand({ itemId: row.item.id, type: 'resetPrice' });
   };
-  const submitCancel = (event: FormEvent<HTMLFormElement>) => {
+  const submitCancel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!sale) {
-      useCheckoutCartStore.getState().clear(cashierSession.id);
-      setCancelOpen(false);
-      refocus();
-      return;
-    }
     const parsed = saleCancellationSchema.safeParse({ reason: cancelReason });
     if (!parsed.success) {
       setCancelError(parsed.error.issues[0]?.message ?? 'Проверьте причину');
       return;
     }
     setCancelError(null);
-    submitCommand({ reason: parsed.data.reason, type: 'cancel' });
+    try {
+      const result = await transitions.cancel.mutateAsync(parsed.data.reason);
+      if (result.status === 'CANCELLED') finishCancelled();
+    } catch (error) {
+      setCancelError(getHttpErrorMessage(error, 'Не удалось отменить чек.'));
+    }
   };
 
   return (
@@ -829,7 +675,7 @@ function ActiveCheckout({
               aria-describedby={scanIssue ? 'scan-issue' : undefined}
               autoFocus
               className="h-15 border-border bg-muted/35 pl-13 pr-4 text-lg shadow-none md:text-lg"
-              disabled={!canSearch || scannerBlocked}
+              disabled={!canSearch || !canAddProduct || scannerBlocked}
               id="checkout-search"
               maxLength={255}
               onChange={(event) => setSearch(event.target.value)}
@@ -850,7 +696,7 @@ function ActiveCheckout({
           <Button
             aria-label="Показать виртуальную клавиатуру"
             className="min-h-15 min-w-15 bg-muted/50"
-            disabled={!canSearch || scannerBlocked}
+            disabled={!canSearch || !canAddProduct || scannerBlocked}
             onClick={() => setKeyboardOpen((open) => !open)}
             type="button"
             variant="ghost"
@@ -931,7 +777,7 @@ function ActiveCheckout({
                     <button
                       aria-label={`Добавить товар ${product.name}`}
                       className="group min-h-17 rounded-xl border border-border bg-background p-3 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-55"
-                      disabled={Boolean(reason) || isBusy}
+                      disabled={Boolean(reason) || !canAddProduct || isBusy}
                       key={product.id}
                       onClick={() => selectProduct(product)}
                       type="button"
@@ -960,82 +806,7 @@ function ActiveCheckout({
         </div>
       </section>
 
-      {sale ? (
-        <div className="mt-3 rounded-xl border border-warning/30 bg-warning-muted px-4 py-3 text-sm font-semibold text-warning">
-          Восстановлен серверный черновик
-        </div>
-      ) : null}
-
-      {pendingOperation ? (
-        <section className="mt-3 rounded-xl border border-warning/30 bg-warning-muted px-4 py-3">
-          <h2 className="font-bold">Проверьте статус операции</h2>
-          {transitions.recovery.isFetching ? (
-            <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle aria-hidden="true" className="animate-spin" />
-              Проверяем сервер, операция не будет отправлена повторно
-            </p>
-          ) : transitions.recovery.isError ? (
-            <p className="mt-2 text-sm text-destructive">
-              {getHttpErrorMessage(
-                transitions.recovery.error,
-                'Не удалось проверить статус. Локальные данные сохранены.',
-              )}
-            </p>
-          ) : transitions.recovery.data?.status === 'DRAFT' ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Серверный чек остался черновиком. Повторите точную команду или
-              вернитесь к редактированию.
-            </p>
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Результат операции неизвестен. Сначала проверьте статус или
-              повторите точную сохранённую команду.
-            </p>
-          )}
-          {transitionError ? (
-            <p
-              className="mt-2 text-sm font-medium text-destructive"
-              role="alert"
-            >
-              {transitionError}
-            </p>
-          ) : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {transitions.recovery.data?.status !== 'DRAFT' ? (
-              <Button
-                className="min-h-12"
-                disabled={transitionPending}
-                onClick={() => void transitions.recovery.refetch()}
-                type="button"
-                variant="ghost"
-              >
-                Проверить статус
-              </Button>
-            ) : null}
-            <Button
-              className="min-h-12"
-              disabled={transitionPending}
-              onClick={() => void retryPending()}
-              type="button"
-            >
-              Повторить
-            </Button>
-            <Button
-              className="min-h-12"
-              disabled={transitionPending}
-              onClick={() => {
-                transitions.abandonPending();
-                setTransitionError(undefined);
-                refocus();
-              }}
-              type="button"
-              variant="ghost"
-            >
-              Вернуться к редактированию
-            </Button>
-          </div>
-        </section>
-      ) : transitionError ? (
+      {transitionError ? (
         <p
           className="mt-3 rounded-xl bg-destructive/5 px-4 py-3 text-sm font-medium text-destructive"
           role="alert"
@@ -1096,9 +867,7 @@ function ActiveCheckout({
                   return (
                     <tr
                       className="border-b border-border/70 align-top transition-colors last:border-b-0 hover:bg-primary/[0.018]"
-                      key={
-                        row.mode === 'local' ? row.item.productId : row.item.id
-                      }
+                      key={row.item.id}
                     >
                       <td className="px-5 py-4">
                         <p className="font-semibold leading-snug">{name}</p>
@@ -1223,15 +992,15 @@ function ActiveCheckout({
 
           <div className="mt-5 rounded-2xl border border-primary/15 bg-primary/[0.045] p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              {sale ? 'Итого' : 'Предварительный итог'}
+              Итого
             </p>
             <p className="mt-2 text-[2rem] font-extrabold leading-none tracking-[-0.045em] tabular-nums text-primary xl:text-4xl">
-              {formatCash(sale ? sale.total : getCartTotal(localItems))}
+              {formatCash(sale?.total ?? '0.00')}
             </p>
           </div>
 
           <div className="space-y-2.5 pt-4">
-            {!pendingOperation && rows.length > 0 && canPay ? (
+            {rows.length > 0 && canPay ? (
               <Button
                 className="min-h-15 w-full text-base shadow-md shadow-primary/20"
                 disabled={isBusy}
@@ -1255,7 +1024,7 @@ function ActiveCheckout({
             {canOpenReturns ? (
               <Button
                 className="min-h-12 w-full border-border bg-background"
-                disabled={pendingOperation !== undefined}
+                disabled={isBusy}
                 onClick={onOpenReturns}
                 type="button"
                 variant="ghost"
@@ -1265,7 +1034,7 @@ function ActiveCheckout({
               </Button>
             ) : null}
             <ReceiptPrinterSettingsButton className="min-h-12 w-full border-border bg-background" />
-            {!pendingOperation && rows.length > 0 && canHold ? (
+            {rows.length > 0 && canHold ? (
               <Button
                 className="min-h-12 w-full border-border bg-background"
                 disabled={isBusy}
@@ -1276,10 +1045,10 @@ function ActiveCheckout({
                 Отложить чек
               </Button>
             ) : null}
-            {(sale && canCancel) || (!sale && localItems.length > 0) ? (
+            {sale && canCancelCurrent ? (
               <div className="my-3 border-t border-border/70" />
             ) : null}
-            {sale && canCancel ? (
+            {sale && canCancelCurrent ? (
               <Button
                 className="min-h-12 w-full text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
                 disabled={isBusy}
@@ -1289,18 +1058,6 @@ function ActiveCheckout({
               >
                 <Ban aria-hidden="true" />
                 Отменить чек
-              </Button>
-            ) : null}
-            {!sale && localItems.length > 0 ? (
-              <Button
-                className="min-h-12 w-full text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
-                disabled={isBusy}
-                onClick={openCancel}
-                type="button"
-                variant="ghost"
-              >
-                <Trash2 aria-hidden="true" />
-                Очистить корзину
               </Button>
             ) : null}
             {canEndSession ? (
@@ -1386,7 +1143,6 @@ function ActiveCheckout({
 
       {paymentSale ? (
         <CheckoutPaymentDialog
-          localPreviewTotal={paymentLocalTotal}
           onConfirm={confirmPayment}
           onOpenChange={(open) => {
             if (!open && !transitions.checkout.isPending) {
@@ -1469,12 +1225,8 @@ function ActiveCheckout({
             <DialogTitle>Изменить цену</DialogTitle>
             <DialogDescription>
               {priceItem?.item.name}: базовая{' '}
-              {formatCash(
-                priceItem?.mode === 'local'
-                  ? (priceItem.item.catalogUnitPrice ?? null)
-                  : (priceItem?.item.base_unit_price ?? null),
-              )}
-              , текущая {formatCash(priceItem ? rowUnitPrice(priceItem) : null)}
+              {formatCash(priceItem?.item.base_unit_price ?? null)}, текущая{' '}
+              {formatCash(priceItem ? rowUnitPrice(priceItem) : null)}
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-5" onSubmit={submitPrice}>
@@ -1550,52 +1302,77 @@ function ActiveCheckout({
 
       <Dialog
         onOpenChange={(open) => {
-          if (!open && !command.isPending) closeDialogs();
+          if (!open && !transitions.cancel.isPending) closeDialogs();
         }}
         open={cancelOpen}
       >
         <DialogContent
           className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl"
-          showCloseButton={!command.isPending}
+          showCloseButton={!transitions.cancel.isPending}
         >
           <DialogHeader>
-            <DialogTitle>
-              {sale ? 'Отменить чек?' : 'Очистить корзину?'}
-            </DialogTitle>
+            <DialogTitle>Отменить чек?</DialogTitle>
             <DialogDescription>
-              {sale
-                ? 'Отменённый чек нельзя восстановить.'
-                : 'Все локальные позиции будут удалены.'}
+              Причина сохранится в истории. Отменённый чек нельзя восстановить.
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-5" onSubmit={submitCancel}>
-            {sale ? (
-              <>
-                <FormField>
-                  <Label htmlFor="cancel-reason">Причина отмены</Label>
-                  <Input
-                    autoFocus
-                    id="cancel-reason"
-                    maxLength={500}
-                    onChange={(event) => {
-                      setCancelReason(event.target.value);
+            <FormField>
+              <Label htmlFor="cancel-reason">Причина отмены</Label>
+              <textarea
+                aria-label="Причина отмены"
+                autoFocus
+                className="min-h-24 w-full resize-none rounded-lg border border-input bg-background p-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
+                id="cancel-reason"
+                maxLength={500}
+                onChange={(event) => {
+                  setCancelReason(event.target.value);
+                  setCancelError(null);
+                }}
+                placeholder="Коротко укажите, почему чек отменяется"
+                value={cancelReason}
+              />
+              <div className="flex flex-wrap gap-2">
+                {cancellationReasonOptions.map((reason) => (
+                  <Button
+                    key={reason}
+                    onClick={() => {
+                      setCancelReason(reason);
                       setCancelError(null);
                     }}
-                    value={cancelReason}
-                  />
-                </FormField>
-                <VirtualKeyboard
-                  compact
-                  disabled={command.isPending}
-                  maxLength={500}
-                  onValueChange={(value) => {
-                    setCancelReason(value);
-                    setCancelError(null);
-                  }}
-                  value={cancelReason}
-                />
-              </>
-            ) : null}
+                    className="min-h-9 px-3 py-1.5 text-xs"
+                    type="button"
+                    variant="ghost"
+                  >
+                    {reason}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <Button
+                  onClick={() => setCancelKeyboardOpen(true)}
+                  type="button"
+                  variant="ghost"
+                >
+                  <Keyboard aria-hidden="true" />
+                  Экранная клавиатура
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {cancelReason.length}/500
+                </span>
+              </div>
+              <VirtualKeyboardOverlay
+                compact
+                maxLength={500}
+                onOpenChange={setCancelKeyboardOpen}
+                onValueChange={(value) => {
+                  setCancelReason(value);
+                  setCancelError(null);
+                }}
+                open={cancelKeyboardOpen}
+                value={cancelReason}
+              />
+            </FormField>
             {cancelError ? (
               <p className="text-sm font-medium text-destructive">
                 {cancelError}
@@ -1605,7 +1382,7 @@ function ActiveCheckout({
               <DialogClose asChild>
                 <Button
                   className="min-h-12"
-                  disabled={command.isPending}
+                  disabled={transitions.cancel.isPending}
                   type="button"
                   variant="ghost"
                 >
@@ -1614,10 +1391,13 @@ function ActiveCheckout({
               </DialogClose>
               <Button
                 className="min-h-12 bg-destructive text-white hover:bg-destructive/90"
-                disabled={command.isPending}
+                disabled={transitions.cancel.isPending}
                 type="submit"
               >
-                {sale ? 'Подтвердить отмену' : 'Очистить'}
+                {transitions.cancel.isPending ? (
+                  <LoaderCircle aria-hidden="true" className="animate-spin" />
+                ) : null}
+                Подтвердить отмену
               </Button>
             </DialogFooter>
           </form>

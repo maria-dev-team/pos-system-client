@@ -4,7 +4,8 @@ import axios from 'axios';
 import {
   type SaleResponse,
   addSaleItem,
-  cancelSale,
+  createSale,
+  getCurrentSale,
   getSale,
   overrideSaleItemPrice,
   removeSaleItem,
@@ -26,8 +27,7 @@ export type SaleCommand =
       type: 'overridePrice';
       unitPrice: string;
     }
-  | { itemId: string; type: 'resetPrice' }
-  | { reason?: string; type: 'cancel' };
+  | { itemId: string; type: 'resetPrice' };
 
 type SaleCommandMutationOptions = {
   onError?: (
@@ -38,12 +38,18 @@ type SaleCommandMutationOptions = {
   onSuccess?: (sale: SaleResponse, command: SaleCommand) => void;
 };
 
+const isAmbiguous = (error: unknown) =>
+  axios.isAxiosError(error) &&
+  (!error.response ||
+    error.code === 'ECONNABORTED' ||
+    error.code === 'ETIMEDOUT' ||
+    error.response.status >= 500);
+
 const shouldReconcile = (error: unknown) =>
+  isAmbiguous(error) ||
   getHttpErrorCode(error) === ErrorCode.SaleVersionConflict ||
-  (axios.isAxiosError(error) &&
-    (!error.response ||
-      error.code === 'ECONNABORTED' ||
-      error.code === 'ETIMEDOUT'));
+  getHttpErrorCode(error) === ErrorCode.SaleNotEditable ||
+  getHttpErrorCode(error) === ErrorCode.SaleDraftAlreadyExists;
 
 export function useSaleCommandMutation(
   cashierSessionId: string,
@@ -52,55 +58,91 @@ export function useSaleCommandMutation(
 ) {
   const queryClient = useQueryClient();
   const saleKey = queryKeys.sales.current(cashierSessionId);
-  const replaceCurrentSale = (updatedSale: SaleResponse) =>
+
+  const reconcileCurrent = (updatedSale: SaleResponse) => {
     queryClient.setQueryData<SaleResponse | null>(saleKey, (currentSale) =>
-      sale && currentSale?.id === sale.id ? updatedSale : currentSale,
+      updatedSale.status === 'DRAFT'
+        ? currentSale === null || currentSale?.id === updatedSale.id
+          ? updatedSale
+          : currentSale
+        : currentSale?.id === updatedSale.id
+          ? null
+          : currentSale,
     );
+    return queryClient.getQueryData<SaleResponse | null>(saleKey);
+  };
 
   return useMutation({
-    mutationFn: (command: SaleCommand) => {
+    mutationFn: async (command: SaleCommand) => {
       const currentSale = queryClient.getQueryData<SaleResponse | null>(
         saleKey,
       );
-      if (!sale || currentSale?.id !== sale.id) {
+
+      if (!currentSale) {
+        if (command.type !== 'add') {
+          throw new Error('Current sale is no longer active');
+        }
+        try {
+          return await createSale({
+            items: [
+              {
+                productId: command.productId,
+                quantity: command.quantity ?? '1',
+              },
+            ],
+          });
+        } catch (error) {
+          if (shouldReconcile(error)) {
+            try {
+              const reconciled = await getCurrentSale();
+              if (reconciled?.status === 'DRAFT') return reconciled;
+            } catch {
+              // Keep the original create error when reconciliation is unavailable.
+            }
+          }
+          throw error;
+        }
+      }
+
+      if (
+        (sale && currentSale.id !== sale.id) ||
+        (!sale && command.type !== 'add')
+      ) {
         throw new Error('Current sale is no longer active');
       }
 
       const expectedVersion = currentSale.version;
       switch (command.type) {
         case 'scan':
-          return scanSaleItem(sale.id, {
+          return scanSaleItem(currentSale.id, {
             barcode: command.barcode,
             expectedVersion,
             quantityDelta: '1',
           });
         case 'add':
-          return addSaleItem(sale.id, {
+          return addSaleItem(currentSale.id, {
             expectedVersion,
             productId: command.productId,
             quantity: command.quantity ?? '1',
           });
         case 'setQuantity':
-          return setSaleItemQuantity(sale.id, command.itemId, {
+          return setSaleItemQuantity(currentSale.id, command.itemId, {
             expectedVersion,
             quantity: command.quantity,
           });
         case 'remove':
-          return removeSaleItem(sale.id, command.itemId, { expectedVersion });
+          return removeSaleItem(currentSale.id, command.itemId, {
+            expectedVersion,
+          });
         case 'overridePrice':
-          return overrideSaleItemPrice(sale.id, command.itemId, {
+          return overrideSaleItemPrice(currentSale.id, command.itemId, {
             expectedVersion,
             reason: command.reason,
             unitPrice: command.unitPrice,
           });
         case 'resetPrice':
-          return resetSaleItemPrice(sale.id, command.itemId, {
+          return resetSaleItemPrice(currentSale.id, command.itemId, {
             expectedVersion,
-          });
-        case 'cancel':
-          return cancelSale(sale.id, {
-            expectedVersion,
-            ...(command.reason ? { reason: command.reason } : {}),
           });
       }
     },
@@ -109,20 +151,23 @@ export function useSaleCommandMutation(
       if (sale && shouldReconcile(error)) {
         try {
           const refreshedSale = await getSale(sale.id);
-          const currentSale = replaceCurrentSale(refreshedSale);
-          if (currentSale?.id === refreshedSale.id) {
+          const currentSale = reconcileCurrent(refreshedSale);
+          if (
+            refreshedSale.status === 'DRAFT' &&
+            currentSale?.id === refreshedSale.id
+          ) {
             reconciledSale = currentSale;
           }
         } catch {
-          // Preserve the original mutation error for the command consumer.
+          // Keep the original command error as the actionable failure.
         }
       }
       options.onError?.(error, command, reconciledSale);
     },
     onSuccess: (updatedSale, command) => {
-      replaceCurrentSale(updatedSale);
+      reconcileCurrent(updatedSale);
       options.onSuccess?.(updatedSale, command);
     },
-    scope: { id: sale?.id ?? `no-sale:${cashierSessionId}` },
+    scope: { id: cashierSessionId },
   });
 }

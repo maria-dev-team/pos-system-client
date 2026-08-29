@@ -162,12 +162,21 @@ export function useReturnsFlow(
     linesHaveDisposition &&
     returnReasonSchema.safeParse(reason).success &&
     previewTotal !== '0.00';
-
-  const selectReceipt = (value: string) => {
+  const openReceipt = (value: string) => {
     setSelectedReceiptNumber(value);
     setReceiptNumberState(value);
     setReceiptSelections({});
     setFormError(null);
+  };
+
+  const toggleReceipt = (value: string) => {
+    if (selectedReceiptNumber === value) {
+      setSelectedReceiptNumber('');
+      setReceiptSelections({});
+      setFormError(null);
+      return;
+    }
+    openReceipt(value);
   };
 
   const setReceiptNumber = (value: string) => {
@@ -185,7 +194,7 @@ export function useReturnsFlow(
       return;
     }
     setReceiptSearchError(null);
-    selectReceipt(parsed.data);
+    openReceipt(parsed.data);
   };
 
   const addProduct = (product: ProductResponse) => {
@@ -205,7 +214,7 @@ export function useReturnsFlow(
       {
         catalogUnitPrice,
         product,
-        quantity: '',
+        quantity: '1',
         returnDisposition: null,
       },
     ]);
@@ -464,7 +473,7 @@ export function useReturnsFlow(
       onPreviousPage: () => setPage((value) => value - 1),
       onReceiptNumberChange: setReceiptNumber,
       onSearch: searchReceipt,
-      onSelectReceipt: selectReceipt,
+      onSelectReceipt: toggleReceipt,
       onSelectionsChange: setReceiptSelections,
       page,
       receiptDetail,
@@ -478,6 +487,7 @@ export function useReturnsFlow(
       error: recoveryError,
       isConflict,
       isPending: submission.retry.isPending,
+      isSubmitting: submission.submit.isPending,
       onRetry: () =>
         submission.retry
           .mutateAsync()

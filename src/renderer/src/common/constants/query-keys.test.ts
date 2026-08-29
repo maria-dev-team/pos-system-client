@@ -55,23 +55,6 @@ describe('queryKeys', () => {
       'detail',
       '42',
     ]);
-    expect(
-      queryKeys.sales.recovery(
-        'cashier-session-1',
-        'checkout',
-        'sale-1',
-        7,
-        '[["CASH","10.00","12.00"],["CASHLESS","5.00",null]]',
-      ),
-    ).toEqual([
-      'sales',
-      'recovery',
-      'cashier-session-1',
-      'checkout',
-      'sale-1',
-      7,
-      '[["CASH","10.00","12.00"],["CASHLESS","5.00",null]]',
-    ]);
     expect(queryKeys.health.api()).toEqual(['health', 'api']);
     expect(queryKeys.organizations.mine()).toEqual(['organizations', 'mine']);
     expect(queryKeys.registers.all()).toEqual(['registers']);

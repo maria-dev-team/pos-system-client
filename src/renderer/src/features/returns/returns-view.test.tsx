@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AxiosError } from 'axios';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -17,6 +18,7 @@ import {
   getReceipt,
   getReceipts,
   searchProducts,
+  triggerAntiFraudEvent,
 } from '@renderer/common/api';
 
 import { ReturnsView } from './index';
@@ -32,6 +34,7 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
     getReceipt: vi.fn(),
     getReceipts: vi.fn(),
     searchProducts: vi.fn(),
+    triggerAntiFraudEvent: vi.fn(),
   };
 });
 
@@ -219,6 +222,7 @@ beforeEach(() => {
   vi.mocked(getReceipt).mockResolvedValue(receipt);
   vi.mocked(createReceiptReturn).mockResolvedValue(completedReturn);
   vi.mocked(createWithoutReceiptReturn).mockResolvedValue(completedReturn);
+  vi.mocked(triggerAntiFraudEvent).mockResolvedValue(undefined);
 });
 
 afterEach(cleanup);
@@ -261,25 +265,44 @@ describe('ReturnsView', () => {
 
   it('loads receipt details on selection and requires quantity, disposition, reason and payment', async () => {
     const user = userEvent.setup();
+    const refreshedReceipt: ReceiptResponse = {
+      ...receipt,
+      items: receipt.items.map((item) =>
+        item.id === 'item-1'
+          ? {
+              ...item,
+              returnable_quantity: '0.000',
+              returned_quantity: '1.000',
+            }
+          : item,
+      ),
+    };
+    vi.mocked(getReceipt)
+      .mockResolvedValueOnce(receipt)
+      .mockResolvedValue(refreshedReceipt);
     renderView();
 
     expect(getReceipt).not.toHaveBeenCalled();
-    await user.click(
-      await screen.findByRole('button', { name: 'Открыть чек №42' }),
-    );
+    const receiptButton = await screen.findByRole('button', {
+      name: 'Открыть чек №42',
+    });
+    await user.click(receiptButton);
     expect(await screen.findByText('Молоко')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Печать чека' }),
     ).toBeInTheDocument();
+    expect(receiptButton).toHaveAttribute('aria-expanded', 'true');
+    expect(receiptButton.nextElementSibling).toContainElement(
+      screen.getByText('Молоко'),
+    );
     expect(screen.getByLabelText('Выбрать Хлеб')).toBeDisabled();
 
     await user.click(screen.getByLabelText('Выбрать Молоко'));
     const paymentButton = screen.getByRole('button', {
-      name: 'Выбрать способ выплаты',
+      name: 'Оформить возврат',
     });
     expect(paymentButton).toBeDisabled();
 
-    await user.type(screen.getByLabelText('Количество Молоко'), '1');
     await user.click(screen.getByRole('button', { name: 'На склад Молоко' }));
     await user.type(
       screen.getByLabelText('Причина возврата'),
@@ -311,6 +334,14 @@ describe('ReturnsView', () => {
       payments: [{ amount: '450.00', method: 'CASH' }],
       reason: 'Товар не подошёл',
     });
+    expect(getReceipt).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByRole('button', { name: 'Новый возврат' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Открыть чек №42' }),
+    );
+    expect(await screen.findAllByText('Возвращено полностью')).toHaveLength(2);
+    expect(screen.getByLabelText('Выбрать Молоко')).toBeDisabled();
   });
 
   it('supports receipt pagination and an error retry state', async () => {
@@ -341,6 +372,41 @@ describe('ReturnsView', () => {
       await screen.findByRole('button', { name: 'Открыть чек №21' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Предыдущая' })).toBeEnabled();
+  });
+
+  it('does not show recovery while the first return request is in progress', async () => {
+    const user = userEvent.setup();
+    let rejectReturn: (error: unknown) => void = () => undefined;
+    vi.mocked(createReceiptReturn).mockReturnValue(
+      new Promise((_, reject) => {
+        rejectReturn = reject;
+      }),
+    );
+    renderView();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Открыть чек №42' }),
+    );
+    await user.click(screen.getByLabelText('Выбрать Молоко'));
+    await user.click(screen.getByRole('button', { name: 'На склад Молоко' }));
+    await user.type(
+      screen.getByLabelText('Причина возврата'),
+      'Товар не подошёл',
+    );
+    await user.click(screen.getByRole('button', { name: 'Оформить возврат' }));
+    await user.click(screen.getByRole('button', { name: 'Наличные' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить возврат' }),
+    );
+
+    await waitFor(() => expect(createReceiptReturn).toHaveBeenCalledOnce());
+    expect(screen.queryByText('Незавершённый возврат')).not.toBeInTheDocument();
+    expect(screen.getByText('Способ возврата')).toBeInTheDocument();
+
+    rejectReturn(new AxiosError('Network Error', 'ERR_NETWORK'));
+    expect(
+      await screen.findByText('Незавершённый возврат'),
+    ).toBeInTheDocument();
   });
 
   it('allows inactive priced products without a receipt and disables unpriced products', async () => {
@@ -387,9 +453,22 @@ describe('ReturnsView', () => {
     ).toBeDisabled();
     await user.click(inactive);
 
-    expect(screen.getByLabelText('Количество Неактивный товар')).toHaveValue(
-      '',
+    const quantity = screen.getByRole('button', {
+      name: 'Изменить количество Неактивный товар',
+    });
+    expect(quantity).toHaveTextContent('1 шт.');
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Увеличить количество Неактивный товар',
+      }),
     );
+    expect(quantity).toHaveTextContent('2 шт.');
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Уменьшить количество Неактивный товар',
+      }),
+    );
+    expect(quantity).toHaveTextContent('1 шт.');
     expect(
       screen.getByRole('button', {
         name: 'Изменить цену Неактивный товар',
@@ -465,15 +544,12 @@ describe('ReturnsView', () => {
       'Повреждена упаковка',
     );
     await user.click(screen.getByRole('button', { name: 'Сохранить цену' }));
-    await user.type(screen.getByLabelText('Количество Кофе'), '1');
     await user.click(screen.getByRole('button', { name: 'Списать Кофе' }));
     await user.type(
       screen.getByLabelText('Причина возврата'),
       'Возврат без чека',
     );
-    await user.click(
-      screen.getByRole('button', { name: 'Выбрать способ выплаты' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Оформить возврат' }));
     await user.click(screen.getByRole('button', { name: 'Безналичные' }));
     await user.click(
       screen.getByRole('button', { name: 'Подтвердить возврат' }),
