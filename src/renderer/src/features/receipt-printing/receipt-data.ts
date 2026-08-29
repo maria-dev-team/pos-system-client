@@ -5,6 +5,7 @@ type PrintableReceipt = Parameters<
 >[0]['receipt'];
 
 type ReceiptMetadata = {
+  cashierName?: string | null;
   currentCashier?: { id: string; name: string } | null;
   organization?: OrganizationResponse | null;
   store?: { address: string | null; name: string } | null;
@@ -40,12 +41,16 @@ export const buildPrintableReceipt = (
 
   const organization = metadata.organization;
   const currentCashier = metadata.currentCashier;
+  const cashierName =
+    metadata.cashierName !== undefined
+      ? metadata.cashierName
+      : currentCashier?.id === sale.cashier_membership_id
+        ? currentCashier.name
+        : null;
+  if (!cashierName) return null;
 
   return {
-    cashier:
-      currentCashier?.id === sale.cashier_membership_id
-        ? currentCashier.name
-        : `ID: ${sale.cashier_membership_id}`,
+    cashier: cashierName,
     completedAt: sale.completed_at,
     currency: sale.currency,
     items: sale.items.map((item) => ({

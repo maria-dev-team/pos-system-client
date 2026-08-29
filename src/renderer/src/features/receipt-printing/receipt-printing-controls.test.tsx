@@ -9,6 +9,7 @@ import {
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
+import { Toaster } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -303,6 +304,27 @@ describe('receipt printing controls', () => {
     expect(printButton).toBeDisabled();
     printing.resolve({ ok: true });
     await waitFor(() => expect(printButton).toBeEnabled());
+  });
+
+  it('refuses to print a historical receipt without the cashier name', async () => {
+    const user = userEvent.setup();
+    renderWithClient(
+      <>
+        <ReceiptPrintButton
+          cashierSession={cashierSession}
+          context={context}
+          sale={{ ...sale, cashier_name: null }}
+        />
+        <Toaster />
+      </>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Печать чека' }));
+
+    expect(window.receiptPrinter?.print).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText('У кассира не заполнено имя'),
+    ).toBeInTheDocument();
   });
 
   it('previews the same 58 mm document that will be rasterized', async () => {
