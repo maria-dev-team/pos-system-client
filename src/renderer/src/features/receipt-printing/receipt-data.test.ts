@@ -120,7 +120,21 @@ describe('buildPrintableReceipt', () => {
     });
   });
 
-  it('does not attribute another cashier historical receipt to current user', () => {
+  it('uses the resolved cashier name for a historical receipt', () => {
+    expect(
+      buildPrintableReceipt(
+        { ...sale, cashier_membership_id: 'membership-2' },
+        {
+          cashierName: 'Бекзат Омаров',
+          currentCashier: { id: 'membership-1', name: 'Айжан Қасымова' },
+          organization,
+          store: null,
+        },
+      )?.cashier,
+    ).toBe('Бекзат Омаров');
+  });
+
+  it('rejects a historical receipt without the cashier name', () => {
     expect(
       buildPrintableReceipt(
         { ...sale, cashier_membership_id: 'membership-2' },
@@ -129,8 +143,8 @@ describe('buildPrintableReceipt', () => {
           organization,
           store: null,
         },
-      )?.cashier,
-    ).toBe('ID: membership-2');
+      ),
+    ).toBeNull();
   });
 
   it('rejects non-sale and incomplete records', () => {

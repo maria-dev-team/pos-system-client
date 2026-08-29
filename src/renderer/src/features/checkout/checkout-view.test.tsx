@@ -8,13 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AuthContextResponse,
   type CashierSessionResponse,
+  type CategoryResponse,
   type ProductResponse,
   type SaleItemResponse,
   type SaleResponse,
+  addSaleItem,
   cancelSale,
   checkoutSale,
   createSale,
   getAuthContext,
+  getCategories,
   getCurrentSale,
   removeSaleItem,
   searchProducts,
@@ -27,10 +30,12 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@renderer/common/api')>();
   return {
     ...actual,
+    addSaleItem: vi.fn(),
     cancelSale: vi.fn(),
     checkoutSale: vi.fn(),
     createSale: vi.fn(),
     getAuthContext: vi.fn(),
+    getCategories: vi.fn(),
     getCurrentSale: vi.fn(),
     removeSaleItem: vi.fn(),
     searchProducts: vi.fn(),
@@ -87,6 +92,20 @@ const productFixture = (
   retail_price: '650.00',
   sku: 'MILK-1',
   unit: 'pcs',
+  updated_at: '2026-08-24T10:00:00.000Z',
+  ...overrides,
+});
+
+const categoryFixture = (
+  overrides: Partial<CategoryResponse> = {},
+): CategoryResponse => ({
+  children: [],
+  created_at: '2026-08-24T10:00:00.000Z',
+  deleted_at: null,
+  id: 'category-1',
+  name: 'Быстрые товары',
+  organization_id: 'organization-1',
+  parent_id: null,
   updated_at: '2026-08-24T10:00:00.000Z',
   ...overrides,
 });
@@ -169,6 +188,10 @@ beforeEach(() => {
     ]),
   );
   vi.mocked(getCurrentSale).mockResolvedValue(null);
+  vi.mocked(getCategories).mockResolvedValue({
+    categories: [categoryFixture()],
+    meta: { has_more: false, limit: 100, offset: 0, total: 1 },
+  });
   vi.mocked(searchProducts).mockResolvedValue({
     meta: { has_more: false, limit: 20, offset: 0, total: 1 },
     products: [productFixture()],
@@ -179,6 +202,92 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
+  it('shows category products only with both read permissions', async () => {
+    renderCheckout();
+
+    await screen.findByLabelText('Сканируйте или найдите товар');
+    expect(
+      screen.queryByRole('button', { name: 'Товары по категориям' }),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture(['category.read', 'product.read', 'sales.create']),
+    );
+    renderCheckout();
+
+    expect(
+      await screen.findByRole('button', { name: 'Товары по категориям' }),
+    ).toBeInTheDocument();
+  });
+
+  it('adds repeated category selections without closing the picker', async () => {
+    const user = userEvent.setup();
+    const created = saleFixture({
+      items: [itemFixture()],
+      total: '650.00',
+    });
+    const updated = saleFixture({
+      items: [
+        itemFixture({
+          line_total: '1300.00',
+          quantity: '2',
+        }),
+      ],
+      total: '1300.00',
+      version: 2,
+    });
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture([
+        'category.read',
+        'product.read',
+        'sales.create',
+        'sales.modify',
+      ]),
+    );
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 100, offset: 0, total: 1 },
+      products: [productFixture()],
+    });
+    vi.mocked(createSale).mockResolvedValue(created);
+    vi.mocked(addSaleItem).mockResolvedValue(updated);
+    renderCheckout();
+
+    const search = await screen.findByLabelText('Сканируйте или найдите товар');
+    await user.click(
+      screen.getByRole('button', { name: 'Товары по категориям' }),
+    );
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Открыть категорию Быстрые товары',
+      }),
+    );
+    const productButton = await screen.findByRole('button', {
+      name: 'Добавить товар Молоко',
+    });
+    await user.click(productButton);
+    await waitFor(() =>
+      expect(createSale).toHaveBeenCalledWith({
+        items: [{ productId: 'product-1', quantity: '1' }],
+      }),
+    );
+    await user.click(productButton);
+
+    await waitFor(() =>
+      expect(addSaleItem).toHaveBeenCalledWith('sale-1', {
+        expectedVersion: 1,
+        productId: 'product-1',
+        quantity: '1',
+      }),
+    );
+    expect(
+      screen.getByRole('heading', { name: 'Товары по категориям' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    await waitFor(() => expect(search).toHaveFocus());
+  });
+
   it('creates a server DRAFT immediately when the first catalog product is selected', async () => {
     const user = userEvent.setup();
     const created = saleFixture({

@@ -1,6 +1,7 @@
 export * from './anti-fraud';
 export * from './auth';
 export * from './cashier-sessions';
+export * from './categories';
 export * from './health';
 export * from './organizations';
 export * from './register-shifts';

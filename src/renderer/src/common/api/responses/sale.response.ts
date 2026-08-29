@@ -87,6 +87,7 @@ export type ReceiptSummaryResponse = {
 };
 
 export type ReceiptResponse = Omit<SaleResponse, 'items' | 'receipt_number'> & {
+  cashier_name: string | null;
   items: (SaleItemResponse & {
     returnable_quantity: string;
     returned_quantity: string;

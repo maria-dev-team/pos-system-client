@@ -114,6 +114,7 @@ const saleBase: SaleResponse = {
 };
 const receipt: ReceiptResponse = {
   ...saleBase,
+  cashier_name: 'Бекзат Омаров',
   items: [
     {
       barcode: '001',

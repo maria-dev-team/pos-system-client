@@ -75,7 +75,7 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 
 describe('sendRawReceipt', () => {
-  it('pipes an explicit macOS queue through lp raw without a shell', async () => {
+  it('protects a macOS raw job with one sacrificial USB packet', async () => {
     const child = nextChild(0);
     spawn.mockReturnValue(child);
 
@@ -86,7 +86,9 @@ describe('sendRawReceipt', () => {
       ['-d', 'XP-58IIH', '-o', 'raw', '-'],
       expect.objectContaining({ shell: false, windowsHide: true }),
     );
-    expect(Buffer.concat(child.stdinChunks)).toEqual(Buffer.from([1, 2, 3]));
+    expect(Buffer.concat(child.stdinChunks)).toEqual(
+      Buffer.concat([Buffer.alloc(64), Buffer.from([1, 2, 3])]),
+    );
   });
 
   it('lets CUPS choose the default queue when deviceName is null', async () => {

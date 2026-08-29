@@ -3,6 +3,10 @@ export const queryKeys = {
     context: () => ['auth', 'context'] as const,
     currentUser: () => ['auth', 'user'] as const,
   },
+  categories: {
+    tree: (organizationId: string | null | undefined) =>
+      ['categories', 'tree', organizationId ?? null] as const,
+  },
   cashierSessions: {
     all: () => ['cashier-sessions'] as const,
     current: (registerId: string) =>
@@ -13,6 +17,18 @@ export const queryKeys = {
   },
   products: {
     all: () => ['products'] as const,
+    category: (
+      organizationId: string | null | undefined,
+      storeId: string | null | undefined,
+      categoryId: string,
+    ) =>
+      [
+        'products',
+        'category',
+        organizationId ?? null,
+        storeId ?? null,
+        categoryId,
+      ] as const,
     detail: (productId: string) => ['products', 'detail', productId] as const,
     search: (
       organizationId: string | null | undefined,

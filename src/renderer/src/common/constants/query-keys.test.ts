@@ -12,6 +12,11 @@ describe('queryKeys', () => {
       'current',
       'register-1',
     ]);
+    expect(queryKeys.categories.tree('organization-1')).toEqual([
+      'categories',
+      'tree',
+      'organization-1',
+    ]);
     expect(queryKeys.products.all()).toEqual(['products']);
     expect(queryKeys.products.detail('product-1')).toEqual([
       'products',
@@ -26,6 +31,15 @@ describe('queryKeys', () => {
     ).not.toEqual(
       queryKeys.products.search('organization-1', 'store-1', 'молоко'),
     );
+    expect(
+      queryKeys.products.category('organization-1', 'store-1', 'category-1'),
+    ).toEqual([
+      'products',
+      'category',
+      'organization-1',
+      'store-1',
+      'category-1',
+    ]);
     expect(queryKeys.sales.all()).toEqual(['sales']);
     expect(queryKeys.sales.current('cashier-session-1')).toEqual([
       'sales',

@@ -5,6 +5,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import { join, win32 } from 'node:path';
 
 const TERMINATION_GRACE_MS = 1_000;
+const MACOS_RAW_PREAMBLE = Buffer.alloc(64);
 
 export const WINDOWS_RAW_PRINT_SCRIPT = `$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
@@ -172,7 +173,10 @@ export const sendRawReceipt = async (
 ): Promise<void> => {
   if (platform === 'darwin') {
     const args = [...(deviceName ? ['-d', deviceName] : []), '-o', 'raw', '-'];
-    if ((await runProcess('/usr/bin/lp', args, process.env, data)) !== 0) {
+    const protectedData = Buffer.concat([MACOS_RAW_PREAMBLE, data]);
+    if (
+      (await runProcess('/usr/bin/lp', args, process.env, protectedData)) !== 0
+    ) {
       throw new Error('Системная очередь печати отклонила чек.');
     }
     return;
