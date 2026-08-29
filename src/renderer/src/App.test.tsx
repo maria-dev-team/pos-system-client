@@ -677,6 +677,17 @@ describe('Maria POS authorization flow', () => {
     expect(password).toHaveValue('pass word');
   });
 
+  it('keeps the password toggle centered while pressed', async () => {
+    renderApp();
+
+    const toggle = await screen.findByRole('button', {
+      name: 'Показать пароль',
+    });
+
+    expect(toggle).toHaveClass('inset-y-0', 'my-auto', 'active:translate-y-0');
+    expect(toggle).not.toHaveClass('top-1/2', '-translate-y-1/2');
+  });
+
   it('returns to login after a successful logout', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
