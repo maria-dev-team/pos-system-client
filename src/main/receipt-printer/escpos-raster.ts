@@ -1,4 +1,5 @@
 const RASTER_HEADER = Buffer.from([0x1d, 0x76, 0x30, 0x00]);
+export const MAX_RASTER_BAND_HEIGHT_DOTS = 64;
 
 export const encodeRasterBand = (
   bitmap: Buffer,
@@ -11,7 +12,7 @@ export const encodeRasterBand = (
     !Number.isInteger(height) ||
     width <= 0 ||
     height <= 0 ||
-    height > 256
+    height > MAX_RASTER_BAND_HEIGHT_DOTS
   ) {
     throw new Error('Invalid raster dimensions');
   }

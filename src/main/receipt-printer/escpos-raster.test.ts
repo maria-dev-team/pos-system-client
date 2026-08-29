@@ -33,7 +33,7 @@ describe('encodeRasterBand', () => {
     expect(() => encodeRasterBand(Buffer.alloc(3), 1, 1)).toThrow(
       'Invalid raster bitmap',
     );
-    expect(() => encodeRasterBand(Buffer.alloc(4 * 257), 1, 257)).toThrow(
+    expect(() => encodeRasterBand(Buffer.alloc(4 * 65), 1, 65)).toThrow(
       'Invalid raster dimensions',
     );
     expect(() => encodeRasterBand(Buffer.alloc(4, 255), 1, 1, 256)).toThrow(

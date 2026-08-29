@@ -81,50 +81,42 @@ const request = (
 } => ({ deviceName: 'XP-58IIH', paperWidthMm, rasterThreshold, receipt });
 
 const rasterWindow = (): {
-  firstImage: Record<string, ReturnType<typeof vi.fn>>;
+  images: Array<Record<string, ReturnType<typeof vi.fn>>>;
   printWindow: {
     destroy: ReturnType<typeof vi.fn>;
     isDestroyed: ReturnType<typeof vi.fn>;
     loadURL: ReturnType<typeof vi.fn>;
     webContents: Record<string, ReturnType<typeof vi.fn>>;
   };
-  secondImage: Record<string, ReturnType<typeof vi.fn>>;
 } => {
-  const firstBitmap = Buffer.alloc(384 * 255 * 4, 255);
-  const secondBitmap = Buffer.alloc(384 * 2 * 4, 255);
-  const firstResized = {
-    toBitmap: vi.fn().mockReturnValue(firstBitmap),
-  };
-  const secondResized = {
-    toBitmap: vi.fn().mockReturnValue(secondBitmap),
-  };
-  const firstImage = {
-    resize: vi.fn().mockReturnValue(firstResized),
-  };
-  const secondImage = {
-    resize: vi.fn().mockReturnValue(secondResized),
-  };
+  const images = [64, 63, 64, 64, 2].map((height) => ({
+    resize: vi.fn().mockReturnValue({
+      toBitmap: vi.fn().mockReturnValue(Buffer.alloc(384 * height * 4, 255)),
+    }),
+  }));
+  const capturePage = vi.fn();
+  images.forEach((image) => capturePage.mockResolvedValueOnce(image));
   const printWindow = {
     destroy: vi.fn(),
     isDestroyed: vi.fn().mockReturnValue(false),
     loadURL: vi.fn().mockResolvedValue(undefined),
     webContents: {
-      capturePage: vi
-        .fn()
-        .mockResolvedValueOnce(firstImage)
-        .mockResolvedValueOnce(secondImage),
+      capturePage,
       executeJavaScript: vi
         .fn()
         .mockResolvedValueOnce(121)
         .mockResolvedValueOnce(181)
         .mockResolvedValueOnce(0)
-        .mockResolvedValueOnce(1),
+        .mockResolvedValueOnce(30)
+        .mockResolvedValueOnce(60)
+        .mockResolvedValueOnce(90)
+        .mockResolvedValueOnce(91),
     },
   };
   electron.BrowserWindow.mockImplementation(function BrowserWindowMock() {
     return printWindow;
   } as never);
-  return { firstImage, printWindow, secondImage };
+  return { images, printWindow };
 };
 
 describe('registerReceiptPrinterIpc', () => {
@@ -258,7 +250,7 @@ describe('registerReceiptPrinterIpc', () => {
   });
 
   it('renders at 96 CSS dpi and scales both axes to the 203 dpi 58 mm raster', async () => {
-    const { firstImage, printWindow, secondImage } = rasterWindow();
+    const { images, printWindow } = rasterWindow();
     const mainWebContents = register();
 
     await expect(
@@ -272,7 +264,7 @@ describe('registerReceiptPrinterIpc', () => {
     expect(raw.sendRawReceipt).toHaveBeenCalledWith('XP-58IIH', encoded);
     expect(electron.BrowserWindow).toHaveBeenCalledWith(
       expect.objectContaining({
-        height: 120,
+        height: 30,
         show: false,
         webPreferences: expect.objectContaining({
           backgroundThrottling: false,
@@ -282,25 +274,26 @@ describe('registerReceiptPrinterIpc', () => {
     );
     expect(printWindow.webContents.capturePage).toHaveBeenNthCalledWith(
       1,
-      { height: 120, width: 181, x: 0, y: 0 },
+      { height: 30, width: 181, x: 0, y: 0 },
       { stayHidden: true },
     );
     expect(printWindow.webContents.capturePage).toHaveBeenNthCalledWith(
-      2,
-      { height: 1, width: 181, x: 0, y: 119 },
+      5,
+      { height: 1, width: 181, x: 0, y: 29 },
       { stayHidden: true },
     );
-    expect(firstImage.resize).toHaveBeenCalledWith({
-      height: 255,
+    expect(printWindow.webContents.capturePage).toHaveBeenCalledTimes(5);
+    expect(images[0]?.resize).toHaveBeenCalledWith({
+      height: 64,
       width: 384,
     });
-    expect(secondImage.resize).toHaveBeenCalledWith({
+    expect(images[4]?.resize).toHaveBeenCalledWith({
       height: 2,
       width: 384,
     });
     expect(encoded.subarray(0, 12)).toEqual(
       Buffer.from([
-        0x1b, 0x40, 0x1c, 0x2e, 0x1d, 0x76, 0x30, 0x00, 0x30, 0x00, 0xff, 0x00,
+        0x1b, 0x40, 0x1c, 0x2e, 0x1d, 0x76, 0x30, 0x00, 0x30, 0x00, 0x40, 0x00,
       ]),
     );
     expect(encoded.subarray(-3)).toEqual(Buffer.from([0x1b, 0x64, 0x03]));

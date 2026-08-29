@@ -4,7 +4,11 @@ import {
   ipcMain,
 } from 'electron';
 
-import { buildEscPosReceipt, encodeRasterBand } from './escpos-raster';
+import {
+  MAX_RASTER_BAND_HEIGHT_DOTS,
+  buildEscPosReceipt,
+  encodeRasterBand,
+} from './escpos-raster';
 import { DefaultPrinterNotFoundError, sendRawReceipt } from './raw-printer';
 import {
   type PrintableReceipt,
@@ -16,7 +20,6 @@ import {
 const GET_PRINTERS_CHANNEL = 'receipt-printer:get-printers';
 const PRINT_CHANNEL = 'receipt-printer:print';
 const RASTER_FAILURE_MESSAGE = 'Не удалось подготовить чек для печати.';
-const MAX_RASTER_BAND_HEIGHT_DOTS = 256;
 const isCashierSafeTransportError = (error: unknown): error is Error =>
   error instanceof Error &&
   [
