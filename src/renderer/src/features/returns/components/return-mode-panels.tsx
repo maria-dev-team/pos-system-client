@@ -7,6 +7,8 @@ import {
 } from 'react';
 
 import type {
+  AuthContextResponse,
+  CashierSessionResponse,
   ProductResponse,
   ProductSearchResponse,
   ReceiptResponse,
@@ -18,6 +20,7 @@ import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import { ReceiptPrintButton } from '@renderer/features/receipt-printing';
 
 import type { ReceiptSelection, WithoutReceiptLine } from '../returns.types';
 import { ReceiptItems, WithoutReceiptItems } from './return-items';
@@ -38,11 +41,15 @@ const readableDate = (value: string) =>
   }).format(new Date(value));
 
 function ReceiptDetailContent({
+  cashierSession,
+  context,
   disabled,
   onSelectionsChange,
   receiptDetail,
   selections,
 }: {
+  cashierSession: CashierSessionResponse;
+  context: AuthContextResponse;
   disabled: boolean;
   onSelectionsChange: Dispatch<
     SetStateAction<Record<string, ReceiptSelection>>
@@ -78,16 +85,27 @@ function ReceiptDetailContent({
   if (!receiptDetail.data) return null;
 
   return (
-    <ReceiptItems
-      disabled={disabled}
-      onChange={onSelectionsChange}
-      receipt={receiptDetail.data}
-      selections={selections}
-    />
+    <>
+      <div className="mb-3 flex justify-end">
+        <ReceiptPrintButton
+          cashierSession={cashierSession}
+          context={context}
+          sale={receiptDetail.data}
+        />
+      </div>
+      <ReceiptItems
+        disabled={disabled}
+        onChange={onSelectionsChange}
+        receipt={receiptDetail.data}
+        selections={selections}
+      />
+    </>
   );
 }
 
 export type ReceiptReturnPanelProps = {
+  cashierSession: CashierSessionResponse;
+  context: AuthContextResponse;
   disabled: boolean;
   onNextPage: () => void;
   onPreviousPage: () => void;
@@ -107,6 +125,8 @@ export type ReceiptReturnPanelProps = {
 };
 
 export function ReceiptReturnPanel({
+  cashierSession,
+  context,
   disabled,
   onNextPage,
   onPreviousPage,
@@ -169,6 +189,8 @@ export function ReceiptReturnPanel({
             Товары из чека №{selectedReceiptNumber}
           </h2>
           <ReceiptDetailContent
+            cashierSession={cashierSession}
+            context={context}
             disabled={disabled}
             onSelectionsChange={onSelectionsChange}
             receiptDetail={receiptDetail}
@@ -251,6 +273,8 @@ export function ReceiptReturnPanel({
                   {selected ? (
                     <div className="bg-muted/15 p-4" id={detailId}>
                       <ReceiptDetailContent
+                        cashierSession={cashierSession}
+                        context={context}
                         disabled={disabled}
                         onSelectionsChange={onSelectionsChange}
                         receiptDetail={receiptDetail}

@@ -1,0 +1,103 @@
+const STORAGE_KEY = 'maria.receipt-printer';
+const THIN_RASTER_THRESHOLD = 112;
+
+export type RasterThreshold = 112 | 136 | 160 | 192 | 216;
+
+export type ReceiptPrinterSettings = {
+  deviceName: string | null;
+  paperWidthMm: 58 | 80;
+  rasterThreshold: RasterThreshold;
+};
+
+export const defaultReceiptPrinterSettings: ReceiptPrinterSettings = {
+  deviceName: null,
+  paperWidthMm: 58,
+  rasterThreshold: THIN_RASTER_THRESHOLD,
+};
+
+const isRasterThreshold = (value: unknown): value is RasterThreshold =>
+  value === 112 ||
+  value === 136 ||
+  value === 160 ||
+  value === 192 ||
+  value === 216;
+
+const isSettings = (value: unknown): value is ReceiptPrinterSettings => {
+  if (typeof value !== 'object' || value === null) return false;
+  const settings = value as Record<string, unknown>;
+  return (
+    (settings.deviceName === null ||
+      (typeof settings.deviceName === 'string' &&
+        settings.deviceName.length > 0)) &&
+    (settings.paperWidthMm === 58 || settings.paperWidthMm === 80) &&
+    isRasterThreshold(settings.rasterThreshold)
+  );
+};
+
+const migratePaperSettings = (
+  value: unknown,
+): ReceiptPrinterSettings | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const settings = value as Record<string, unknown>;
+  if (settings.rasterThreshold !== undefined) return null;
+  if (
+    settings.deviceName !== null &&
+    (typeof settings.deviceName !== 'string' ||
+      settings.deviceName.length === 0)
+  ) {
+    return null;
+  }
+  if (settings.paperWidthMm !== 58 && settings.paperWidthMm !== 80) return null;
+  return {
+    deviceName: settings.deviceName as string | null,
+    paperWidthMm: settings.paperWidthMm,
+    rasterThreshold: THIN_RASTER_THRESHOLD,
+  };
+};
+
+const migrateDotSettings = (value: unknown): ReceiptPrinterSettings | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const settings = value as Record<string, unknown>;
+  if (
+    settings.deviceName !== null &&
+    (typeof settings.deviceName !== 'string' ||
+      settings.deviceName.length === 0)
+  ) {
+    return null;
+  }
+  if (settings.printWidthDots !== 384 && settings.printWidthDots !== 576) {
+    return null;
+  }
+  return {
+    deviceName: settings.deviceName as string | null,
+    paperWidthMm: settings.printWidthDots === 576 ? 80 : 58,
+    rasterThreshold: THIN_RASTER_THRESHOLD,
+  };
+};
+
+export const readReceiptPrinterSettings = (): ReceiptPrinterSettings => {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (!stored) return defaultReceiptPrinterSettings;
+    const parsed: unknown = JSON.parse(stored);
+    const settings = isSettings(parsed)
+      ? parsed
+      : (migratePaperSettings(parsed) ??
+        migrateDotSettings(parsed) ??
+        defaultReceiptPrinterSettings);
+    return { ...settings, rasterThreshold: THIN_RASTER_THRESHOLD };
+  } catch {
+    return defaultReceiptPrinterSettings;
+  }
+};
+
+export const writeReceiptPrinterSettings = (
+  settings: ReceiptPrinterSettings,
+): boolean => {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    return true;
+  } catch {
+    return false;
+  }
+};

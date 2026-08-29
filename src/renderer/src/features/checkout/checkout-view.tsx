@@ -61,6 +61,10 @@ import {
 import { authContextQueryOptions } from '@renderer/features/auth';
 import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
 import { useProductSearchQuery } from '@renderer/features/products';
+import {
+  ReceiptPrintButton,
+  ReceiptPrinterSettingsButton,
+} from '@renderer/features/receipt-printing';
 
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
 import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
@@ -527,7 +531,13 @@ function ActiveCheckout({
                 </div>
               ))}
             </div>
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <ReceiptPrintButton
+                cashierSession={cashierSession}
+                className="min-h-12"
+                context={context.data}
+                sale={visibleCompletedSale}
+              />
               <Button
                 className="min-h-12"
                 onClick={() => {
@@ -1023,6 +1033,7 @@ function ActiveCheckout({
                 Возвраты
               </Button>
             ) : null}
+            <ReceiptPrinterSettingsButton className="min-h-12 w-full border-border bg-background" />
             {rows.length > 0 && canHold ? (
               <Button
                 className="min-h-12 w-full border-border bg-background"

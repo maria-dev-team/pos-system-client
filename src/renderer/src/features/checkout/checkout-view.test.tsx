@@ -335,5 +335,8 @@ describe('server-authoritative checkout', () => {
     expect(
       await screen.findByRole('heading', { name: 'Оплата завершена' }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Печать чека' }),
+    ).toBeInTheDocument();
   });
 });

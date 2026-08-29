@@ -288,6 +288,9 @@ describe('ReturnsView', () => {
     });
     await user.click(receiptButton);
     expect(await screen.findByText('Молоко')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Печать чека' }),
+    ).toBeInTheDocument();
     expect(receiptButton).toHaveAttribute('aria-expanded', 'true');
     expect(receiptButton.nextElementSibling).toContainElement(
       screen.getByText('Молоко'),
