@@ -72,11 +72,13 @@ const register = (
 
 const request = (
   paperWidthMm: unknown = 58,
+  rasterThreshold: unknown = 160,
 ): {
   deviceName: string;
   paperWidthMm: unknown;
+  rasterThreshold: unknown;
   receipt: PrintableReceipt;
-} => ({ deviceName: 'XP-58IIH', paperWidthMm, receipt });
+} => ({ deviceName: 'XP-58IIH', paperWidthMm, rasterThreshold, receipt });
 
 const rasterWindow = (): {
   firstImage: Record<string, ReturnType<typeof vi.fn>>;
@@ -163,6 +165,27 @@ describe('registerReceiptPrinterIpc', () => {
         message: 'Некорректные данные чека.',
         ok: false,
       });
+      expect(raw.sendRawReceipt).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([0, 111, 161, 192.5, '160'])(
+    'rejects unsupported raster threshold %s before rendering',
+    async (rasterThreshold) => {
+      rasterWindow();
+      const mainWebContents = register();
+
+      await expect(
+        handlerFor('receipt-printer:print')(
+          { sender: mainWebContents },
+          request(58, rasterThreshold),
+        ),
+      ).resolves.toEqual({
+        code: 'PRINT_FAILED',
+        message: 'Некорректные данные чека.',
+        ok: false,
+      });
+      expect(electron.BrowserWindow).not.toHaveBeenCalled();
       expect(raw.sendRawReceipt).not.toHaveBeenCalled();
     },
   );

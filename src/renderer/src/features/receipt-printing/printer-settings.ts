@@ -1,14 +1,26 @@
 const STORAGE_KEY = 'maria.receipt-printer';
+const NORMAL_RASTER_THRESHOLD = 160;
+
+export type RasterThreshold = 112 | 136 | 160 | 192 | 216;
 
 export type ReceiptPrinterSettings = {
   deviceName: string | null;
   paperWidthMm: 58 | 80;
+  rasterThreshold: RasterThreshold;
 };
 
 export const defaultReceiptPrinterSettings: ReceiptPrinterSettings = {
   deviceName: null,
   paperWidthMm: 58,
+  rasterThreshold: NORMAL_RASTER_THRESHOLD,
 };
+
+const isRasterThreshold = (value: unknown): value is RasterThreshold =>
+  value === 112 ||
+  value === 136 ||
+  value === 160 ||
+  value === 192 ||
+  value === 216;
 
 const isSettings = (value: unknown): value is ReceiptPrinterSettings => {
   if (typeof value !== 'object' || value === null) return false;
@@ -17,8 +29,30 @@ const isSettings = (value: unknown): value is ReceiptPrinterSettings => {
     (settings.deviceName === null ||
       (typeof settings.deviceName === 'string' &&
         settings.deviceName.length > 0)) &&
-    (settings.paperWidthMm === 58 || settings.paperWidthMm === 80)
+    (settings.paperWidthMm === 58 || settings.paperWidthMm === 80) &&
+    isRasterThreshold(settings.rasterThreshold)
   );
+};
+
+const migratePaperSettings = (
+  value: unknown,
+): ReceiptPrinterSettings | null => {
+  if (typeof value !== 'object' || value === null) return null;
+  const settings = value as Record<string, unknown>;
+  if (settings.rasterThreshold !== undefined) return null;
+  if (
+    settings.deviceName !== null &&
+    (typeof settings.deviceName !== 'string' ||
+      settings.deviceName.length === 0)
+  ) {
+    return null;
+  }
+  if (settings.paperWidthMm !== 58 && settings.paperWidthMm !== 80) return null;
+  return {
+    deviceName: settings.deviceName as string | null,
+    paperWidthMm: settings.paperWidthMm,
+    rasterThreshold: NORMAL_RASTER_THRESHOLD,
+  };
 };
 
 const migrateDotSettings = (value: unknown): ReceiptPrinterSettings | null => {
@@ -37,6 +71,7 @@ const migrateDotSettings = (value: unknown): ReceiptPrinterSettings | null => {
   return {
     deviceName: settings.deviceName as string | null,
     paperWidthMm: settings.printWidthDots === 576 ? 80 : 58,
+    rasterThreshold: NORMAL_RASTER_THRESHOLD,
   };
 };
 
@@ -47,7 +82,9 @@ export const readReceiptPrinterSettings = (): ReceiptPrinterSettings => {
     const parsed: unknown = JSON.parse(stored);
     return isSettings(parsed)
       ? parsed
-      : (migrateDotSettings(parsed) ?? defaultReceiptPrinterSettings);
+      : (migratePaperSettings(parsed) ??
+          migrateDotSettings(parsed) ??
+          defaultReceiptPrinterSettings);
   } catch {
     return defaultReceiptPrinterSettings;
   }

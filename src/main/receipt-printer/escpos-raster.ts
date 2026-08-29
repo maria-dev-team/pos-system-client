@@ -4,6 +4,7 @@ export const encodeRasterBand = (
   bitmap: Buffer,
   width: number,
   height: number,
+  threshold = 160,
 ): Buffer => {
   if (
     !Number.isInteger(width) ||
@@ -17,6 +18,9 @@ export const encodeRasterBand = (
   if (bitmap.length !== width * height * 4) {
     throw new Error('Invalid raster bitmap');
   }
+  if (!Number.isInteger(threshold) || threshold < 0 || threshold > 255) {
+    throw new Error('Invalid raster threshold');
+  }
 
   const rowBytes = Math.ceil(width / 8);
   const raster = Buffer.alloc(rowBytes * height);
@@ -28,7 +32,7 @@ export const encodeRasterBand = (
         bitmap[pixelOffset + 1] ?? 255,
         bitmap[pixelOffset + 2] ?? 255,
       );
-      if (gray < 192) {
+      if (gray < threshold) {
         const byteOffset = y * rowBytes + Math.floor(x / 8);
         raster[byteOffset] = (raster[byteOffset] ?? 0) | (0x80 >> (x % 8));
       }

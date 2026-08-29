@@ -28,6 +28,7 @@ const isCashierSafeTransportError = (error: unknown): error is Error =>
 type ReceiptPrintRequest = {
   deviceName: string | null;
   paperWidthMm: ReceiptPaperWidthMm;
+  rasterThreshold: 112 | 136 | 160 | 192 | 216;
   receipt: PrintableReceipt;
 };
 
@@ -114,6 +115,11 @@ const isPrintRequest = (value: unknown): value is ReceiptPrintRequest =>
   isRecord(value) &&
   (value.deviceName === null || isText(value.deviceName, 500)) &&
   (value.paperWidthMm === 58 || value.paperWidthMm === 80) &&
+  (value.rasterThreshold === 112 ||
+    value.rasterThreshold === 136 ||
+    value.rasterThreshold === 160 ||
+    value.rasterThreshold === 192 ||
+    value.rasterThreshold === 216) &&
   isPrintableReceipt(value.receipt);
 
 const assertSender = (
@@ -214,7 +220,12 @@ const printReceipt = async (
         .resize({ height: outputHeight, width: profile.printWidthDots })
         .toBitmap({ scaleFactor: 1 });
       bands.push(
-        encodeRasterBand(bitmap, profile.printWidthDots, outputHeight),
+        encodeRasterBand(
+          bitmap,
+          profile.printWidthDots,
+          outputHeight,
+          request.rasterThreshold,
+        ),
       );
     }
     const encodedReceipt = buildEscPosReceipt(bands);

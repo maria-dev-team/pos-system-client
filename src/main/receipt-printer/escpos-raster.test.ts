@@ -23,10 +23,10 @@ describe('encodeRasterBand', () => {
     );
   });
 
-  it('prints 191 as black and keeps the 192 threshold white', () => {
-    const bitmap = Buffer.from([...pixel(191), ...pixel(192)]);
+  it('uses the selected threshold without changing raster dimensions', () => {
+    const bitmap = Buffer.from([...pixel(159), ...pixel(160)]);
 
-    expect(encodeRasterBand(bitmap, 2, 1).at(-1)).toBe(0x80);
+    expect(encodeRasterBand(bitmap, 2, 1, 160).at(-1)).toBe(0x80);
   });
 
   it('rejects malformed or over-height bands', () => {
@@ -35,6 +35,9 @@ describe('encodeRasterBand', () => {
     );
     expect(() => encodeRasterBand(Buffer.alloc(4 * 257), 1, 257)).toThrow(
       'Invalid raster dimensions',
+    );
+    expect(() => encodeRasterBand(Buffer.alloc(4, 255), 1, 1, 256)).toThrow(
+      'Invalid raster threshold',
     );
   });
 });

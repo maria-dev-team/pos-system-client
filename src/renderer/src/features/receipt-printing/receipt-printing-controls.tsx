@@ -27,6 +27,7 @@ import {
   renderReceiptDocument,
 } from '../../../../main/receipt-printer/receipt-document';
 import {
+  type RasterThreshold,
   readReceiptPrinterSettings,
   writeReceiptPrinterSettings,
 } from './printer-settings';
@@ -71,6 +72,17 @@ const testReceipt: Parameters<
   total: '100.00',
 };
 
+const rasterThresholdOptions: Array<{
+  label: string;
+  value: RasterThreshold;
+}> = [
+  { label: 'Тонкая', value: 112 },
+  { label: 'Светлая', value: 136 },
+  { label: 'Обычная', value: 160 },
+  { label: 'Плотная', value: 192 },
+  { label: 'Очень плотная', value: 216 },
+];
+
 function ReceiptPrinterSettingsDialog({
   onOpenChange,
   open,
@@ -84,6 +96,9 @@ function ReceiptPrinterSettingsDialog({
   );
   const [paperWidthMm, setPaperWidthMm] = useState(
     initialSettings.paperWidthMm,
+  );
+  const [rasterThreshold, setRasterThreshold] = useState(
+    initialSettings.rasterThreshold,
   );
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -140,6 +155,7 @@ function ReceiptPrinterSettingsDialog({
   const currentSettings = () => ({
     deviceName: deviceName || null,
     paperWidthMm,
+    rasterThreshold,
   });
   const save = () => {
     if (!writeReceiptPrinterSettings(currentSettings())) {
@@ -233,6 +249,25 @@ function ReceiptPrinterSettingsDialog({
             >
               <option value="58">58 мм</option>
               <option value="80">80 мм</option>
+            </select>
+          </FormField>
+          <FormField>
+            <Label htmlFor="receipt-printer-thickness">Толщина печати</Label>
+            <select
+              className="h-12 w-full rounded-lg border border-input bg-background px-4 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
+              id="receipt-printer-thickness"
+              onChange={(event) =>
+                setRasterThreshold(
+                  Number(event.target.value) as RasterThreshold,
+                )
+              }
+              value={rasterThreshold}
+            >
+              {rasterThresholdOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </FormField>
           {error ? (

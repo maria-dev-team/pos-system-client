@@ -196,7 +196,7 @@ describe('receipt printing controls', () => {
     delete window.receiptPrinter;
   });
 
-  it('saves the selected 80 mm paper width without exposing dots', async () => {
+  it('saves paper width and a human-readable print thickness', async () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
@@ -206,11 +206,16 @@ describe('receipt printing controls', () => {
       'XP-58IIH',
     );
     await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
+    await user.selectOptions(screen.getByLabelText('Толщина печати'), 'Тонкая');
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
 
     expect(
       JSON.parse(window.localStorage.getItem('maria.receipt-printer') ?? ''),
-    ).toEqual({ deviceName: 'XP-58IIH', paperWidthMm: 80 });
+    ).toEqual({
+      deviceName: 'XP-58IIH',
+      paperWidthMm: 80,
+      rasterThreshold: 112,
+    });
   });
 
   it('resets a disappeared stored printer before saving', async () => {
@@ -231,7 +236,11 @@ describe('receipt printing controls', () => {
 
     expect(
       JSON.parse(window.localStorage.getItem('maria.receipt-printer') ?? ''),
-    ).toEqual({ deviceName: null, paperWidthMm: 58 });
+    ).toEqual({
+      deviceName: null,
+      paperWidthMm: 58,
+      rasterThreshold: 160,
+    });
   });
 
   it('keeps the settings open when storage is unavailable', async () => {
@@ -277,6 +286,7 @@ describe('receipt printing controls', () => {
         expect.objectContaining({
           deviceName: 'XP-58IIH',
           paperWidthMm: 80,
+          rasterThreshold: 160,
           receipt: expect.objectContaining({
             cashier: 'Айжан Қасымова',
             receiptNumber: '42',
@@ -325,6 +335,7 @@ describe('receipt printing controls', () => {
         expect.objectContaining({
           deviceName: 'XP-58IIH',
           paperWidthMm: 58,
+          rasterThreshold: 160,
           receipt: expect.objectContaining({ receiptNumber: 'TEST' }),
         }),
       ),
@@ -337,6 +348,10 @@ describe('receipt printing controls', () => {
 
     await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
     await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
+    await user.selectOptions(
+      screen.getByLabelText('Толщина печати'),
+      'Плотная',
+    );
     await user.click(screen.getByRole('button', { name: 'Тестовая печать' }));
     const preview = await screen.findByRole('dialog', {
       name: 'Предпросмотр тестового чека',
@@ -345,7 +360,7 @@ describe('receipt printing controls', () => {
 
     await waitFor(() =>
       expect(window.receiptPrinter?.print).toHaveBeenCalledWith(
-        expect.objectContaining({ paperWidthMm: 80 }),
+        expect.objectContaining({ paperWidthMm: 80, rasterThreshold: 192 }),
       ),
     );
   });

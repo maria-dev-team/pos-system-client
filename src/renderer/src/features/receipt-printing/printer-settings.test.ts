@@ -13,6 +13,7 @@ describe('receipt printer settings', () => {
     expect(defaultReceiptPrinterSettings).toEqual({
       deviceName: null,
       paperWidthMm: 58,
+      rasterThreshold: 160,
     });
     expect(readReceiptPrinterSettings()).toEqual(defaultReceiptPrinterSettings);
   });
@@ -22,12 +23,14 @@ describe('receipt printer settings', () => {
       writeReceiptPrinterSettings({
         deviceName: 'XP-58IIH',
         paperWidthMm: 80,
+        rasterThreshold: 112,
       }),
     ).toBe(true);
 
     expect(readReceiptPrinterSettings()).toEqual({
       deviceName: 'XP-58IIH',
       paperWidthMm: 80,
+      rasterThreshold: 112,
     });
   });
 
@@ -36,6 +39,8 @@ describe('receipt printer settings', () => {
       { deviceName: 'XP-58IIH', paperWidthMm: 57 },
       { deviceName: 'XP-58IIH', paperWidthMm: 81 },
       { deviceName: 'XP-58IIH', paperWidthMm: '58' },
+      { deviceName: 'XP-58IIH', paperWidthMm: 58, rasterThreshold: 111 },
+      { deviceName: 'XP-58IIH', paperWidthMm: 58, rasterThreshold: 161 },
     ]) {
       window.localStorage.setItem(
         'maria.receipt-printer',
@@ -44,8 +49,22 @@ describe('receipt printer settings', () => {
       expect(readReceiptPrinterSettings()).toEqual({
         deviceName: null,
         paperWidthMm: 58,
+        rasterThreshold: 160,
       });
     }
+  });
+
+  it('adds the normal thickness to settings saved before raster tuning existed', () => {
+    window.localStorage.setItem(
+      'maria.receipt-printer',
+      JSON.stringify({ deviceName: 'XP-58IIH', paperWidthMm: 58 }),
+    );
+
+    expect(readReceiptPrinterSettings()).toEqual({
+      deviceName: 'XP-58IIH',
+      paperWidthMm: 58,
+      rasterThreshold: 160,
+    });
   });
 
   it('migrates the internal dot presets without exposing them again', () => {
@@ -57,6 +76,7 @@ describe('receipt printer settings', () => {
     expect(readReceiptPrinterSettings()).toEqual({
       deviceName: 'XP-58IIH',
       paperWidthMm: 80,
+      rasterThreshold: 160,
     });
   });
 
@@ -71,6 +91,7 @@ describe('receipt printer settings', () => {
       writeReceiptPrinterSettings({
         deviceName: null,
         paperWidthMm: 58,
+        rasterThreshold: 160,
       }),
     ).toBe(false);
     setItem.mockRestore();

@@ -21,6 +21,7 @@ interface Window {
     print: (request: {
       deviceName: string | null;
       paperWidthMm: 58 | 80;
+      rasterThreshold: 112 | 136 | 160 | 192 | 216;
       receipt: {
         cashier: string;
         completedAt: string;

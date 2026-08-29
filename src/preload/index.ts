@@ -45,15 +45,18 @@ contextBridge.exposeInMainWorld('receiptPrinter', {
   print: ({
     deviceName,
     paperWidthMm,
+    rasterThreshold,
     receipt,
   }: {
     deviceName: string | null;
     paperWidthMm: 58 | 80;
+    rasterThreshold: 112 | 136 | 160 | 192 | 216;
     receipt: PrintableReceipt;
   }) =>
     ipcRenderer.invoke('receipt-printer:print', {
       deviceName,
       paperWidthMm,
+      rasterThreshold,
       receipt,
     }),
 });
