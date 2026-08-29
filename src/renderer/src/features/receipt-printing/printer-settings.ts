@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'maria.receipt-printer';
-const NORMAL_RASTER_THRESHOLD = 160;
+const THIN_RASTER_THRESHOLD = 112;
 
 export type RasterThreshold = 112 | 136 | 160 | 192 | 216;
 
@@ -12,7 +12,7 @@ export type ReceiptPrinterSettings = {
 export const defaultReceiptPrinterSettings: ReceiptPrinterSettings = {
   deviceName: null,
   paperWidthMm: 58,
-  rasterThreshold: NORMAL_RASTER_THRESHOLD,
+  rasterThreshold: THIN_RASTER_THRESHOLD,
 };
 
 const isRasterThreshold = (value: unknown): value is RasterThreshold =>
@@ -51,7 +51,7 @@ const migratePaperSettings = (
   return {
     deviceName: settings.deviceName as string | null,
     paperWidthMm: settings.paperWidthMm,
-    rasterThreshold: NORMAL_RASTER_THRESHOLD,
+    rasterThreshold: THIN_RASTER_THRESHOLD,
   };
 };
 
@@ -71,7 +71,7 @@ const migrateDotSettings = (value: unknown): ReceiptPrinterSettings | null => {
   return {
     deviceName: settings.deviceName as string | null,
     paperWidthMm: settings.printWidthDots === 576 ? 80 : 58,
-    rasterThreshold: NORMAL_RASTER_THRESHOLD,
+    rasterThreshold: THIN_RASTER_THRESHOLD,
   };
 };
 
@@ -80,11 +80,12 @@ export const readReceiptPrinterSettings = (): ReceiptPrinterSettings => {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (!stored) return defaultReceiptPrinterSettings;
     const parsed: unknown = JSON.parse(stored);
-    return isSettings(parsed)
+    const settings = isSettings(parsed)
       ? parsed
       : (migratePaperSettings(parsed) ??
-          migrateDotSettings(parsed) ??
-          defaultReceiptPrinterSettings);
+        migrateDotSettings(parsed) ??
+        defaultReceiptPrinterSettings);
+    return { ...settings, rasterThreshold: THIN_RASTER_THRESHOLD };
   } catch {
     return defaultReceiptPrinterSettings;
   }

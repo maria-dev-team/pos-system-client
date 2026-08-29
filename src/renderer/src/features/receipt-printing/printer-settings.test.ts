@@ -13,7 +13,7 @@ describe('receipt printer settings', () => {
     expect(defaultReceiptPrinterSettings).toEqual({
       deviceName: null,
       paperWidthMm: 58,
-      rasterThreshold: 160,
+      rasterThreshold: 112,
     });
     expect(readReceiptPrinterSettings()).toEqual(defaultReceiptPrinterSettings);
   });
@@ -49,12 +49,12 @@ describe('receipt printer settings', () => {
       expect(readReceiptPrinterSettings()).toEqual({
         deviceName: null,
         paperWidthMm: 58,
-        rasterThreshold: 160,
+        rasterThreshold: 112,
       });
     }
   });
 
-  it('adds the normal thickness to settings saved before raster tuning existed', () => {
+  it('adds the thin thickness to settings saved before raster tuning existed', () => {
     window.localStorage.setItem(
       'maria.receipt-printer',
       JSON.stringify({ deviceName: 'XP-58IIH', paperWidthMm: 58 }),
@@ -63,7 +63,7 @@ describe('receipt printer settings', () => {
     expect(readReceiptPrinterSettings()).toEqual({
       deviceName: 'XP-58IIH',
       paperWidthMm: 58,
-      rasterThreshold: 160,
+      rasterThreshold: 112,
     });
   });
 
@@ -76,7 +76,23 @@ describe('receipt printer settings', () => {
     expect(readReceiptPrinterSettings()).toEqual({
       deviceName: 'XP-58IIH',
       paperWidthMm: 80,
-      rasterThreshold: 160,
+      rasterThreshold: 112,
+    });
+  });
+
+  it('keeps hidden thresholds compatible but reads them as thin', () => {
+    expect(
+      writeReceiptPrinterSettings({
+        deviceName: 'XP-58IIH',
+        paperWidthMm: 58,
+        rasterThreshold: 192,
+      }),
+    ).toBe(true);
+
+    expect(readReceiptPrinterSettings()).toEqual({
+      deviceName: 'XP-58IIH',
+      paperWidthMm: 58,
+      rasterThreshold: 112,
     });
   });
 

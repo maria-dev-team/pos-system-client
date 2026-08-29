@@ -196,17 +196,17 @@ describe('receipt printing controls', () => {
     delete window.receiptPrinter;
   });
 
-  it('saves paper width and a human-readable print thickness', async () => {
+  it('saves paper width with the thin print threshold', async () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
+    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
     await user.selectOptions(
       await screen.findByLabelText('Принтер'),
       'XP-58IIH',
     );
     await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
-    await user.selectOptions(screen.getByLabelText('Толщина печати'), 'Тонкая');
+    expect(screen.queryByLabelText('Толщина печати')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
 
     expect(
@@ -226,7 +226,7 @@ describe('receipt printing controls', () => {
     );
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
+    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Сохранённый принтер недоступен.',
@@ -239,7 +239,7 @@ describe('receipt printing controls', () => {
     ).toEqual({
       deviceName: null,
       paperWidthMm: 58,
-      rasterThreshold: 160,
+      rasterThreshold: 112,
     });
   });
 
@@ -252,7 +252,7 @@ describe('receipt printing controls', () => {
       });
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
+    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -286,7 +286,7 @@ describe('receipt printing controls', () => {
         expect.objectContaining({
           deviceName: 'XP-58IIH',
           paperWidthMm: 80,
-          rasterThreshold: 160,
+          rasterThreshold: 112,
           receipt: expect.objectContaining({
             cashier: 'Айжан Қасымова',
             receiptNumber: '42',
@@ -303,7 +303,7 @@ describe('receipt printing controls', () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
+    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
     await user.selectOptions(
       await screen.findByLabelText('Принтер'),
       'XP-58IIH',
@@ -335,7 +335,7 @@ describe('receipt printing controls', () => {
         expect.objectContaining({
           deviceName: 'XP-58IIH',
           paperWidthMm: 58,
-          rasterThreshold: 160,
+          rasterThreshold: 112,
           receipt: expect.objectContaining({ receiptNumber: 'TEST' }),
         }),
       ),
@@ -346,12 +346,8 @@ describe('receipt printing controls', () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
+    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
     await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
-    await user.selectOptions(
-      screen.getByLabelText('Толщина печати'),
-      'Плотная',
-    );
     await user.click(screen.getByRole('button', { name: 'Тестовая печать' }));
     const preview = await screen.findByRole('dialog', {
       name: 'Предпросмотр тестового чека',
@@ -360,7 +356,7 @@ describe('receipt printing controls', () => {
 
     await waitFor(() =>
       expect(window.receiptPrinter?.print).toHaveBeenCalledWith(
-        expect.objectContaining({ paperWidthMm: 80, rasterThreshold: 192 }),
+        expect.objectContaining({ paperWidthMm: 80, rasterThreshold: 112 }),
       ),
     );
   });
@@ -372,7 +368,7 @@ describe('receipt printing controls', () => {
     );
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Принтер чека' }));
+    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
     await user.click(screen.getByRole('button', { name: 'Тестовая печать' }));
     const preview = await screen.findByRole('dialog', {
       name: 'Предпросмотр тестового чека',
