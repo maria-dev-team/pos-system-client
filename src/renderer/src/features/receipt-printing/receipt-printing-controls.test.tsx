@@ -245,8 +245,14 @@ describe('receipt printing controls', () => {
 
   it('keeps the settings open when storage is unavailable', async () => {
     const user = userEvent.setup();
+    const storage = window.localStorage;
     const setItem = vi
-      .spyOn(window.localStorage, 'setItem')
+      .spyOn(
+        Object.hasOwn(storage, 'setItem')
+          ? storage
+          : Object.getPrototypeOf(storage),
+        'setItem',
+      )
       .mockImplementationOnce(() => {
         throw new Error('Storage unavailable');
       });

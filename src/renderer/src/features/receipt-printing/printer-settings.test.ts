@@ -97,8 +97,14 @@ describe('receipt printer settings', () => {
   });
 
   it('reports when settings cannot be stored', () => {
+    const storage = window.localStorage;
     const setItem = vi
-      .spyOn(window.localStorage, 'setItem')
+      .spyOn(
+        Object.hasOwn(storage, 'setItem')
+          ? storage
+          : Object.getPrototypeOf(storage),
+        'setItem',
+      )
       .mockImplementationOnce(() => {
         throw new Error('Storage unavailable');
       });
