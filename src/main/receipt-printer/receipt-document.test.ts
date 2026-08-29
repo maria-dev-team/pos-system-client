@@ -88,14 +88,21 @@ describe('renderReceiptDocument', () => {
     expect(html).toContain('Сдача: 50,00 ₸');
   });
 
-  it('uses a scrollbar-free opaque canvas without a fixed page height', () => {
+  it('matches regular ESC/POS Font A proportions without extra spacing', () => {
     const html = renderReceiptDocument?.(receipt);
 
     expect(html).toContain('html, body { background: #fff;');
     expect(html).toContain('scrollbar-width: none;');
     expect(html).toContain('html::-webkit-scrollbar { display: none; }');
-    expect(html).toContain('padding: 0 8px;');
+    expect(html).toContain('font-size: 8.5pt;');
+    expect(html).toContain('font-weight: 400;');
+    expect(html).toContain('strong { font-weight: inherit; }');
+    expect(html).toContain('padding: 0;');
     expect(html).toContain('overflow-wrap: anywhere;');
+    expect(html).not.toMatch(/font-weight: (700|800)/);
+    expect(html).not.toContain('font-size: 13pt;');
+    expect(html).not.toContain('margin-top:');
+    expect(html).not.toContain('padding: 0 8px;');
     expect(html).not.toContain('height: 90mm');
   });
 });

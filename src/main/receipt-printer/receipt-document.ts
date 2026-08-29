@@ -139,18 +139,19 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
       body {
         color: #000;
         font-family: Arial, Helvetica, sans-serif;
-        font-size: 10pt;
+        font-size: 8.5pt;
+        font-weight: 400;
         line-height: 1.25;
         overflow-wrap: anywhere;
-        padding: 0 8px;
+        padding: 0;
       }
+      strong { font-weight: inherit; }
       .center { text-align: center; }
-      .title { font-size: 13pt; font-weight: 800; margin-top: 2mm; }
-      .separator { border-top: 0.25mm dashed #000; margin: 2mm 0; }
+      .separator { border-top: 0.25mm dashed #000; margin: 1.75mm 0; }
       .meta, .item-totals, .payment-total, .grand-total {
         align-items: baseline;
         display: flex;
-        gap: 2mm;
+        gap: 1.5mm;
         justify-content: space-between;
       }
       .meta span, .item-totals span, .payment-total span { min-width: 0; }
@@ -160,11 +161,6 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
         overflow-wrap: anywhere;
         text-align: right;
       }
-      .item, .payment { margin-top: 1.5mm; }
-      .item-name { font-weight: 700; }
-      .item-totals, .payment { font-size: 9pt; }
-      .grand-total { font-size: 13pt; font-weight: 800; }
-      .notice { font-size: 8pt; font-weight: 700; margin-top: 3mm; }
     </style>
   </head>
   <body>
