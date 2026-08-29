@@ -53,7 +53,7 @@ export const encodeRasterBand = (
 
 export const buildEscPosReceipt = (bands: readonly Buffer[]): Buffer =>
   Buffer.concat([
-    Buffer.from([0x1b, 0x40]),
+    Buffer.from([0x1b, 0x40, 0x1c, 0x2e]),
     ...bands,
     Buffer.from([0x1b, 0x64, 0x03]),
   ]);

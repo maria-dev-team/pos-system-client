@@ -298,8 +298,10 @@ describe('registerReceiptPrinterIpc', () => {
       height: 2,
       width: 384,
     });
-    expect(encoded.subarray(0, 10)).toEqual(
-      Buffer.from([0x1b, 0x40, 0x1d, 0x76, 0x30, 0x00, 0x30, 0x00, 0xff, 0x00]),
+    expect(encoded.subarray(0, 12)).toEqual(
+      Buffer.from([
+        0x1b, 0x40, 0x1c, 0x2e, 0x1d, 0x76, 0x30, 0x00, 0x30, 0x00, 0xff, 0x00,
+      ]),
     );
     expect(encoded.subarray(-3)).toEqual(Buffer.from([0x1b, 0x64, 0x03]));
     expect(encoded.includes(Buffer.from([0x1b, 0x74, 0x17]))).toBe(false);
