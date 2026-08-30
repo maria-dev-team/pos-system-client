@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AuthContextResponse,
   type CashierSessionResponse,
+  type FiscalReceiptResponse,
   type ReceiptResponse,
   type ReceiptSummaryResponse,
   type SaleResponse,
@@ -77,10 +78,34 @@ const context: AuthContextResponse = {
   },
   userOrganizationId: 'membership-1',
 };
+const fiscalReceipt: FiscalReceiptResponse = {
+  address: 'Алматы',
+  buyer_bin_iin: null,
+  cashbox_unique_number: 'SWK00000001',
+  currency: 'KZT',
+  fiscal_sign: '123456789',
+  fiscalized_at: '2026-08-27T09:00:00.000Z',
+  offline: false,
+  ofd_name: 'ОФД',
+  ofd_website: 'https://ofd.example',
+  operation_type: 'SALE',
+  print_url: null,
+  provider: 'WEBKASSA',
+  qr_url: 'https://ofd.example/check/42',
+  receipt_number: '42',
+  registration_number: 'RN-1',
+  shift_number: '2',
+  status: 'FISCALIZED',
+  taxpayer_bin_iin: '123456789012',
+  taxpayer_name: 'ТОО Maria',
+  total: '900.00',
+  vat_total: '0.00',
+};
 const receiptSummary: ReceiptSummaryResponse = {
   cashier_membership_id: 'membership-1',
   completed_at: '2026-08-27T09:00:00.000Z',
   currency: 'KZT',
+  fiscal_receipt: fiscalReceipt,
   id: 'sale-1',
   payments: [{ amount: '900.00', method: 'CASH' }],
   receipt_number: '42',
@@ -95,6 +120,7 @@ const saleBase: SaleResponse = {
   completed_at: '2026-08-27T09:00:00.000Z',
   created_at: '2026-08-27T09:00:00.000Z',
   currency: 'KZT',
+  fiscal_receipt: fiscalReceipt,
   held_at: null,
   id: 'sale-1',
   items: [],
@@ -120,9 +146,14 @@ const receipt: ReceiptResponse = {
       barcode: '001',
       base_unit_price: '450.00',
       id: 'item-1',
+      is_marked: false,
       line_number: 1,
       line_total: '450.00',
       name: 'Молоко',
+      marking_code: null,
+      nkt_name: null,
+      ntin_code: null,
+      gtin: null,
       price_override_reason: null,
       price_overridden_by_membership_id: null,
       product_id: 'product-1',
@@ -134,14 +165,21 @@ const receipt: ReceiptResponse = {
       source_sale_item_id: null,
       unit_code: 'pcs',
       unit_price: '450.00',
+      vat_amount: '0.00',
+      vat_rate: 'NONE',
     },
     {
       barcode: '002',
       base_unit_price: '450.00',
       id: 'item-2',
+      is_marked: false,
       line_number: 2,
       line_total: '450.00',
       name: 'Хлеб',
+      marking_code: null,
+      nkt_name: null,
+      ntin_code: null,
+      gtin: null,
       price_override_reason: null,
       price_overridden_by_membership_id: null,
       product_id: 'product-2',
@@ -153,6 +191,8 @@ const receipt: ReceiptResponse = {
       source_sale_item_id: null,
       unit_code: 'pcs',
       unit_price: '450.00',
+      vat_amount: '0.00',
+      vat_rate: 'NONE',
     },
   ],
   payments: [
@@ -175,6 +215,13 @@ const completedReturn: SaleResponse = {
   ...saleBase,
   cashier_session_id: cashierSession.id,
   id: 'return-1',
+  fiscal_receipt: {
+    ...fiscalReceipt,
+    operation_type: 'RETURN',
+    qr_url: 'https://ofd.example/check/43',
+    receipt_number: '43',
+    total: '450.00',
+  },
   original_sale_id: receipt.id,
   receipt_number: '43',
   return_reason: 'Товар не подошёл',
@@ -443,11 +490,21 @@ describe('ReturnsView', () => {
       id: 'product-1',
       is_active: false,
       name: 'Неактивный товар',
+      nkt: {
+        gtin: '001',
+        is_marked: false,
+        is_social: false,
+        name_kk: null,
+        name_ru: 'Неактивный товар',
+        ntin_code: 'NTIN-001',
+      },
+      nkt_product_id: 'nkt-product-1',
       organization_id: 'organization-1',
       retail_price: '450.00',
       sku: 'OLD',
       unit: 'pcs' as const,
       updated_at: '2026-08-27T08:00:00.000Z',
+      vat_rate: null,
     };
     vi.mocked(searchProducts).mockResolvedValue({
       meta: { has_more: false, limit: 20, offset: 0, total: 2 },
@@ -501,6 +558,80 @@ describe('ReturnsView', () => {
     expect(screen.getAllByText('Неактивен')).toHaveLength(2);
   });
 
+  it('requires and submits a unique Data Matrix for a marked return without receipt', async () => {
+    const user = userEvent.setup();
+    const markingCode = ']d2010487000000001221SERIAL';
+    const product = {
+      barcode: '4870000000012',
+      category_id: null,
+      created_at: '2026-08-27T08:00:00.000Z',
+      deleted_at: null,
+      id: 'product-marked',
+      is_active: true,
+      name: 'Маркированный товар',
+      nkt: {
+        gtin: '04870000000012',
+        is_marked: true,
+        is_social: false,
+        name_kk: null,
+        name_ru: 'Маркированный товар',
+        ntin_code: 'NTIN-1',
+      },
+      nkt_product_id: 'nkt-1',
+      organization_id: 'organization-1',
+      retail_price: '450.00',
+      sku: 'MARKED',
+      unit: 'pcs' as const,
+      updated_at: '2026-08-27T08:00:00.000Z',
+      vat_rate: '16' as const,
+    };
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      products: [product],
+    });
+    vi.mocked(getProduct).mockResolvedValue(product);
+    renderView();
+
+    await user.click(screen.getByRole('button', { name: 'Без чека' }));
+    await user.type(screen.getByLabelText('Поиск товаров'), 'маркир');
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Добавить товар Маркированный товар',
+      }),
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Списать Маркированный товар' }),
+    );
+    await user.type(screen.getByLabelText('Data Matrix'), markingCode);
+    await user.type(
+      screen.getByLabelText('Причина возврата'),
+      'Возврат маркированного товара',
+    );
+    await user.click(screen.getByRole('button', { name: 'Оформить возврат' }));
+    await user.click(screen.getByRole('button', { name: 'Безналичные' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить возврат' }),
+    );
+
+    await waitFor(() =>
+      expect(createWithoutReceiptReturn).toHaveBeenCalledWith(
+        expect.any(String),
+        {
+          items: [
+            {
+              markingCode: '010487000000001221SERIAL',
+              productId: 'product-marked',
+              quantity: '1',
+              returnDisposition: 'WRITE_OFF',
+            },
+          ],
+          payments: [{ amount: '450.00', method: 'CASHLESS' }],
+          reason: 'Возврат маркированного товара',
+        },
+      ),
+    );
+  });
+
   it('opens the screen keyboard over the page without stretching the layout', async () => {
     const user = userEvent.setup();
     renderView();
@@ -530,11 +661,21 @@ describe('ReturnsView', () => {
       id: 'product-1',
       is_active: true,
       name: 'Кофе',
+      nkt: {
+        gtin: '001',
+        is_marked: false,
+        is_social: false,
+        name_kk: null,
+        name_ru: 'Кофе',
+        ntin_code: 'NTIN-001',
+      },
+      nkt_product_id: 'nkt-product-1',
       organization_id: 'organization-1',
       retail_price: '450.00',
       sku: 'COFFEE',
       unit: 'pcs' as const,
       updated_at: '2026-08-27T08:00:00.000Z',
+      vat_rate: null,
     };
     vi.mocked(searchProducts).mockResolvedValue({
       meta: { has_more: false, limit: 20, offset: 0, total: 1 },

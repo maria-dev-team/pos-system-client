@@ -55,6 +55,7 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
+import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
 import {
   adjustQuantityByOne,
   formatQuantity,
@@ -277,6 +278,30 @@ function ActiveCheckout({
         refocus();
         return;
       }
+      if (
+        (submitted.type === 'scan' || submitted.type === 'add') &&
+        getHttpErrorCode(error) === ErrorCode.ProductNktRequired
+      ) {
+        setScanIssue({
+          barcode:
+            submitted.type === 'scan' ? submitted.barcode : submitted.productId,
+          message: 'Товар не сопоставлен с НКТ. Откройте его в каталоге Maria.',
+        });
+        refocus();
+        return;
+      }
+      if (
+        (submitted.type === 'scan' || submitted.type === 'add') &&
+        getHttpErrorCode(error) === ErrorCode.ProductMarkingCodeRequired
+      ) {
+        setScanIssue({
+          barcode:
+            submitted.type === 'scan' ? submitted.barcode : submitted.productId,
+          message: 'Для этого товара отсканируйте Data Matrix с упаковки.',
+        });
+        refocus();
+        return;
+      }
       if (submitted.type === 'setQuantity' && quantityItem) {
         setQuantityError(message);
         return;
@@ -290,10 +315,8 @@ function ActiveCheckout({
     },
     onSuccess: (_updatedSale, submitted) => {
       if (submitted.type === 'scan' || submitted.type === 'add') {
+        setScanIssue(null);
         if (submitted.type === 'scan') {
-          setScanIssue((issue) =>
-            issue?.barcode === submitted.barcode ? null : issue,
-          );
           setSearch((value) =>
             value.trim() === submitted.barcode ? '' : value,
           );
@@ -313,46 +336,75 @@ function ActiveCheckout({
     },
   });
 
-  const scanFirstProduct = async (barcode: string) => {
+  const scanFirstProduct = async (scannedValue: string) => {
+    setScanIssue(null);
+    const dataMatrix = parseGs1DataMatrix(scannedValue);
+    const searchValue = dataMatrix?.gtin ?? scannedValue;
     try {
       const result = await searchProducts({
         limit: 20,
         offset: 0,
-        search: barcode,
+        search: searchValue,
       });
       const exact = result.products.find(
-        (product) => product.barcode === barcode,
+        (product) =>
+          product.barcode === searchValue || product.nkt?.gtin === searchValue,
       );
       if (!exact) {
         setScanIssue({
-          barcode,
-          message: `Товар с кодом ${barcode} не найден`,
+          barcode: scannedValue,
+          message: `Товар с кодом ${searchValue} не найден`,
         });
         return;
       }
       if (!exact.is_active) {
         setScanIssue({
-          barcode,
-          message: `Товар с кодом ${barcode} неактивен`,
+          barcode: scannedValue,
+          message: `Товар с кодом ${searchValue} неактивен`,
         });
         return;
       }
       if (exact.retail_price === null) {
         setScanIssue({
-          barcode,
-          message: `У товара с кодом ${barcode} нет цены`,
+          barcode: scannedValue,
+          message: `У товара с кодом ${searchValue} нет цены`,
         });
         return;
       }
-      await command.mutateAsync({ productId: exact.id, type: 'add' });
-      setScanIssue((issue) => (issue?.barcode === barcode ? null : issue));
-      setSearch((value) => (value.trim() === barcode ? '' : value));
+      if (!exact.nkt?.ntin_code || exact.nkt.is_deactivated) {
+        setScanIssue({
+          barcode: scannedValue,
+          message: `Товар «${exact.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+        });
+        return;
+      }
+      if (exact.nkt?.is_marked && !dataMatrix) {
+        setScanIssue({
+          barcode: scannedValue,
+          message: `Товар «${exact.name}» маркирован. Отсканируйте Data Matrix с упаковки.`,
+        });
+        return;
+      }
+      if (!exact.nkt?.is_marked && dataMatrix) {
+        setScanIssue({
+          barcode: scannedValue,
+          message: `Товар с GTIN ${dataMatrix.gtin} не отмечен как маркированный.`,
+        });
+        return;
+      }
+      await command.mutateAsync({
+        ...(dataMatrix ? { markingCode: dataMatrix.markingCode } : {}),
+        productId: exact.id,
+        type: 'add',
+      });
+      setScanIssue(null);
+      setSearch((value) => (value.trim() === scannedValue ? '' : value));
     } catch (error) {
       setScanIssue({
-        barcode,
+        barcode: scannedValue,
         message: getHttpErrorMessage(
           error,
-          `Не удалось добавить товар с кодом ${barcode}`,
+          `Не удалось добавить товар с кодом ${searchValue}`,
         ),
       });
     } finally {
@@ -419,6 +471,7 @@ function ActiveCheckout({
   const canOpenSalesHistory = Boolean(
     onOpenSalesHistory && hasPermission('sales.read'),
   );
+  const canOpenReceipts = canOpenSalesHistory || canOpenReturns;
   const rows: CheckoutRow[] = sale?.items.map((item) => ({ item })) ?? [];
   const transitionPending =
     transitions.cancel.isPending ||
@@ -452,11 +505,16 @@ function ActiveCheckout({
     setTransitionError(undefined);
     setPaymentSale(sale);
   };
-  const confirmPayment = async (payments: SalePaymentPayload[]) => {
+  const confirmPayment = async (
+    payments: SalePaymentPayload[],
+    buyerBinIin?: string,
+  ) => {
     setPaymentError(undefined);
     setTransitionError(undefined);
     try {
-      finishTransition(await transitions.checkout.mutateAsync(payments));
+      finishTransition(
+        await transitions.checkout.mutateAsync({ buyerBinIin, payments }),
+      );
     } catch (error) {
       const message = getHttpErrorMessage(error, 'Не удалось оплатить чек.');
       const authoritative = queryClient.getQueryData<SaleResponse | null>(
@@ -581,11 +639,28 @@ function ActiveCheckout({
     const barcode = search.trim();
     if (!barcode || !canSearch || !canAddProduct || scannerBlocked) return;
     setSearch('');
-    if (sale) submitCommand({ barcode, type: 'scan' });
-    else void scanFirstProduct(barcode);
+    void scanFirstProduct(barcode);
   };
   const selectProduct = (product: ProductResponse) => {
     if (!canAddProduct) return;
+    if (!product.nkt?.ntin_code || product.nkt.is_deactivated) {
+      setSearch('');
+      setScanIssue({
+        barcode: product.barcode,
+        message: `Товар «${product.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+      });
+      refocus();
+      return;
+    }
+    if (product.nkt?.is_marked) {
+      setSearch('');
+      setScanIssue({
+        barcode: product.id,
+        message: `Товар «${product.name}» маркирован. Отсканируйте Data Matrix с упаковки.`,
+      });
+      refocus();
+      return;
+    }
     submitCommand({ productId: product.id, type: 'add' });
   };
   const openRemove = (row: CheckoutRow) => {
@@ -596,6 +671,7 @@ function ActiveCheckout({
     setRemoveItem(row);
   };
   const adjustQuantity = (row: CheckoutRow, delta: -1 | 1) => {
+    if (row.item.is_marked) return;
     const next = adjustQuantityByOne(row.item.quantity, delta);
     if (!next) {
       openRemove(row);
@@ -608,6 +684,7 @@ function ActiveCheckout({
     });
   };
   const openQuantity = (row: CheckoutRow) => {
+    if (row.item.is_marked) return;
     setQuantityItem(row);
     setQuantity(row.item.quantity);
     setQuantityError(null);
@@ -678,8 +755,8 @@ function ActiveCheckout({
   };
 
   return (
-    <main className="flex h-full min-h-0 flex-col overflow-hidden bg-workspace p-3 sm:p-4 lg:p-5">
-      <section className="shrink-0 rounded-2xl border border-border/80 bg-card p-3 shadow-[var(--shadow-surface)] sm:p-4">
+    <main className="flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden bg-workspace p-4 sm:p-5">
+      <section className="shrink-0 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
             <ScanLine
@@ -692,7 +769,7 @@ function ActiveCheckout({
               className="h-15 border-border bg-muted/35 pl-13 pr-4 text-lg shadow-none md:text-lg"
               disabled={!canSearch || !canAddProduct || scannerBlocked}
               id="checkout-search"
-              maxLength={255}
+              maxLength={512}
               onChange={(event) => setSearch(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
@@ -754,7 +831,7 @@ function ActiveCheckout({
 
         <VirtualKeyboardOverlay
           compact
-          maxLength={255}
+          maxLength={512}
           onOpenChange={(open) => {
             setKeyboardOpen(open);
             if (!open) refocus();
@@ -798,7 +875,9 @@ function ActiveCheckout({
                     ? 'Товар неактивен'
                     : product.retail_price === null
                       ? 'Цена не указана'
-                      : null;
+                      : !product.nkt?.ntin_code || product.nkt.is_deactivated
+                        ? 'Нужно сопоставить с НКТ'
+                        : null;
                   return (
                     <button
                       aria-label={`Добавить товар ${product.name}`}
@@ -808,13 +887,15 @@ function ActiveCheckout({
                       onClick={() => selectProduct(product)}
                       type="button"
                     >
-                      <span className="flex items-start justify-between gap-2">
-                        <span className="font-semibold">{product.name}</span>
+                      <span className="flex min-w-0 items-start justify-between gap-2">
+                        <span className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]">
+                          {product.name}
+                        </span>
                         <span className="shrink-0 font-bold tabular-nums text-primary">
                           {formatCash(product.retail_price)}
                         </span>
                       </span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
+                      <span className="mt-1 block break-all text-xs text-muted-foreground">
                         <span>{product.sku}</span> ·{' '}
                         <span>{product.barcode}</span>
                       </span>
@@ -834,16 +915,16 @@ function ActiveCheckout({
 
       {transitionError ? (
         <p
-          className="mt-3 rounded-xl bg-destructive/5 px-4 py-3 text-sm font-medium text-destructive"
+          className="rounded-xl bg-destructive/5 px-4 py-3 text-sm font-medium text-destructive"
           role="alert"
         >
           {transitionError}
         </p>
       ) : null}
 
-      <div className="mt-3 grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="min-h-0 overflow-auto rounded-2xl border border-border/80 bg-card shadow-[var(--shadow-surface)]">
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border/70 bg-card/95 px-5 py-4 backdrop-blur">
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border/70 bg-card/95 px-4 py-4 backdrop-blur">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
                 <ShoppingBasket aria-hidden="true" className="size-5" />
@@ -877,13 +958,19 @@ function ActiveCheckout({
               </div>
             </div>
           ) : (
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full table-fixed border-collapse text-sm">
+              <colgroup>
+                <col />
+                <col className="w-[210px]" />
+                <col className="w-[120px]" />
+                <col className="w-[140px]" />
+              </colgroup>
               <thead className="sticky top-[73px] z-[5] bg-muted/95 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground backdrop-blur">
                 <tr>
-                  <th className="px-5 py-3">Товар</th>
+                  <th className="px-4 py-3">Товар</th>
                   <th className="px-3 py-3">Количество</th>
                   <th className="px-3 py-3 text-right">Цена</th>
-                  <th className="px-5 py-3 text-right">Сумма</th>
+                  <th className="px-4 py-3 text-right">Сумма</th>
                 </tr>
               </thead>
               <tbody>
@@ -895,9 +982,11 @@ function ActiveCheckout({
                       className="border-b border-border/70 align-top transition-colors last:border-b-0 hover:bg-primary/[0.018]"
                       key={row.item.id}
                     >
-                      <td className="px-5 py-4">
-                        <p className="font-semibold leading-snug">{name}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
+                      <td className="min-w-0 px-4 py-4">
+                        <p className="break-words font-semibold leading-snug [overflow-wrap:anywhere]">
+                          {name}
+                        </p>
+                        <p className="mt-1 break-all text-xs text-muted-foreground">
                           {row.item.barcode}
                         </p>
                         {isOverridden ? (
@@ -905,16 +994,21 @@ function ActiveCheckout({
                             Цена изменена
                           </span>
                         ) : null}
+                        {row.item.is_marked ? (
+                          <span className="mt-2 inline-flex rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
+                            Data Matrix считан
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-4">
                         <p className="mb-2 font-bold tabular-nums">
                           {formatQuantity(row.item.quantity, rowUnit(row))}
                         </p>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-nowrap gap-2">
                           <Button
                             aria-label={`Уменьшить ${name}`}
-                            className="min-h-10 min-w-10 border-border bg-background"
-                            disabled={isBusy}
+                            className="size-10 shrink-0 border-border bg-background"
+                            disabled={isBusy || row.item.is_marked}
                             onClick={() => adjustQuantity(row, -1)}
                             size="icon"
                             type="button"
@@ -924,8 +1018,8 @@ function ActiveCheckout({
                           </Button>
                           <Button
                             aria-label={`Увеличить ${name}`}
-                            className="min-h-10 min-w-10 border-border bg-background"
-                            disabled={isBusy}
+                            className="size-10 shrink-0 border-border bg-background"
+                            disabled={isBusy || row.item.is_marked}
                             onClick={() => adjustQuantity(row, 1)}
                             size="icon"
                             type="button"
@@ -935,8 +1029,8 @@ function ActiveCheckout({
                           </Button>
                           <Button
                             aria-label={`Изменить количество ${name}`}
-                            className="min-h-10 min-w-10 border-border bg-background"
-                            disabled={isBusy}
+                            className="size-10 shrink-0 border-border bg-background"
+                            disabled={isBusy || row.item.is_marked}
                             onClick={() => openQuantity(row)}
                             size="icon"
                             type="button"
@@ -946,7 +1040,7 @@ function ActiveCheckout({
                           </Button>
                           <Button
                             aria-label={`Удалить ${name}`}
-                            className="min-h-10 min-w-10 border-border bg-background text-destructive hover:text-destructive"
+                            className="size-10 shrink-0 border-border bg-background text-destructive hover:text-destructive"
                             disabled={isBusy}
                             onClick={() => openRemove(row)}
                             size="icon"
@@ -990,7 +1084,7 @@ function ActiveCheckout({
                           </div>
                         ) : null}
                       </td>
-                      <td className="px-5 py-4 text-right text-base font-bold tabular-nums">
+                      <td className="px-4 py-4 text-right text-base font-bold tabular-nums">
                         {formatCash(rowLineTotal(row))}
                       </td>
                     </tr>
@@ -1001,12 +1095,12 @@ function ActiveCheckout({
           )}
         </section>
 
-        <aside className="flex min-h-0 flex-col overflow-auto rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)]">
-          <div className="flex items-center gap-3">
+        <aside className="flex min-h-0 flex-col overflow-x-hidden overflow-y-auto rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
+          <div className="flex min-w-0 items-center gap-3">
             <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
               <ReceiptText aria-hidden="true" className="size-5" />
             </span>
-            <div>
+            <div className="min-w-0">
               <p className="font-bold">Текущий чек</p>
               <p className="text-xs text-muted-foreground">
                 {rows.length === 0
@@ -1016,19 +1110,19 @@ function ActiveCheckout({
             </div>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-primary/15 bg-primary/[0.045] p-5">
+          <div className="mt-4 min-w-0 rounded-xl border border-primary/15 bg-primary/[0.045] p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Итого
             </p>
-            <p className="mt-2 text-[2rem] font-extrabold leading-none tracking-[-0.045em] tabular-nums text-primary xl:text-4xl">
+            <p className="mt-2 break-all text-3xl font-extrabold leading-none tracking-[-0.04em] tabular-nums text-primary">
               {formatCash(sale?.total ?? '0.00')}
             </p>
           </div>
 
-          <div className="space-y-2.5 pt-4">
+          <div className="space-y-4 pt-4">
             {rows.length > 0 && canPay ? (
               <Button
-                className="min-h-15 w-full text-base shadow-md shadow-primary/20"
+                className="min-h-14 w-full text-base shadow-md shadow-primary/20"
                 disabled={isBusy}
                 onClick={() => void openPayment()}
                 type="button"
@@ -1037,58 +1131,79 @@ function ActiveCheckout({
                 Оплатить
               </Button>
             ) : null}
-            <Button
-              className="min-h-12 w-full border-border bg-background"
-              disabled={isBusy}
-              onClick={() => setHeldOpen(true)}
-              type="button"
-              variant="ghost"
-            >
-              <ReceiptText aria-hidden="true" />
-              Отложенные чеки
-            </Button>
-            {canOpenReturns ? (
-              <Button
-                className="min-h-12 w-full border-border bg-background"
-                disabled={isBusy}
-                onClick={onOpenReturns}
-                type="button"
-                variant="ghost"
+            <section>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                Разделы
+              </p>
+              <div
+                className={`grid auto-rows-fr items-stretch gap-3 ${canOpenReceipts ? 'grid-cols-3' : 'grid-cols-2'}`}
               >
-                <RotateCcw aria-hidden="true" />
-                Возвраты
-              </Button>
-            ) : null}
-            {canOpenSalesHistory ? (
-              <Button
-                className="min-h-12 w-full border-border bg-background"
-                disabled={isBusy}
-                onClick={onOpenSalesHistory}
-                type="button"
-                variant="ghost"
-              >
-                <History aria-hidden="true" />
-                История продаж
-              </Button>
-            ) : null}
-            <ReceiptPrinterSettingsButton className="min-h-12 w-full border-border bg-background" />
+                <Button
+                  className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                  disabled={isBusy}
+                  onClick={() => setHeldOpen(true)}
+                  type="button"
+                  variant="ghost"
+                >
+                  <ReceiptText aria-hidden="true" className="size-5" />
+                  <span className="flex min-h-8 items-center justify-center break-words [overflow-wrap:anywhere]">
+                    Отложенные чеки
+                  </span>
+                </Button>
+                {canOpenReceipts ? (
+                  <Button
+                    className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                    disabled={isBusy}
+                    onClick={
+                      canOpenSalesHistory ? onOpenSalesHistory : onOpenReturns
+                    }
+                    type="button"
+                    variant="ghost"
+                  >
+                    <History aria-hidden="true" className="size-5" />
+                    <span className="flex min-h-8 items-center justify-center break-words [overflow-wrap:anywhere]">
+                      Чеки и возвраты
+                    </span>
+                  </Button>
+                ) : null}
+                <ReceiptPrinterSettingsButton
+                  className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                  labelClassName="flex min-h-8 items-center justify-center break-words [overflow-wrap:anywhere]"
+                />
+              </div>
+            </section>
             {rows.length > 0 && canHold ? (
+              <section className="border-t border-border/70 pt-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                  Текущий чек
+                </p>
+                <div className="grid gap-2">
+                  <Button
+                    className="min-h-11 w-full whitespace-normal border-border bg-background px-3 text-sm leading-tight"
+                    disabled={isBusy}
+                    onClick={() => void holdCurrent()}
+                    type="button"
+                    variant="ghost"
+                  >
+                    Отложить чек
+                  </Button>
+                  {sale && canCancelCurrent ? (
+                    <Button
+                      className="min-h-11 w-full whitespace-normal px-3 text-sm leading-tight text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
+                      disabled={isBusy}
+                      onClick={openCancel}
+                      type="button"
+                      variant="ghost"
+                    >
+                      <Ban aria-hidden="true" />
+                      Отменить чек
+                    </Button>
+                  ) : null}
+                </div>
+              </section>
+            ) : sale && canCancelCurrent ? (
               <Button
-                className="min-h-12 w-full border-border bg-background"
-                disabled={isBusy}
-                onClick={() => void holdCurrent()}
-                type="button"
-                variant="ghost"
-              >
-                Отложить чек
-              </Button>
-            ) : null}
-            {sale && canCancelCurrent ? (
-              <div className="my-3 border-t border-border/70" />
-            ) : null}
-            {sale && canCancelCurrent ? (
-              <Button
-                className="min-h-12 w-full text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
+                className="min-h-11 w-full whitespace-normal text-sm leading-tight text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
                 disabled={isBusy}
                 onClick={openCancel}
                 type="button"
@@ -1099,7 +1214,7 @@ function ActiveCheckout({
               </Button>
             ) : null}
             {canEndSession ? (
-              <div className="border-t border-border/70 pt-3">
+              <div className="border-t border-border/70 pt-4">
                 <SessionEndAction
                   cashierSession={cashierSession}
                   onSessionEndedLocally={onSessionEndedLocally}

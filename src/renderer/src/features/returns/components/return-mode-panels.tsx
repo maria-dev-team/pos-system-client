@@ -107,6 +107,7 @@ export type ReceiptReturnPanelProps = {
   cashierSession: CashierSessionResponse;
   context: AuthContextResponse;
   disabled: boolean;
+  focused?: boolean;
   onNextPage: () => void;
   onPreviousPage: () => void;
   onReceiptNumberChange: (value: string) => void;
@@ -128,6 +129,7 @@ export function ReceiptReturnPanel({
   cashierSession,
   context,
   disabled,
+  focused = false,
   onNextPage,
   onPreviousPage,
   onReceiptNumberChange,
@@ -142,6 +144,31 @@ export function ReceiptReturnPanel({
   selections,
   selectedReceiptNumber,
 }: ReceiptReturnPanelProps) {
+  if (focused && selectedReceiptNumber) {
+    return (
+      <div className="flex h-full min-h-0 flex-col gap-4">
+        <div className="shrink-0">
+          <h2 className="text-lg font-bold">
+            Возврат по чеку №{selectedReceiptNumber}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Выберите товары и количество для возврата
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <ReceiptDetailContent
+            cashierSession={cashierSession}
+            context={context}
+            disabled={disabled}
+            onSelectionsChange={onSelectionsChange}
+            receiptDetail={receiptDetail}
+            selections={selections}
+          />
+        </div>
+      </div>
+    );
+  }
+
   const selectedReceiptIsVisible = Boolean(
     receipts.data?.receipts.some(
       (receipt) => receipt.receipt_number === selectedReceiptNumber,
@@ -149,7 +176,7 @@ export function ReceiptReturnPanel({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <section>
         <h2 className="font-bold">Найти чек продажи</h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -185,7 +212,7 @@ export function ReceiptReturnPanel({
 
       <div
         aria-label="Недавние чеки"
-        className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1"
         role="region"
       >
         {selectedReceiptNumber && !selectedReceiptIsVisible ? (
@@ -224,7 +251,7 @@ export function ReceiptReturnPanel({
               Загружаем последние чеки
             </p>
           ) : receipts.isError ? (
-            <div className="rounded-xl border border-destructive/20 p-5 text-center">
+            <div className="rounded-xl border border-destructive/20 p-4 text-center">
               <p className="font-semibold">Не удалось загрузить чеки</p>
               <Button
                 className="mt-3"
@@ -327,8 +354,8 @@ export type WithoutReceiptReturnPanelProps = {
   onAddProduct: (product: ProductResponse) => void;
   onOverride: (line: WithoutReceiptLine) => void;
   onProductSearchChange: (value: string) => void;
-  onRemove: (productId: string) => void;
-  onUpdate: (productId: string, update: Partial<WithoutReceiptLine>) => void;
+  onRemove: (lineId: string) => void;
+  onUpdate: (lineId: string, update: Partial<WithoutReceiptLine>) => void;
   productSearch: string;
   products: QueryState<ProductSearchResponse>;
 };
@@ -384,7 +411,10 @@ export function WithoutReceiptReturnPanel({
                 className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={
                   product.retail_price === null ||
-                  lines.some((line) => line.product.id === product.id)
+                  !product.nkt?.ntin_code ||
+                  product.nkt.is_deactivated ||
+                  (!product.nkt?.is_marked &&
+                    lines.some((line) => line.product.id === product.id))
                 }
                 key={product.id}
                 onClick={() => onAddProduct(product)}
@@ -398,6 +428,11 @@ export function WithoutReceiptReturnPanel({
                   {!product.is_active ? (
                     <span className="mt-1 inline-block text-xs font-semibold text-amber-700">
                       Неактивен
+                    </span>
+                  ) : null}
+                  {!product.nkt?.ntin_code || product.nkt.is_deactivated ? (
+                    <span className="mt-1 inline-block text-xs font-semibold text-amber-700">
+                      Нужно сопоставить с НКТ
                     </span>
                   ) : null}
                 </span>

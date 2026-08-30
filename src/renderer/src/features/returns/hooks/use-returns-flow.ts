@@ -14,6 +14,7 @@ import {
   getHttpErrorCode,
   getHttpErrorMessage,
 } from '@renderer/common/helpers/http-error.helper';
+import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
 import { useProductSearchQuery } from '@renderer/features/products';
 
 import {
@@ -43,6 +44,8 @@ export function useReturnsFlow(
   cashierSession: CashierSessionResponse,
   context: AuthContextResponse,
   initialReceiptNumber = '',
+  initialMode?: 'receipt' | 'withoutReceipt',
+  focusedFlow = false,
 ) {
   const queryClient = useQueryClient();
   const canCreate = permission(context, 'returns.create');
@@ -52,9 +55,16 @@ export function useReturnsFlow(
     permission(context, 'returns.without_receipt') &&
     permission(context, 'product.read');
   const canOverridePrice = permission(context, 'returns.price.override');
-  const [mode, setMode] = useState<'receipt' | 'withoutReceipt'>(() =>
-    canReceipt ? 'receipt' : 'withoutReceipt',
-  );
+  const [mode, setMode] = useState<'receipt' | 'withoutReceipt'>(() => {
+    if (
+      !initialReceiptNumber &&
+      initialMode === 'withoutReceipt' &&
+      canWithoutReceipt
+    ) {
+      return 'withoutReceipt';
+    }
+    return canReceipt ? 'receipt' : 'withoutReceipt';
+  });
   const [page, setPage] = useState(0);
   const [receiptNumber, setReceiptNumberState] = useState(initialReceiptNumber);
   const [receiptSearchError, setReceiptSearchError] = useState<string | null>(
@@ -81,7 +91,7 @@ export function useReturnsFlow(
   const [completedReturn, setCompletedReturn] = useState<SaleResponse | null>(
     null,
   );
-  const [overrideProductId, setOverrideProductId] = useState<string>();
+  const [overrideLineId, setOverrideLineId] = useState<string>();
   const [overrideStep, setOverrideStep] = useState<'price' | 'reason'>('price');
   const [overridePrice, setOverridePrice] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -92,7 +102,7 @@ export function useReturnsFlow(
     receiptPageQueryOptions(
       pageSize,
       offset,
-      mode === 'receipt' && canReceipt,
+      mode === 'receipt' && canReceipt && !focusedFlow,
       cashierSession.organization_id,
       cashierSession.store_id,
     ),
@@ -112,11 +122,11 @@ export function useReturnsFlow(
     context.storeId,
   );
   const overrideLine = withoutReceiptLines.find(
-    (line) => line.product.id === overrideProductId,
+    (line) => line.id === overrideLineId,
   );
   useQuery(
     productQueryOptions(
-      overrideProductId ?? '',
+      overrideLine?.product.id ?? '',
       Boolean(overrideLine && canOverridePrice),
     ),
   );
@@ -146,8 +156,23 @@ export function useReturnsFlow(
         )
       : withoutReceiptLines.every(
           ({ product, quantity }) =>
+            (product.nkt?.is_marked ? quantity === '1' : true) &&
             returnQuantitySchema(product.unit).safeParse(quantity).success,
         );
+  const markedLines = withoutReceiptLines.filter(
+    ({ product }) => product.nkt?.is_marked,
+  );
+  const parsedMarkings = markedLines.map(({ markingCode, product }) => ({
+    parsed: markingCode ? parseGs1DataMatrix(markingCode) : null,
+    product,
+  }));
+  const normalizedMarkingCodes = parsedMarkings.map(
+    ({ parsed }) => parsed?.markingCode ?? '',
+  );
+  const markingsValid =
+    parsedMarkings.every(
+      ({ parsed, product }) => parsed && parsed.gtin === product.nkt?.gtin,
+    ) && new Set(normalizedMarkingCodes).size === normalizedMarkingCodes.length;
   const linesHaveDisposition =
     mode === 'receipt'
       ? receiptLines.every((line) => line.returnDisposition)
@@ -173,6 +198,7 @@ export function useReturnsFlow(
   const formReady =
     hasLines &&
     quantitiesValid &&
+    markingsValid &&
     linesHaveDisposition &&
     returnReasonSchema.safeParse(reason).success &&
     previewTotal !== '0.00';
@@ -212,9 +238,16 @@ export function useReturnsFlow(
   };
 
   const addProduct = (product: ProductResponse) => {
+    if (!product.nkt?.ntin_code || product.nkt.is_deactivated) {
+      setFormError(
+        `Товар «${product.name}» не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+      );
+      return;
+    }
     if (
       product.retail_price === null ||
-      withoutReceiptLines.some((line) => line.product.id === product.id)
+      (!product.nkt?.is_marked &&
+        withoutReceiptLines.some((line) => line.product.id === product.id))
     ) {
       return;
     }
@@ -227,6 +260,7 @@ export function useReturnsFlow(
       ...lines,
       {
         catalogUnitPrice,
+        id: crypto.randomUUID(),
         product,
         quantity: '1',
         returnDisposition: null,
@@ -236,21 +270,19 @@ export function useReturnsFlow(
   };
 
   const updateWithoutLine = (
-    productId: string,
+    lineId: string,
     update: Partial<WithoutReceiptLine>,
   ) => {
     setWithoutReceiptLines((lines) =>
-      lines.map((line) =>
-        line.product.id === productId ? { ...line, ...update } : line,
-      ),
+      lines.map((line) => (line.id === lineId ? { ...line, ...update } : line)),
     );
     setPreparedWithoutReceiptLines(null);
     setFormError(null);
   };
 
-  const removeWithoutLine = (productId: string) =>
+  const removeWithoutLine = (lineId: string) =>
     setWithoutReceiptLines((lines) =>
-      lines.filter((line) => line.product.id !== productId),
+      lines.filter((line) => line.id !== lineId),
     );
 
   const refreshProducts = async () => {
@@ -266,6 +298,30 @@ export function useReturnsFlow(
     );
     if (refreshed.some(({ product }) => product.retail_price === null)) {
       throw new Error('У одного из товаров больше нет цены продажи.');
+    }
+    if (
+      refreshed.some(
+        ({ product }) => !product.nkt?.ntin_code || product.nkt.is_deactivated,
+      )
+    ) {
+      throw new Error('Один из товаров не сопоставлен с НКТ.');
+    }
+    if (
+      refreshed.some(({ line, product }) => {
+        if (
+          Boolean(line.product.nkt?.is_marked) !==
+          Boolean(product.nkt?.is_marked)
+        ) {
+          return true;
+        }
+        if (!product.nkt?.is_marked) return false;
+        const parsed = line.markingCode
+          ? parseGs1DataMatrix(line.markingCode)
+          : null;
+        return !parsed || parsed.gtin !== product.nkt.gtin;
+      })
+    ) {
+      throw new Error('Проверьте Data Matrix маркированных товаров.');
     }
     if (
       refreshed.some(
@@ -316,13 +372,17 @@ export function useReturnsFlow(
     }
   };
 
-  const confirmReturn = async (payments: ReturnPaymentPayload[]) => {
+  const confirmReturn = async (
+    payments: ReturnPaymentPayload[],
+    buyerBinIin?: string,
+  ) => {
     const parsedReason = returnReasonSchema.parse(reason);
     try {
       const result = await submission.submit.mutateAsync(
         mode === 'receipt'
           ? {
               payload: {
+                ...(buyerBinIin ? { buyerBinIin } : {}),
                 items: receiptLines.map(
                   ({ item, quantity, returnDisposition }) => ({
                     quantity,
@@ -338,14 +398,21 @@ export function useReturnsFlow(
             }
           : {
               payload: {
-                items: activeWithoutLines.map((line) => ({
-                  ...(line.priceOverride
-                    ? { priceOverride: line.priceOverride }
-                    : {}),
-                  productId: line.product.id,
-                  quantity: line.quantity,
-                  returnDisposition: line.returnDisposition!,
-                })),
+                ...(buyerBinIin ? { buyerBinIin } : {}),
+                items: activeWithoutLines.map((line) => {
+                  const markingCode = line.markingCode
+                    ? parseGs1DataMatrix(line.markingCode)?.markingCode
+                    : undefined;
+                  return {
+                    ...(markingCode ? { markingCode } : {}),
+                    ...(line.priceOverride
+                      ? { priceOverride: line.priceOverride }
+                      : {}),
+                    productId: line.product.id,
+                    quantity: line.quantity,
+                    returnDisposition: line.returnDisposition!,
+                  };
+                }),
                 payments,
                 reason: parsedReason,
               },
@@ -390,14 +457,14 @@ export function useReturnsFlow(
   };
 
   const openOverride = (line: WithoutReceiptLine) => {
-    setOverrideProductId(line.product.id);
+    setOverrideLineId(line.id);
     setOverrideStep('price');
     setOverridePrice(line.priceOverride?.unitPrice ?? '');
     setOverrideReason(line.priceOverride?.reason ?? '');
     setOverrideError(null);
   };
 
-  const closeOverride = () => setOverrideProductId(undefined);
+  const closeOverride = () => setOverrideLineId(undefined);
 
   const backToOverridePrice = () => {
     setOverrideError(null);
@@ -428,10 +495,10 @@ export function useReturnsFlow(
       setOverrideError(parsed.error.issues[0]?.message ?? 'Проверьте цену');
       return;
     }
-    updateWithoutLine(overrideLine.product.id, {
+    updateWithoutLine(overrideLine.id, {
       priceOverride: parsed.data,
     });
-    setOverrideProductId(undefined);
+    setOverrideLineId(undefined);
   };
 
   const setReason = (value: string) => {

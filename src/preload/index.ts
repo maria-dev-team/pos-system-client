@@ -9,14 +9,35 @@ type PrintableReceipt = {
   cashier: string;
   completedAt: string;
   currency: 'KZT';
+  fiscal: {
+    address: string;
+    buyerBinIin: string | null;
+    cashboxUniqueNumber: string;
+    fiscalSign: string;
+    offline: boolean;
+    ofdName: string;
+    ofdWebsite: string;
+    qrUrl: string;
+    receiptNumber: string;
+    registrationNumber: string;
+    shiftNumber: string;
+    vatTotal: string;
+  };
+  isTest: boolean;
   items: Array<{
     lineNumber: number;
     lineTotal: string;
+    markingCode: string | null;
     name: string;
+    ntinCode: string | null;
     quantity: string;
     unitLabel: string;
     unitPrice: string;
+    vatAmount: string;
+    vatRate: 'NONE' | '0' | '5' | '10' | '16';
   }>;
+  localReceiptNumber: string;
+  operationType: 'SALE' | 'RETURN';
   organization: {
     binIin: string | null;
     displayName: string;
@@ -28,7 +49,6 @@ type PrintableReceipt = {
     method: 'CASH' | 'CASHLESS';
     received: string | null;
   }>;
-  receiptNumber: string;
   store: { address: string | null; name: string };
   timeZone: string;
   total: string;

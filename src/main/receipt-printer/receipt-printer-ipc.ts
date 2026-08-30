@@ -49,8 +49,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isText = (value: unknown, maxLength = 500): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= maxLength;
 
-const isNullableText = (value: unknown): value is string | null =>
-  value === null || isText(value);
+const isNullableText = (
+  value: unknown,
+  maxLength = 500,
+): value is string | null => value === null || isText(value, maxLength);
 
 const isDecimal = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -62,10 +64,14 @@ const isReceiptItem = (value: unknown): boolean =>
   Number.isInteger(value.lineNumber) &&
   (value.lineNumber as number) > 0 &&
   isDecimal(value.lineTotal) &&
+  isNullableText(value.markingCode, 512) &&
   isText(value.name) &&
+  isNullableText(value.ntinCode) &&
   isDecimal(value.quantity) &&
   isText(value.unitLabel, 20) &&
-  isDecimal(value.unitPrice);
+  isDecimal(value.unitPrice) &&
+  isDecimal(value.vatAmount) &&
+  ['NONE', '0', '5', '10', '16'].includes(String(value.vatRate));
 
 const isReceiptPayment = (value: unknown): boolean =>
   isRecord(value) &&
@@ -88,7 +94,13 @@ const hasValidTimeZone = (value: unknown): value is string => {
 
 const isPrintableReceipt = (value: unknown): value is PrintableReceipt => {
   if (!isRecord(value)) return false;
-  if (!isRecord(value.organization) || !isRecord(value.store)) return false;
+  if (
+    !isRecord(value.fiscal) ||
+    !isRecord(value.organization) ||
+    !isRecord(value.store)
+  ) {
+    return false;
+  }
   if (!Array.isArray(value.items) || !Array.isArray(value.payments))
     return false;
 
@@ -97,16 +109,30 @@ const isPrintableReceipt = (value: unknown): value is PrintableReceipt => {
     isText(value.completedAt, 100) &&
     !Number.isNaN(Date.parse(value.completedAt)) &&
     value.currency === 'KZT' &&
+    isText(value.fiscal.address, 1000) &&
+    isNullableText(value.fiscal.buyerBinIin) &&
+    isText(value.fiscal.cashboxUniqueNumber) &&
+    isText(value.fiscal.fiscalSign) &&
+    typeof value.fiscal.offline === 'boolean' &&
+    isText(value.fiscal.ofdName) &&
+    isText(value.fiscal.ofdWebsite, 2000) &&
+    isText(value.fiscal.qrUrl, 4000) &&
+    isText(value.fiscal.receiptNumber) &&
+    isText(value.fiscal.registrationNumber) &&
+    isText(value.fiscal.shiftNumber) &&
+    isDecimal(value.fiscal.vatTotal) &&
+    typeof value.isTest === 'boolean' &&
     value.items.length > 0 &&
     value.items.length <= 500 &&
     Array.from(value.items).every(isReceiptItem) &&
+    isText(value.localReceiptNumber, 100) &&
+    (value.operationType === 'SALE' || value.operationType === 'RETURN') &&
     isNullableText(value.organization.binIin) &&
     isText(value.organization.displayName) &&
     isNullableText(value.organization.legalName) &&
     value.payments.length > 0 &&
     value.payments.length <= 20 &&
     Array.from(value.payments).every(isReceiptPayment) &&
-    isText(value.receiptNumber, 100) &&
     isNullableText(value.store.address) &&
     isText(value.store.name) &&
     hasValidTimeZone(value.timeZone) &&

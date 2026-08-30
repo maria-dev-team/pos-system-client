@@ -18,7 +18,12 @@ import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
 
 export type SaleCommand =
   | { barcode: string; type: 'scan' }
-  | { productId: string; quantity?: string; type: 'add' }
+  | {
+      markingCode?: string;
+      productId: string;
+      quantity?: string;
+      type: 'add';
+    }
   | { itemId: string; quantity: string; type: 'setQuantity' }
   | { itemId: string; type: 'remove' }
   | {
@@ -87,6 +92,9 @@ export function useSaleCommandMutation(
             items: [
               {
                 productId: command.productId,
+                ...(command.markingCode
+                  ? { markingCode: command.markingCode }
+                  : {}),
                 quantity: command.quantity ?? '1',
               },
             ],
@@ -122,6 +130,9 @@ export function useSaleCommandMutation(
         case 'add':
           return addSaleItem(currentSale.id, {
             expectedVersion,
+            ...(command.markingCode
+              ? { markingCode: command.markingCode }
+              : {}),
             productId: command.productId,
             quantity: command.quantity ?? '1',
           });

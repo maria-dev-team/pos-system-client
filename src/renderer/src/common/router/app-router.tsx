@@ -447,6 +447,18 @@ function SalesHistoryRouteComponent() {
           to: '/returns',
         })
       }
+      onOpenReturnWithoutReceipt={() =>
+        void navigate({
+          search: {
+            historyPage: page,
+            registerId,
+            registerShiftId,
+            returnMode: 'withoutReceipt',
+            returnTo: 'sales-history',
+          },
+          to: '/returns',
+        })
+      }
       onPageChange={(nextPage) =>
         void navigate({
           search: {
@@ -537,8 +549,14 @@ const salesHistoryRoute = createRoute({
 
 function ReturnsRouteComponent() {
   const navigate = useNavigate();
-  const { historyPage, receiptNumber, registerId, registerShiftId, returnTo } =
-    returnsRoute.useSearch();
+  const {
+    historyPage,
+    receiptNumber,
+    registerId,
+    registerShiftId,
+    returnMode,
+    returnTo,
+  } = returnsRoute.useSearch();
   const context = useQuery(authContextQueryOptions());
   const cashierSession = useQuery(
     currentCashierSessionQueryOptions(registerId ?? ''),
@@ -623,8 +641,13 @@ function ReturnsRouteComponent() {
       }
       cashierSession={session}
       context={context.data}
+      focusedFlow={
+        returnTo === 'sales-history' &&
+        Boolean(receiptNumber || returnMode === 'withoutReceipt')
+      }
+      initialMode={returnMode}
       initialReceiptNumber={receiptNumber}
-      key={receiptNumber ?? ''}
+      key={`${receiptNumber ?? ''}:${returnMode ?? ''}`}
       onBack={backToPrevious}
     />
   );
@@ -690,6 +713,9 @@ const returnsRoute = createRoute({
           : undefined,
       ...(search.returnTo === 'sales-history'
         ? { returnTo: 'sales-history' as const }
+        : {}),
+      ...(search.returnMode === 'withoutReceipt'
+        ? { returnMode: 'withoutReceipt' as const }
         : {}),
     };
   },

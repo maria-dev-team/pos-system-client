@@ -78,4 +78,32 @@ describe('ReturnPaymentDialog', () => {
       { amount: '69.75', method: 'CASHLESS' },
     ]);
   });
+
+  it('includes a valid buyer BIN/IIN in the return request', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(
+      <ReturnPaymentDialog
+        onConfirm={onConfirm}
+        onOpenChange={vi.fn()}
+        open
+        pending={false}
+        total="100.00"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Безналичные' }));
+    await user.type(
+      screen.getByLabelText('БИН/ИИН покупателя — по запросу'),
+      '123456789012',
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить возврат' }),
+    );
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      [{ amount: '100.00', method: 'CASHLESS' }],
+      '123456789012',
+    );
+  });
 });

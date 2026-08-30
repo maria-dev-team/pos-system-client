@@ -22,6 +22,7 @@ import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
+import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
 import {
   adjustQuantityByOne,
   formatQuantity,
@@ -229,7 +230,8 @@ export function ReceiptItems({
         const fullyReturned = !/[1-9]/.test(item.returnable_quantity);
         const hasReturned = /[1-9]/.test(item.returned_quantity);
         const quantityIsValid = selected
-          ? returnQuantitySchema(
+          ? (!item.is_marked || selected.quantity === '1') &&
+            returnQuantitySchema(
               item.unit_code,
               item.returnable_quantity,
             ).safeParse(selected.quantity).success
@@ -262,7 +264,7 @@ export function ReceiptItems({
                         ...current,
                         [item.id]: {
                           quantity: initialReceiptQuantity(
-                            item.returnable_quantity,
+                            item.is_marked ? '1' : item.returnable_quantity,
                           ),
                           returnDisposition: null,
                         },
@@ -308,7 +310,7 @@ export function ReceiptItems({
               <div className="col-span-2 min-w-0 min-[1360px]:col-span-1">
                 <QuantityControl
                   controlId={`receipt-${item.id}`}
-                  disabled={disabled}
+                  disabled={disabled || item.is_marked}
                   maxQuantity={item.returnable_quantity}
                   name={item.name}
                   onChange={(quantity) =>
@@ -409,74 +411,114 @@ export function WithoutReceiptItems({
   canOverridePrice: boolean;
   lines: WithoutReceiptLine[];
   onOverride: (line: WithoutReceiptLine) => void;
-  onRemove: (productId: string) => void;
-  onUpdate: (productId: string, update: Partial<WithoutReceiptLine>) => void;
+  onRemove: (lineId: string) => void;
+  onUpdate: (lineId: string, update: Partial<WithoutReceiptLine>) => void;
 }) {
   if (!lines.length) return null;
   return (
     <div className="space-y-3 border-t border-border pt-5">
       <h2 className="font-bold">Позиции возврата</h2>
-      {lines.map((line) => (
-        <div
-          className="rounded-xl border border-border bg-background p-4"
-          key={line.product.id}
-        >
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="font-semibold">{line.product.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {line.product.sku}
-              </p>
-              {!line.product.is_active ? (
-                <span className="mt-1 inline-block text-xs font-semibold text-amber-700">
-                  Неактивен
-                </span>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-2">
-              <p className="font-bold">
-                {formatCash(getReturnUnitPrice(line))}
-              </p>
-              {canOverridePrice ? (
+      {lines.map((line) => {
+        const parsedMarking = line.markingCode
+          ? parseGs1DataMatrix(line.markingCode)
+          : null;
+        const duplicateMarking = Boolean(
+          parsedMarking &&
+          lines.some(
+            (candidate) =>
+              candidate.id !== line.id &&
+              candidate.markingCode &&
+              parseGs1DataMatrix(candidate.markingCode)?.markingCode ===
+                parsedMarking.markingCode,
+          ),
+        );
+        return (
+          <div
+            className="rounded-xl border border-border bg-background p-4"
+            key={line.id}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold">{line.product.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {line.product.sku}
+                </p>
+                {!line.product.is_active ? (
+                  <span className="mt-1 inline-block text-xs font-semibold text-amber-700">
+                    Неактивен
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="font-bold">
+                  {formatCash(getReturnUnitPrice(line))}
+                </p>
+                {canOverridePrice ? (
+                  <Button
+                    aria-label={`Изменить цену ${line.product.name}`}
+                    onClick={() => onOverride(line)}
+                    size="icon"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Pencil aria-hidden="true" />
+                  </Button>
+                ) : null}
                 <Button
-                  aria-label={`Изменить цену ${line.product.name}`}
-                  onClick={() => onOverride(line)}
+                  aria-label={`Удалить ${line.product.name}`}
+                  onClick={() => onRemove(line.id)}
                   size="icon"
                   type="button"
                   variant="ghost"
                 >
-                  <Pencil aria-hidden="true" />
+                  <Trash2 aria-hidden="true" />
                 </Button>
-              ) : null}
-              <Button
-                aria-label={`Удалить ${line.product.name}`}
-                onClick={() => onRemove(line.product.id)}
-                size="icon"
-                type="button"
-                variant="ghost"
-              >
-                <Trash2 aria-hidden="true" />
-              </Button>
+              </div>
+            </div>
+            {line.product.nkt?.is_marked ? (
+              <FormField className="mt-4">
+                <Label htmlFor={`return-marking-${line.id}`}>Data Matrix</Label>
+                <Input
+                  id={`return-marking-${line.id}`}
+                  maxLength={512}
+                  onChange={(event) =>
+                    onUpdate(line.id, { markingCode: event.target.value })
+                  }
+                  placeholder="Отсканируйте код с упаковки"
+                  value={line.markingCode ?? ''}
+                />
+                {line.markingCode &&
+                parsedMarking?.gtin !== line.product.nkt.gtin ? (
+                  <p className="text-sm font-medium text-destructive">
+                    Data Matrix не соответствует GTIN этого товара.
+                  </p>
+                ) : duplicateMarking ? (
+                  <p className="text-sm font-medium text-destructive">
+                    Этот Data Matrix уже добавлен в возврат.
+                  </p>
+                ) : null}
+              </FormField>
+            ) : null}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <QuantityControl
+                controlId={`without-${line.id}`}
+                disabled={Boolean(line.product.nkt?.is_marked)}
+                name={line.product.name}
+                onChange={(quantity) => onUpdate(line.id, { quantity })}
+                unit={line.product.unit}
+                value={line.quantity}
+              />
+              <DispositionButtons
+                name={line.product.name}
+                onChange={(returnDisposition) =>
+                  onUpdate(line.id, { returnDisposition })
+                }
+                value={line.returnDisposition}
+              />
             </div>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <QuantityControl
-              controlId={`without-${line.product.id}`}
-              name={line.product.name}
-              onChange={(quantity) => onUpdate(line.product.id, { quantity })}
-              unit={line.product.unit}
-              value={line.quantity}
-            />
-            <DispositionButtons
-              name={line.product.name}
-              onChange={(returnDisposition) =>
-                onUpdate(line.product.id, { returnDisposition })
-              }
-              value={line.returnDisposition}
-            />
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

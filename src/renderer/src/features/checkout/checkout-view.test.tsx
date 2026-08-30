@@ -95,6 +95,22 @@ const productFixture = (
   unit: 'pcs',
   updated_at: '2026-08-24T10:00:00.000Z',
   ...overrides,
+  nkt:
+    'nkt' in overrides
+      ? (overrides.nkt ?? null)
+      : {
+          gtin: '001234',
+          is_marked: false,
+          is_social: false,
+          name_kk: null,
+          name_ru: 'Молоко',
+          ntin_code: 'NTIN-001234',
+        },
+  nkt_product_id:
+    'nkt_product_id' in overrides
+      ? (overrides.nkt_product_id ?? null)
+      : 'nkt-product-1',
+  vat_rate: overrides.vat_rate ?? null,
 });
 
 const categoryFixture = (
@@ -117,9 +133,14 @@ const itemFixture = (
   barcode: '001234',
   base_unit_price: '650.00',
   id: 'item-1',
+  is_marked: false,
   line_number: 1,
   line_total: '650.00',
   name: 'Молоко',
+  marking_code: null,
+  nkt_name: null,
+  ntin_code: null,
+  gtin: null,
   price_override_reason: null,
   price_overridden_by_membership_id: null,
   product_id: 'product-1',
@@ -129,6 +150,8 @@ const itemFixture = (
   source_sale_item_id: null,
   unit_code: 'pcs',
   unit_price: '650.00',
+  vat_amount: '0.00',
+  vat_rate: 'NONE',
   ...overrides,
 });
 
@@ -158,6 +181,7 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   updated_at: '2026-08-24T10:00:00.000Z',
   version: 1,
   ...overrides,
+  fiscal_receipt: overrides.fiscal_receipt ?? null,
 });
 
 const renderCheckout = (
@@ -209,14 +233,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
-  it('opens sales history only with sales.read permission', async () => {
+  it('opens receipts and returns only with the required permission', async () => {
     const user = userEvent.setup();
     const onOpenSalesHistory = vi.fn();
     renderCheckout({ onOpenSalesHistory });
 
     await screen.findByLabelText('Сканируйте или найдите товар');
     expect(
-      screen.queryByRole('button', { name: 'История продаж' }),
+      screen.queryByRole('button', { name: 'Чеки и возвраты' }),
     ).not.toBeInTheDocument();
 
     cleanup();
@@ -226,7 +250,7 @@ describe('server-authoritative checkout', () => {
     renderCheckout({ onOpenSalesHistory });
 
     await user.click(
-      await screen.findByRole('button', { name: 'История продаж' }),
+      await screen.findByRole('button', { name: 'Чеки и возвраты' }),
     );
     expect(onOpenSalesHistory).toHaveBeenCalledOnce();
   });
@@ -338,6 +362,23 @@ describe('server-authoritative checkout', () => {
     expect((await screen.findAllByText('650,00 ₸')).length).toBeGreaterThan(0);
   });
 
+  it('explains why a product without NKT cannot be added', async () => {
+    const user = userEvent.setup();
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      products: [productFixture({ nkt: null, nkt_product_id: null })],
+    });
+    renderCheckout();
+
+    await user.type(
+      await screen.findByLabelText('Сканируйте или найдите товар'),
+      '001234{enter}',
+    );
+
+    expect(await screen.findByText(/каталоге Maria/u)).toBeInTheDocument();
+    expect(createSale).not.toHaveBeenCalled();
+  });
+
   it('resolves the first barcode and creates the same authoritative DRAFT', async () => {
     const user = userEvent.setup();
     vi.mocked(createSale).mockResolvedValue(
@@ -358,6 +399,65 @@ describe('server-authoritative checkout', () => {
     await waitFor(() =>
       expect(createSale).toHaveBeenCalledWith({
         items: [{ productId: 'product-1', quantity: '1' }],
+      }),
+    );
+  });
+
+  it('resolves a marked product by GTIN and sends its full Data Matrix', async () => {
+    const user = userEvent.setup();
+    const markingCode = '010487000000001221SERIAL';
+    const markedProduct = productFixture({
+      nkt: {
+        gtin: '04870000000012',
+        is_marked: true,
+        is_social: false,
+        name_kk: null,
+        name_ru: 'Маркированный товар',
+        ntin_code: 'NTIN-1',
+      },
+      nkt_product_id: 'nkt-1',
+    });
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      products: [markedProduct],
+    });
+    vi.mocked(createSale).mockResolvedValue(
+      saleFixture({
+        items: [
+          itemFixture({
+            gtin: '04870000000012',
+            is_marked: true,
+            marking_code: markingCode,
+            nkt_name: 'Маркированный товар',
+            ntin_code: 'NTIN-1',
+          }),
+        ],
+        total: '650.00',
+      }),
+    );
+    renderCheckout();
+
+    await user.type(
+      await screen.findByLabelText('Сканируйте или найдите товар'),
+      `${markingCode}{enter}`,
+    );
+
+    await waitFor(() =>
+      expect(searchProducts).toHaveBeenCalledWith({
+        limit: 20,
+        offset: 0,
+        search: '04870000000012',
+      }),
+    );
+    await waitFor(() =>
+      expect(createSale).toHaveBeenCalledWith({
+        items: [
+          {
+            markingCode,
+            productId: 'product-1',
+            quantity: '1',
+          },
+        ],
       }),
     );
   });
@@ -398,6 +498,26 @@ describe('server-authoritative checkout', () => {
       }),
     );
     await waitFor(() => expect(triggerAntiFraudEvent).toHaveBeenCalledOnce());
+  });
+
+  it('keeps all quantity actions in one aligned row', async () => {
+    vi.mocked(getCurrentSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], total: '650.00' }),
+    );
+    renderCheckout();
+
+    const decrement = await screen.findByRole('button', {
+      name: 'Уменьшить Молоко',
+    });
+    const actions = [
+      decrement,
+      screen.getByRole('button', { name: 'Увеличить Молоко' }),
+      screen.getByRole('button', { name: 'Изменить количество Молоко' }),
+      screen.getByRole('button', { name: 'Удалить Молоко' }),
+    ];
+
+    expect(decrement.parentElement).toHaveClass('flex-nowrap');
+    actions.forEach((action) => expect(action).toHaveClass('size-10'));
   });
 
   it('removes a non-last item through the backend command', async () => {
@@ -460,12 +580,17 @@ describe('server-authoritative checkout', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Оплатить' }));
     await user.click(screen.getByRole('button', { name: 'Безналичные' }));
+    await user.type(
+      screen.getByLabelText('БИН/ИИН покупателя — по запросу'),
+      '123456789012',
+    );
     await user.click(
       screen.getByRole('button', { name: 'Подтвердить оплату' }),
     );
 
     await waitFor(() =>
       expect(checkoutSale).toHaveBeenCalledWith('sale-1', {
+        buyerBinIin: '123456789012',
         expectedVersion: 1,
         payments: [{ amount: '650.00', method: 'CASHLESS' }],
       }),

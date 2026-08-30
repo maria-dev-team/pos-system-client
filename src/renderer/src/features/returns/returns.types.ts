@@ -7,6 +7,8 @@ export type ReceiptSelection = {
 
 export type WithoutReceiptLine = {
   catalogUnitPrice: string;
+  id: string;
+  markingCode?: string;
   priceOverride?: { reason: string; unitPrice: string };
   product: ProductResponse;
   quantity: string;

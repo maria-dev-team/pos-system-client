@@ -48,9 +48,14 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
       barcode: '001234',
       base_unit_price: '650.00',
       id: 'item-1',
+      is_marked: false,
       line_number: 1,
       line_total: '650.00',
       name: 'Молоко',
+      marking_code: null,
+      nkt_name: null,
+      ntin_code: null,
+      gtin: null,
       price_override_reason: null,
       price_overridden_by_membership_id: null,
       product_id: 'product-1',
@@ -60,6 +65,8 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
       source_sale_item_id: null,
       unit_code: 'pcs',
       unit_price: '650.00',
+      vat_amount: '0.00',
+      vat_rate: 'NONE',
     },
   ],
   organization_id: 'organization-1',
@@ -76,6 +83,7 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   updated_at: '2026-08-24T10:00:00.000Z',
   version: 5,
   ...overrides,
+  fiscal_receipt: overrides.fiscal_receipt ?? null,
 });
 
 const client = () =>
@@ -111,9 +119,9 @@ describe('checkout terminal transitions', () => {
     );
 
     await act(() =>
-      result.current.checkout.mutateAsync([
-        { amount: '650.00', method: 'CASHLESS' },
-      ]),
+      result.current.checkout.mutateAsync({
+        payments: [{ amount: '650.00', method: 'CASHLESS' }],
+      }),
     );
 
     expect(checkoutSale).toHaveBeenCalledWith('sale-1', {
@@ -140,9 +148,9 @@ describe('checkout terminal transitions', () => {
 
     await expect(
       act(() =>
-        result.current.checkout.mutateAsync([
-          { amount: '650.00', method: 'CASHLESS' },
-        ]),
+        result.current.checkout.mutateAsync({
+          payments: [{ amount: '650.00', method: 'CASHLESS' }],
+        }),
       ),
     ).resolves.toEqual(completed);
     expect(checkoutSale).toHaveBeenCalledOnce();
@@ -167,9 +175,9 @@ describe('checkout terminal transitions', () => {
 
     await expect(
       act(() =>
-        result.current.checkout.mutateAsync([
-          { amount: '650.00', method: 'CASHLESS' },
-        ]),
+        result.current.checkout.mutateAsync({
+          payments: [{ amount: '650.00', method: 'CASHLESS' }],
+        }),
       ),
     ).rejects.toBe(networkError);
     expect(checkoutSale).toHaveBeenCalledOnce();

@@ -1,4 +1,5 @@
 export type CreateSaleItemPayload = {
+  markingCode?: string;
   productId: string;
   quantity: string;
   priceOverride?: {
@@ -14,11 +15,13 @@ export type CreateSalePayload = {
 export type ScanSaleItemPayload = {
   barcode: string;
   expectedVersion: number;
+  markingCode?: string;
   quantityDelta: string;
 };
 
 export type AddSaleItemPayload = {
   expectedVersion: number;
+  markingCode?: string;
   productId: string;
   quantity: string;
 };
@@ -50,6 +53,7 @@ export type SalePaymentPayload = {
 };
 
 export type CheckoutSalePayload = SaleVersionPayload & {
+  buyerBinIin?: string;
   payments: SalePaymentPayload[];
 };
 
@@ -61,6 +65,7 @@ export type ReturnPaymentPayload = {
 };
 
 export type CreateReceiptReturnPayload = {
+  buyerBinIin?: string;
   items: {
     quantity: string;
     returnDisposition: ReturnDisposition;
@@ -71,7 +76,9 @@ export type CreateReceiptReturnPayload = {
 };
 
 export type CreateWithoutReceiptReturnPayload = {
+  buyerBinIin?: string;
   items: {
+    markingCode?: string;
     priceOverride?: { reason: string; unitPrice: string };
     productId: string;
     quantity: string;

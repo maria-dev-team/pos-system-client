@@ -14,24 +14,49 @@ const receipt: PrintableReceipt = {
   cashier: 'Айжан Қасымова',
   completedAt: '2026-08-28T08:15:00.000Z',
   currency: 'KZT',
+  fiscal: {
+    address: 'Алматы, Абай 1',
+    buyerBinIin: null,
+    cashboxUniqueNumber: 'SWK00000001',
+    fiscalSign: '123456789',
+    offline: false,
+    ofdName: 'ОФД',
+    ofdWebsite: 'https://ofd.example',
+    qrUrl: 'https://ofd.example/check/123',
+    receiptNumber: '7',
+    registrationNumber: 'RN-1',
+    shiftNumber: '2',
+    vatTotal: '0.00',
+  },
+  isTest: false,
   items: [
     {
       lineNumber: 2,
       lineTotal: '900.00',
+      markingCode: null,
       name: 'Ұзын тауар <script>alert(1)</script>',
+      ntinCode: 'NTIN-2',
       quantity: '0.500',
       unitLabel: 'кг',
       unitPrice: '1800.00',
+      vatAmount: '0.00',
+      vatRate: 'NONE',
     },
     {
       lineNumber: 1,
       lineTotal: '250.00',
+      markingCode: null,
       name: 'Әже наны',
+      ntinCode: 'NTIN-1',
       quantity: '1.000',
       unitLabel: 'шт.',
       unitPrice: '250.00',
+      vatAmount: '0.00',
+      vatRate: 'NONE',
     },
   ],
+  localReceiptNumber: '42',
+  operationType: 'SALE',
   organization: {
     binIin: '123456789012',
     displayName: 'Maria Market',
@@ -45,7 +70,6 @@ const receipt: PrintableReceipt = {
       received: '1200.00',
     },
   ],
-  receiptNumber: '42',
   store: { address: 'Алматы, Абай 1', name: 'Магазин №1' },
   timeZone: 'Asia/Almaty',
   total: '1150.00',
@@ -74,8 +98,9 @@ describe('renderReceiptDocument', () => {
   it('renders Kazakh text and escapes receipt data in line order', () => {
     const html = renderReceiptDocument?.(receipt);
 
-    expect(html).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
-    expect(html).toContain('НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ');
+    expect(html).toContain('ФИСКАЛЬНЫЙ ЧЕК');
+    expect(html).toContain('Фискальный признак');
+    expect(html).toContain('QR-код фискального чека');
     expect(html).toContain('Айжан Қасымова');
     expect(html).toContain('Әже наны');
     expect(html).toContain('Ұзын тауар &lt;script&gt;alert(1)&lt;/script&gt;');

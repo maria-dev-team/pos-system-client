@@ -46,11 +46,21 @@ const product = (
   id: 'product-1',
   is_active: true,
   name: 'Чёрный чай',
+  nkt: {
+    gtin: '001234',
+    is_marked: false,
+    is_social: false,
+    name_kk: null,
+    name_ru: 'Чёрный чай',
+    ntin_code: 'NTIN-001234',
+  },
+  nkt_product_id: 'nkt-product-1',
   organization_id: 'organization-1',
   retail_price: '950.00',
   sku: 'TEA-1',
   unit: 'pcs',
   updated_at: '2026-08-29T10:00:00.000Z',
+  vat_rate: null,
   ...overrides,
 });
 
