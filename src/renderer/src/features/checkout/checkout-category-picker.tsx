@@ -183,35 +183,44 @@ export function CheckoutCategoryPicker({
               <>
                 {visibleProducts.length ? (
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {visibleProducts.map((product) => (
-                      <button
-                        aria-label={`Добавить товар ${product.name}`}
-                        className="min-h-28 rounded-xl border border-border bg-background p-4 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-55"
-                        disabled={pending}
-                        key={product.id}
-                        onClick={() => void selectProduct(product)}
-                        type="button"
-                      >
-                        <span className="flex items-start justify-between gap-3">
-                          <span className="font-semibold leading-snug">
-                            {product.name}
-                          </span>
-                          {addingProductId === product.id ? (
-                            <LoaderCircle
-                              aria-hidden="true"
-                              className="size-5 shrink-0 animate-spin text-primary"
-                            />
-                          ) : (
-                            <span className="shrink-0 font-bold tabular-nums text-primary">
-                              {formatCash(product.retail_price)}
+                    {visibleProducts.map((product) => {
+                      const nktMissing =
+                        !product.nkt?.ntin_code || product.nkt.is_deactivated;
+                      return (
+                        <button
+                          aria-label={`Добавить товар ${product.name}`}
+                          className="min-h-28 rounded-xl border border-border bg-background p-4 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={pending || nktMissing}
+                          key={product.id}
+                          onClick={() => void selectProduct(product)}
+                          type="button"
+                        >
+                          <span className="flex items-start justify-between gap-3">
+                            <span className="font-semibold leading-snug">
+                              {product.name}
                             </span>
-                          )}
-                        </span>
-                        <span className="mt-3 block text-xs text-muted-foreground">
-                          {product.sku} · {product.barcode}
-                        </span>
-                      </button>
-                    ))}
+                            {addingProductId === product.id ? (
+                              <LoaderCircle
+                                aria-hidden="true"
+                                className="size-5 shrink-0 animate-spin text-primary"
+                              />
+                            ) : (
+                              <span className="shrink-0 font-bold tabular-nums text-primary">
+                                {formatCash(product.retail_price)}
+                              </span>
+                            )}
+                          </span>
+                          <span className="mt-3 block text-xs text-muted-foreground">
+                            {product.sku} · {product.barcode}
+                          </span>
+                          {nktMissing ? (
+                            <span className="mt-2 block text-xs font-semibold text-amber-700">
+                              Нужно сопоставить с НКТ
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
                   </div>
                 ) : (
                   <EmptyState label="В этой категории нет доступных товаров" />

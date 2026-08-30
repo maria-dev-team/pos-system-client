@@ -95,18 +95,18 @@ export function StatusBar() {
       case 'user':
         if (!isAuthenticated || !user.data) return null;
         return (
-          <div className="flex items-center gap-2.5" key={item}>
+          <div className="flex min-w-0 items-center gap-2.5" key={item}>
             <span
               aria-hidden="true"
               className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-xs font-bold text-secondary-foreground"
             >
               {initials}
             </span>
-            <span className="leading-tight">
-              <span className="block text-sm font-semibold text-foreground">
+            <span className="min-w-0 max-w-52 leading-tight">
+              <span className="block truncate text-sm font-semibold text-foreground">
                 {fullName}
               </span>
-              <span className="block text-xs text-muted-foreground">
+              <span className="block truncate text-xs text-muted-foreground">
                 {context.data?.position ??
                   membership?.position?.name ??
                   'Сотрудник'}
@@ -144,7 +144,7 @@ export function StatusBar() {
             ) : (
               <Wifi aria-hidden="true" className="size-4" />
             )}
-            {label}
+            <span className="hidden lg:inline">{label}</span>
           </span>
         );
       }
@@ -160,7 +160,9 @@ export function StatusBar() {
               aria-hidden="true"
               className="size-4 text-muted-foreground"
             />
-            <span>{dateFormatter.format(now)}</span>
+            <span className="hidden md:inline">
+              {dateFormatter.format(now)}
+            </span>
             <span>{timeFormatter.format(now)}</span>
           </time>
         );
@@ -190,12 +192,12 @@ export function StatusBar() {
   return (
     <header
       aria-label="Статус приложения"
-      className="flex h-16 shrink-0 items-center justify-between gap-6 border-b border-border/70 bg-card px-5"
+      className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-card px-4 sm:px-5"
     >
-      <div className="flex min-w-0 items-center gap-5">
+      <div className="flex min-w-0 items-center gap-4">
         {statusBarConfig.leftItems.map(renderItem)}
       </div>
-      <div className="flex shrink-0 items-center gap-5">
+      <div className="flex min-w-0 shrink items-center gap-3 sm:gap-4">
         {statusBarConfig.rightItems.map(renderItem)}
       </div>
     </header>

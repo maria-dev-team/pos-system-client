@@ -317,7 +317,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Maria POS authorization flow', () => {
-  it('navigates checkout to sales history and back within the active session', async () => {
+  it('navigates checkout to receipts and returns and back', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
     api.getAuthContext.mockResolvedValue({
@@ -332,11 +332,11 @@ describe('Maria POS authorization flow', () => {
       }),
     );
     await user.click(
-      await screen.findByRole('button', { name: 'История продаж' }),
+      await screen.findByRole('button', { name: 'Чеки и возвраты' }),
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'История продаж' }),
+      await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/sales-history');
 
@@ -399,7 +399,7 @@ describe('Maria POS authorization flow', () => {
       }),
     );
     await user.click(
-      await screen.findByRole('button', { name: 'История продаж' }),
+      await screen.findByRole('button', { name: 'Чеки и возвраты' }),
     );
     await user.click(
       await screen.findByRole('button', { name: 'Открыть чек №42' }),
@@ -411,7 +411,9 @@ describe('Maria POS authorization flow', () => {
     expect(
       await screen.findByRole('heading', { name: 'Возвраты' }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Номер чека')).toHaveValue('42');
+    expect(
+      screen.getByRole('heading', { name: 'Возврат по чеку №42' }),
+    ).toBeInTheDocument();
     expect(router.state.location.search).toMatchObject({
       historyPage: 0,
       receiptNumber: '42',
@@ -422,7 +424,7 @@ describe('Maria POS authorization flow', () => {
       screen.getByRole('button', { name: 'Вернуться в историю' }),
     );
     expect(
-      await screen.findByRole('heading', { name: 'История продаж' }),
+      await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
     expect(router.state.location.search).toMatchObject({
       page: 0,
@@ -430,7 +432,7 @@ describe('Maria POS authorization flow', () => {
     });
   });
 
-  it('navigates checkout to returns and back within the active session', async () => {
+  it('starts a return without receipt from the combined page', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
     api.getAuthContext.mockResolvedValue({
@@ -438,6 +440,7 @@ describe('Maria POS authorization flow', () => {
       permissions: [
         ...contextResponse.permissions,
         'returns.create',
+        'returns.without_receipt',
         'sales.read',
       ],
     });
@@ -449,25 +452,36 @@ describe('Maria POS authorization flow', () => {
       }),
     );
     await screen.findByRole('heading', { name: 'Оформление продажи' });
-    await user.click(screen.getByRole('button', { name: 'Возвраты' }));
+    await user.click(screen.getByRole('button', { name: 'Чеки и возвраты' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Возврат без чека' }),
+    );
 
     expect(
       await screen.findByRole('heading', { name: 'Возвраты' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/returns');
     expect(router.state.location.search).toEqual({
+      historyPage: 0,
       registerId: 'register-1',
       registerShiftId: 'register-shift-1',
+      returnMode: 'withoutReceipt',
+      returnTo: 'sales-history',
     });
+    expect(screen.getByText('Найти товар')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('group', { name: 'Режим возврата' }),
+    ).not.toBeInTheDocument();
 
     await user.click(
-      screen.getByRole('button', { name: 'Вернуться к продажам' }),
+      screen.getByRole('button', { name: 'Вернуться в историю' }),
     );
     expect(
-      await screen.findByRole('heading', { name: 'Оформление продажи' }),
+      await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/checkout');
+    expect(router.state.location.pathname).toBe('/sales-history');
     expect(router.state.location.search).toEqual({
+      page: 0,
       registerId: 'register-1',
       registerShiftId: 'register-shift-1',
     });

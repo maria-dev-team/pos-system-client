@@ -348,8 +348,10 @@ function ReceiptPrinterSettingsDialog({
 
 export function ReceiptPrinterSettingsButton({
   className,
+  labelClassName,
 }: {
   className?: string;
+  labelClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -361,7 +363,7 @@ export function ReceiptPrinterSettingsButton({
         variant="ghost"
       >
         <Printer aria-hidden="true" />
-        Настроить принтер
+        <span className={labelClassName}>Настроить принтер</span>
       </Button>
       {open ? (
         <ReceiptPrinterSettingsDialog onOpenChange={setOpen} open />

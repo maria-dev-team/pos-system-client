@@ -39,6 +39,7 @@ export type SalesHistoryViewProps = {
   context: AuthContextResponse;
   onBackToCheckout: () => void;
   onOpenReturn: (receiptNumber: string) => void;
+  onOpenReturnWithoutReceipt?: () => void;
   onPageChange: (page: number) => void;
   onReceiptNumberChange: (receiptNumber?: string) => void;
   page: number;
@@ -55,10 +56,10 @@ const summaryPayment = (receipt: ReceiptSummaryResponse) =>
 
 function ReceiptDetail({ receipt }: { receipt: ReceiptResponse }) {
   return (
-    <div className="space-y-6 p-5">
-      <div className="border-b border-border/70 pb-5">
+    <div className="space-y-4 p-4">
+      <div className="border-b border-border/70 pb-4">
         <div className="flex items-start justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="text-sm text-muted-foreground">Чек</p>
             <h2 className="text-2xl font-extrabold">
               №{receipt.receipt_number}
@@ -86,7 +87,9 @@ function ReceiptDetail({ receipt }: { receipt: ReceiptResponse }) {
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <p className="font-semibold">{item.name}</p>
+                  <p className="break-words font-semibold [overflow-wrap:anywhere]">
+                    {item.name}
+                  </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatQuantity(item.quantity, item.unit_code)} ×{' '}
                     {formatCash(item.unit_price)}
@@ -106,7 +109,7 @@ function ReceiptDetail({ receipt }: { receipt: ReceiptResponse }) {
         </div>
       </div>
 
-      <div className="border-t border-border/70 pt-5">
+      <div className="border-t border-border/70 pt-4">
         <h3 className="mb-3 font-bold">Оплата</h3>
         <div className="space-y-2">
           {receipt.payments.map((payment) => (
@@ -123,7 +126,7 @@ function ReceiptDetail({ receipt }: { receipt: ReceiptResponse }) {
             </div>
           ))}
         </div>
-        <div className="mt-5 flex items-end justify-between gap-4 border-t border-border pt-4">
+        <div className="mt-4 flex items-end justify-between gap-4 border-t border-border pt-4">
           <span className="font-bold">Итого</span>
           <span className="text-2xl font-extrabold tabular-nums text-primary">
             {formatCash(receipt.total)}
@@ -139,6 +142,7 @@ export function SalesHistoryView({
   context,
   onBackToCheckout,
   onOpenReturn,
+  onOpenReturnWithoutReceipt,
   onPageChange,
   onReceiptNumberChange,
   page,
@@ -171,6 +175,13 @@ export function SalesHistoryView({
     (context.permissions.includes('returns.create') &&
       context.permissions.includes('sales.read')),
   );
+  const canReturnWithoutReceipt = Boolean(
+    onOpenReturnWithoutReceipt &&
+    (context.isSystemPosition ||
+      (context.permissions.includes('returns.create') &&
+        context.permissions.includes('returns.without_receipt') &&
+        context.permissions.includes('product.read'))),
+  );
   const fullyReturned = Boolean(
     detail.data?.items.every(
       ({ returnable_quantity }) => Number(returnable_quantity) === 0,
@@ -200,25 +211,33 @@ export function SalesHistoryView({
   };
 
   return (
-    <main className="flex h-full min-h-[700px] flex-col overflow-hidden bg-workspace p-3 sm:p-4 lg:p-5">
-      <header className="mb-4 flex shrink-0 items-center gap-3 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
-        <Button
-          aria-label="Вернуться к продажам"
-          onClick={onBackToCheckout}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <ArrowLeft aria-hidden="true" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">
-            История продаж
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Завершённые продажи текущего магазина
-          </p>
+    <main className="flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden bg-workspace p-4 sm:p-5">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
+        <div className="flex min-w-0 items-center gap-3">
+          <Button
+            aria-label="Вернуться к продажам"
+            onClick={onBackToCheckout}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <ArrowLeft aria-hidden="true" />
+          </Button>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-extrabold tracking-tight">
+              Чеки и возвраты
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              История продаж и оформление возвратов
+            </p>
+          </div>
         </div>
+        {canReturnWithoutReceipt ? (
+          <Button onClick={onOpenReturnWithoutReceipt} type="button">
+            <RotateCcw aria-hidden="true" />
+            Возврат без чека
+          </Button>
+        ) : null}
       </header>
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
@@ -377,7 +396,7 @@ export function SalesHistoryView({
           </footer>
         </section>
 
-        <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[var(--shadow-surface)]">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[var(--shadow-surface)]">
           <div className="min-h-0 flex-1 overflow-auto">
             {!receiptNumber ? (
               <div className="grid h-full min-h-60 place-items-center p-8 text-center text-muted-foreground">

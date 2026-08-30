@@ -10,6 +10,7 @@ export type ProductResponse = {
   name: string;
   nkt: {
     gtin: string | null;
+    is_deactivated?: boolean;
     is_marked: boolean;
     is_social: boolean;
     name_kk: string | null;

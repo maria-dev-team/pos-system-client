@@ -44,6 +44,8 @@ export function useReturnsFlow(
   cashierSession: CashierSessionResponse,
   context: AuthContextResponse,
   initialReceiptNumber = '',
+  initialMode?: 'receipt' | 'withoutReceipt',
+  focusedFlow = false,
 ) {
   const queryClient = useQueryClient();
   const canCreate = permission(context, 'returns.create');
@@ -53,9 +55,16 @@ export function useReturnsFlow(
     permission(context, 'returns.without_receipt') &&
     permission(context, 'product.read');
   const canOverridePrice = permission(context, 'returns.price.override');
-  const [mode, setMode] = useState<'receipt' | 'withoutReceipt'>(() =>
-    canReceipt ? 'receipt' : 'withoutReceipt',
-  );
+  const [mode, setMode] = useState<'receipt' | 'withoutReceipt'>(() => {
+    if (
+      !initialReceiptNumber &&
+      initialMode === 'withoutReceipt' &&
+      canWithoutReceipt
+    ) {
+      return 'withoutReceipt';
+    }
+    return canReceipt ? 'receipt' : 'withoutReceipt';
+  });
   const [page, setPage] = useState(0);
   const [receiptNumber, setReceiptNumberState] = useState(initialReceiptNumber);
   const [receiptSearchError, setReceiptSearchError] = useState<string | null>(
@@ -93,7 +102,7 @@ export function useReturnsFlow(
     receiptPageQueryOptions(
       pageSize,
       offset,
-      mode === 'receipt' && canReceipt,
+      mode === 'receipt' && canReceipt && !focusedFlow,
       cashierSession.organization_id,
       cashierSession.store_id,
     ),
@@ -229,6 +238,12 @@ export function useReturnsFlow(
   };
 
   const addProduct = (product: ProductResponse) => {
+    if (!product.nkt?.ntin_code || product.nkt.is_deactivated) {
+      setFormError(
+        `Товар «${product.name}» не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+      );
+      return;
+    }
     if (
       product.retail_price === null ||
       (!product.nkt?.is_marked &&
@@ -283,6 +298,13 @@ export function useReturnsFlow(
     );
     if (refreshed.some(({ product }) => product.retail_price === null)) {
       throw new Error('У одного из товаров больше нет цены продажи.');
+    }
+    if (
+      refreshed.some(
+        ({ product }) => !product.nkt?.ntin_code || product.nkt.is_deactivated,
+      )
+    ) {
+      throw new Error('Один из товаров не сопоставлен с НКТ.');
     }
     if (
       refreshed.some(({ line, product }) => {
