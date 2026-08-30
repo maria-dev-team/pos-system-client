@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { Toaster } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -159,7 +160,9 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   ...overrides,
 });
 
-const renderCheckout = () => {
+const renderCheckout = (
+  props: Partial<ComponentProps<typeof CheckoutView>> = {},
+) => {
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
@@ -168,7 +171,11 @@ const renderCheckout = () => {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <CheckoutView cashierSession={cashierSession} onSessionEnded={vi.fn()} />
+      <CheckoutView
+        cashierSession={cashierSession}
+        onSessionEnded={vi.fn()}
+        {...props}
+      />
       <Toaster />
     </QueryClientProvider>,
   );
@@ -202,6 +209,28 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
+  it('opens sales history only with sales.read permission', async () => {
+    const user = userEvent.setup();
+    const onOpenSalesHistory = vi.fn();
+    renderCheckout({ onOpenSalesHistory });
+
+    await screen.findByLabelText('Сканируйте или найдите товар');
+    expect(
+      screen.queryByRole('button', { name: 'История продаж' }),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture(['sales.create', 'sales.read']),
+    );
+    renderCheckout({ onOpenSalesHistory });
+
+    await user.click(
+      await screen.findByRole('button', { name: 'История продаж' }),
+    );
+    expect(onOpenSalesHistory).toHaveBeenCalledOnce();
+  });
+
   it('shows category products only with both read permissions', async () => {
     renderCheckout();
 

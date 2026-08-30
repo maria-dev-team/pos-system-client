@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import { receiptNumberSchema } from '@renderer/common/schemas/receipt-number.schema';
 import {
   LoginView,
   OrganizationSelectionView,
@@ -32,11 +33,22 @@ import {
   currentRegisterShiftQueryOptions,
 } from '@renderer/features/register-shifts';
 import { ReturnsView } from '@renderer/features/returns';
+import { SalesHistoryView } from '@renderer/features/sales-history';
 import { StatusBar } from '@renderer/features/status-bar';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
 type RouterContext = {
   queryClient: QueryClient;
+};
+
+const parseReceiptNumber = (value: unknown) => {
+  const parsed = receiptNumberSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+};
+
+const parsePage = (value: unknown) => {
+  const page = Number(value);
+  return Number.isInteger(page) && page >= 0 ? page : 0;
 };
 
 function SessionRedirect(): null {
@@ -266,6 +278,12 @@ function CheckoutRouteComponent() {
           to: '/returns',
         })
       }
+      onOpenSalesHistory={() =>
+        void navigate({
+          search: { page: 0, registerId, registerShiftId },
+          to: '/sales-history',
+        })
+      }
       onRetrySession={() => void cashierSession.refetch()}
       onSessionEndedLocally={() => setLocallyEndedSession(session)}
       onSessionEnded={() =>
@@ -330,9 +348,197 @@ const checkoutRoute = createRoute({
   }),
 });
 
+function SalesHistoryRouteComponent() {
+  const navigate = useNavigate();
+  const { page, receiptNumber, registerId, registerShiftId } =
+    salesHistoryRoute.useSearch();
+  const context = useQuery(authContextQueryOptions());
+  const cashierSession = useQuery(
+    currentCashierSessionQueryOptions(registerId ?? ''),
+  );
+  const session = cashierSession.data;
+  const isActiveSession = Boolean(
+    session &&
+    session.status === 'ACTIVE' &&
+    session.register_id === registerId &&
+    session.register_shift_id === registerShiftId,
+  );
+
+  useEffect(() => {
+    if (
+      !registerId ||
+      !registerShiftId ||
+      cashierSession.isPending ||
+      cashierSession.isError ||
+      isActiveSession
+    ) {
+      return;
+    }
+    void navigate({
+      replace: true,
+      search: { registerId, registerShiftId },
+      to: '/cashier-session',
+    });
+  }, [
+    cashierSession.isError,
+    cashierSession.isPending,
+    isActiveSession,
+    navigate,
+    registerId,
+    registerShiftId,
+  ]);
+
+  if (cashierSession.isPending || context.isPending) {
+    return <FullPageState isLoading title="Проверяем доступ к истории" />;
+  }
+  if (cashierSession.isError || context.isError) {
+    const error = cashierSession.error ?? context.error;
+    return (
+      <FullPageState
+        description={getHttpErrorMessage(
+          error,
+          'Не удалось проверить доступ к истории продаж.',
+        )}
+        onRetry={() => {
+          void cashierSession.refetch();
+          void context.refetch();
+        }}
+        title="Не удалось проверить доступ к истории"
+      />
+    );
+  }
+  if (!session || !isActiveSession || !context.data) {
+    return <FullPageState isLoading title="Проверяем доступ к истории" />;
+  }
+
+  const backToCheckout = () =>
+    void navigate({
+      search: { registerId, registerShiftId },
+      to: '/checkout',
+    });
+  if (
+    !context.data.isSystemPosition &&
+    !context.data.permissions.includes('sales.read')
+  ) {
+    return (
+      <FullPageState
+        description="Для просмотра завершённых продаж нужен доступ sales.read."
+        onRetry={backToCheckout}
+        retryLabel="Вернуться к продажам"
+        title="Нет доступа к истории продаж"
+      />
+    );
+  }
+
+  return (
+    <SalesHistoryView
+      cashierSession={session}
+      context={context.data}
+      onBackToCheckout={backToCheckout}
+      onOpenReturn={(nextReceiptNumber) =>
+        void navigate({
+          search: {
+            historyPage: page,
+            receiptNumber: nextReceiptNumber,
+            registerId,
+            registerShiftId,
+            returnTo: 'sales-history',
+          },
+          to: '/returns',
+        })
+      }
+      onPageChange={(nextPage) =>
+        void navigate({
+          search: {
+            page: nextPage,
+            registerId,
+            registerShiftId,
+          },
+          to: '/sales-history',
+        })
+      }
+      onReceiptNumberChange={(nextReceiptNumber) =>
+        void navigate({
+          replace: true,
+          search: {
+            page,
+            receiptNumber: nextReceiptNumber,
+            registerId,
+            registerShiftId,
+          },
+          to: '/sales-history',
+        })
+      }
+      page={page}
+      receiptNumber={receiptNumber}
+    />
+  );
+}
+
+const salesHistoryRoute = createRoute({
+  beforeLoad: async ({ context: { queryClient }, search }) => {
+    const context = await queryClient.ensureQueryData(
+      authContextQueryOptions(),
+    );
+    if (!context.userOrganizationId)
+      throw redirect({ to: '/select-organization' });
+    if (!context.storeId) throw redirect({ to: '/select-store' });
+    if (!search.registerId || !search.registerShiftId)
+      throw redirect({ to: '/select-register-shift' });
+
+    const registerShift = await queryClient.ensureQueryData(
+      currentRegisterShiftQueryOptions(search.registerId),
+    );
+    if (
+      !registerShift ||
+      registerShift.id !== search.registerShiftId ||
+      registerShift.status !== 'OPEN'
+    ) {
+      throw redirect({ to: '/select-register-shift' });
+    }
+
+    const cashierSession = await queryClient.ensureQueryData(
+      currentCashierSessionQueryOptions(search.registerId),
+    );
+    if (
+      !cashierSession ||
+      cashierSession.status !== 'ACTIVE' ||
+      cashierSession.register_id !== search.registerId ||
+      cashierSession.register_shift_id !== search.registerShiftId
+    ) {
+      throw redirect({
+        search: {
+          registerId: search.registerId,
+          registerShiftId: search.registerShiftId,
+        },
+        to: '/cashier-session',
+      });
+    }
+  },
+  component: SalesHistoryRouteComponent,
+  getParentRoute: () => authenticatedRoute,
+  path: 'sales-history',
+  validateSearch: (search: Record<string, unknown>) => {
+    const receiptNumber = parseReceiptNumber(search.receiptNumber);
+    return {
+      page: parsePage(search.page),
+      ...(receiptNumber ? { receiptNumber } : {}),
+      registerId:
+        typeof search.registerId === 'string' && search.registerId
+          ? search.registerId
+          : undefined,
+      registerShiftId:
+        typeof search.registerShiftId === 'string' && search.registerShiftId
+          ? search.registerShiftId
+          : undefined,
+    };
+  },
+});
+
 function ReturnsRouteComponent() {
   const navigate = useNavigate();
-  const { registerId, registerShiftId } = returnsRoute.useSearch();
+  const { historyPage, receiptNumber, registerId, registerShiftId, returnTo } =
+    returnsRoute.useSearch();
   const context = useQuery(authContextQueryOptions());
   const cashierSession = useQuery(
     currentCashierSessionQueryOptions(registerId ?? ''),
@@ -392,16 +598,34 @@ function ReturnsRouteComponent() {
     return <FullPageState isLoading title="Проверяем доступ к возвратам" />;
   }
 
-  return (
-    <ReturnsView
-      cashierSession={session}
-      context={context.data}
-      onBackToSales={() =>
-        void navigate({
+  const backToPrevious = () =>
+    returnTo === 'sales-history'
+      ? void navigate({
+          search: {
+            page: historyPage ?? 0,
+            receiptNumber,
+            registerId,
+            registerShiftId,
+          },
+          to: '/sales-history',
+        })
+      : void navigate({
           search: { registerId, registerShiftId },
           to: '/checkout',
-        })
+        });
+
+  return (
+    <ReturnsView
+      backLabel={
+        returnTo === 'sales-history'
+          ? 'Вернуться в историю'
+          : 'Вернуться к продажам'
       }
+      cashierSession={session}
+      context={context.data}
+      initialReceiptNumber={receiptNumber}
+      key={receiptNumber ?? ''}
+      onBack={backToPrevious}
     />
   );
 }
@@ -449,16 +673,26 @@ const returnsRoute = createRoute({
   component: ReturnsRouteComponent,
   getParentRoute: () => authenticatedRoute,
   path: 'returns',
-  validateSearch: (search: Record<string, unknown>) => ({
-    registerId:
-      typeof search.registerId === 'string' && search.registerId
-        ? search.registerId
-        : undefined,
-    registerShiftId:
-      typeof search.registerShiftId === 'string' && search.registerShiftId
-        ? search.registerShiftId
-        : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>) => {
+    const receiptNumber = parseReceiptNumber(search.receiptNumber);
+    return {
+      ...(search.historyPage === undefined
+        ? {}
+        : { historyPage: parsePage(search.historyPage) }),
+      ...(receiptNumber ? { receiptNumber } : {}),
+      registerId:
+        typeof search.registerId === 'string' && search.registerId
+          ? search.registerId
+          : undefined,
+      registerShiftId:
+        typeof search.registerShiftId === 'string' && search.registerShiftId
+          ? search.registerShiftId
+          : undefined,
+      ...(search.returnTo === 'sales-history'
+        ? { returnTo: 'sales-history' as const }
+        : {}),
+    };
+  },
 });
 
 const routeTree = rootRoute.addChildren([
@@ -470,6 +704,7 @@ const routeTree = rootRoute.addChildren([
     registerShiftRoute,
     cashierSessionRoute,
     checkoutRoute,
+    salesHistoryRoute,
     returnsRoute,
   ]),
 ]);

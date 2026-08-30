@@ -63,10 +63,32 @@ export const queryKeys = {
     detail: (saleId: string) => ['sales', 'detail', saleId] as const,
     held: (cashierSessionId: string) =>
       ['sales', 'held', cashierSessionId] as const,
-    receipt: (receiptNumber: string) =>
-      ['sales', 'receipts', 'detail', receiptNumber] as const,
-    receiptPage: (limit: number, offset: number) =>
-      ['sales', 'receipts', 'page', limit, offset] as const,
+    receipt: (
+      receiptNumber: string,
+      organizationId?: string | null,
+      storeId?: string | null,
+    ) =>
+      [
+        'sales',
+        'receipts',
+        'detail',
+        receiptNumber,
+        ...(organizationId && storeId ? [organizationId, storeId] : []),
+      ] as const,
+    receiptPage: (
+      limit: number,
+      offset: number,
+      organizationId?: string | null,
+      storeId?: string | null,
+    ) =>
+      [
+        'sales',
+        'receipts',
+        'page',
+        limit,
+        offset,
+        ...(organizationId && storeId ? [organizationId, storeId] : []),
+      ] as const,
     receiptPages: () => ['sales', 'receipts', 'page'] as const,
   },
 };

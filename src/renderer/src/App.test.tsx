@@ -191,6 +191,75 @@ const productSearchResponse = {
   meta: { has_more: false, limit: 20, offset: 0, total: 1 },
   products: [productResponse],
 };
+const receiptSummaryResponse = {
+  cashier_membership_id: 'membership-2',
+  completed_at: '2026-08-27T09:00:00.000Z',
+  currency: 'KZT' as const,
+  id: 'sale-42',
+  payments: [{ amount: '650.00', method: 'CASH' as const }],
+  receipt_number: '42',
+  total: '650.00',
+};
+const receiptResponse = {
+  cancelled_at: null,
+  cancelled_by_membership_id: null,
+  cancellation_reason: null,
+  cashier_membership_id: 'membership-2',
+  cashier_name: 'Бекзат Омаров',
+  cashier_session_id: 'cashier-session-2',
+  completed_at: receiptSummaryResponse.completed_at,
+  created_at: receiptSummaryResponse.completed_at,
+  currency: 'KZT' as const,
+  held_at: null,
+  id: receiptSummaryResponse.id,
+  items: [
+    {
+      barcode: '4870000000012',
+      base_unit_price: '650.00',
+      id: 'item-42',
+      line_number: 1,
+      line_total: '650.00',
+      name: 'Молоко',
+      price_override_reason: null,
+      price_overridden_by_membership_id: null,
+      product_id: productResponse.id,
+      quantity: '1',
+      return_disposition: null,
+      returnable_quantity: '1',
+      returned_quantity: '0',
+      sku: productResponse.sku,
+      source_sale_item_id: null,
+      unit_code: 'pcs' as const,
+      unit_price: '650.00',
+    },
+  ],
+  organization_id: organizationResponse.id,
+  original_sale_id: null,
+  payments: [
+    {
+      amount: '650.00',
+      change: '0.00',
+      completed_at: receiptSummaryResponse.completed_at,
+      created_at: receiptSummaryResponse.completed_at,
+      direction: 'INCOMING' as const,
+      id: 'payment-42',
+      method: 'CASH' as const,
+      received: '650.00',
+      status: 'COMPLETED' as const,
+      updated_at: receiptSummaryResponse.completed_at,
+    },
+  ],
+  receipt_number: '42',
+  register_id: registerResponse.id,
+  register_shift_id: registerShiftResponse.id,
+  return_reason: null,
+  status: 'COMPLETED' as const,
+  store_id: 'store-1',
+  total: '650.00',
+  transaction_type: 'SALE' as const,
+  updated_at: receiptSummaryResponse.completed_at,
+  version: 1,
+};
 
 const responseError = (errorCode: string, data?: Record<string, unknown>) =>
   new AxiosError('Request failed', undefined, undefined, undefined, {
@@ -248,6 +317,119 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Maria POS authorization flow', () => {
+  it('navigates checkout to sales history and back within the active session', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: [...contextResponse.permissions, 'sales.read'],
+    });
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'История продаж' }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'История продаж' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/sales-history');
+
+    await user.click(
+      screen.getByRole('button', { name: 'Вернуться к продажам' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Оформление продажи' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/checkout');
+  });
+
+  it('shows an access state on a direct sales history route', async () => {
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: ['sales.create'],
+    });
+    const { router } = renderApp();
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+
+    await router.navigate({
+      search: {
+        page: 0,
+        registerId: 'register-1',
+        registerShiftId: 'register-shift-1',
+      },
+      to: '/sales-history',
+    });
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Нет доступа к истории продаж',
+      }),
+    ).toBeInTheDocument();
+    expect(api.getReceipts).not.toHaveBeenCalled();
+  });
+
+  it('returns from a preselected receipt to the same history selection', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: [
+        ...contextResponse.permissions,
+        'returns.create',
+        'sales.read',
+      ],
+    });
+    api.getReceipts.mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      receipts: [receiptSummaryResponse],
+    });
+    api.getReceipt.mockResolvedValue(receiptResponse);
+    const { router } = renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'История продаж' }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Открыть чек №42' }),
+    );
+    await user.click(
+      await screen.findByRole('button', { name: 'Оформить возврат' }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Возвраты' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Номер чека')).toHaveValue('42');
+    expect(router.state.location.search).toMatchObject({
+      historyPage: 0,
+      receiptNumber: '42',
+      returnTo: 'sales-history',
+    });
+
+    await user.click(
+      screen.getByRole('button', { name: 'Вернуться в историю' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'История продаж' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.search).toMatchObject({
+      page: 0,
+      receiptNumber: '42',
+    });
+  });
+
   it('navigates checkout to returns and back within the active session', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
