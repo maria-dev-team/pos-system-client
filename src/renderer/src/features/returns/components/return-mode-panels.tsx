@@ -318,8 +318,8 @@ export type WithoutReceiptReturnPanelProps = {
   onAddProduct: (product: ProductResponse) => void;
   onOverride: (line: WithoutReceiptLine) => void;
   onProductSearchChange: (value: string) => void;
-  onRemove: (productId: string) => void;
-  onUpdate: (productId: string, update: Partial<WithoutReceiptLine>) => void;
+  onRemove: (lineId: string) => void;
+  onUpdate: (lineId: string, update: Partial<WithoutReceiptLine>) => void;
   productSearch: string;
   products: QueryState<ProductSearchResponse>;
 };
@@ -375,7 +375,8 @@ export function WithoutReceiptReturnPanel({
                 className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={
                   product.retail_price === null ||
-                  lines.some((line) => line.product.id === product.id)
+                  (!product.nkt?.is_marked &&
+                    lines.some((line) => line.product.id === product.id))
                 }
                 key={product.id}
                 onClick={() => onAddProduct(product)}

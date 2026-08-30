@@ -74,6 +74,29 @@ const sale: SaleResponse = {
   completed_at: '2026-08-28T08:15:00.000Z',
   created_at: '2026-08-28T08:00:00.000Z',
   currency: 'KZT',
+  fiscal_receipt: {
+    address: 'Алматы, Абай 1',
+    buyer_bin_iin: null,
+    cashbox_unique_number: 'SWK00000001',
+    currency: 'KZT',
+    fiscal_sign: '123456789',
+    fiscalized_at: '2026-08-28T08:15:00.000Z',
+    offline: false,
+    ofd_name: 'ОФД',
+    ofd_website: 'https://ofd.example',
+    operation_type: 'SALE',
+    print_url: null,
+    provider: 'WEBKASSA',
+    qr_url: 'https://ofd.example/check/42',
+    receipt_number: '7',
+    registration_number: 'RN-1',
+    shift_number: '2',
+    status: 'FISCALIZED',
+    taxpayer_bin_iin: '123456789012',
+    taxpayer_name: 'ТОО Maria',
+    total: '100.00',
+    vat_total: '0.00',
+  },
   held_at: null,
   id: 'sale-1',
   items: [
@@ -81,9 +104,14 @@ const sale: SaleResponse = {
       barcode: '123',
       base_unit_price: '100.00',
       id: 'item-1',
+      is_marked: false,
       line_number: 1,
       line_total: '100.00',
       name: 'Товар',
+      marking_code: null,
+      nkt_name: null,
+      ntin_code: null,
+      gtin: null,
       price_override_reason: null,
       price_overridden_by_membership_id: null,
       product_id: 'product-1',
@@ -93,6 +121,8 @@ const sale: SaleResponse = {
       source_sale_item_id: null,
       unit_code: 'pcs',
       unit_price: '100.00',
+      vat_amount: '0.00',
+      vat_rate: 'NONE',
     },
   ],
   organization_id: 'organization-1',
@@ -295,7 +325,7 @@ describe('receipt printing controls', () => {
           rasterThreshold: 112,
           receipt: expect.objectContaining({
             cashier: 'Айжан Қасымова',
-            receiptNumber: '42',
+            localReceiptNumber: '42',
           }),
         }),
       ),
@@ -323,11 +353,12 @@ describe('receipt printing controls', () => {
     const documentPreview = within(preview).getByTitle(
       'Содержимое тестового чека',
     );
-    expect(documentPreview.getAttribute('srcdoc')).toContain(
-      'НЕФИСКАЛЬНЫЙ ЧЕК',
-    );
+    expect(documentPreview.getAttribute('srcdoc')).toContain('ТЕСТОВЫЙ ЧЕК');
     expect(documentPreview.getAttribute('srcdoc')).toContain(
       'Ә Ғ Қ Ң Ө Ұ Ү Һ І',
+    );
+    expect(documentPreview.getAttribute('srcdoc')).toContain(
+      'НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ',
     );
     expect(documentPreview).toHaveStyle({ width: '181px' });
     expect(
@@ -342,7 +373,7 @@ describe('receipt printing controls', () => {
           deviceName: 'XP-58IIH',
           paperWidthMm: 58,
           rasterThreshold: 112,
-          receipt: expect.objectContaining({ receiptNumber: 'TEST' }),
+          receipt: expect.objectContaining({ localReceiptNumber: 'TEST' }),
         }),
       ),
     );

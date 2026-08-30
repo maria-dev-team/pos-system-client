@@ -22,6 +22,16 @@ const messages: Record<ErrorCodeValue, string> = {
     'На этой кассе уже работает другой кассир.',
   [ErrorCode.CashRefundInsufficient]:
     'В кассе недостаточно наличных для возврата.',
+  [ErrorCode.FiscalizationDataInvalid]:
+    'Для фискального чека не заполнены обязательные данные.',
+  [ErrorCode.FiscalizationNotConfigured]:
+    'Для этой кассы не настроен фискальный провайдер.',
+  [ErrorCode.FiscalizationRejected]:
+    'Фискальный провайдер отклонил чек. Проверьте данные и повторите операцию.',
+  [ErrorCode.FiscalizationUnavailable]:
+    'Фискальный провайдер временно недоступен. Оплата не завершена.',
+  [ErrorCode.FiscalShiftExpired]:
+    'Фискальная смена превысила 24 часа. Завершите смену кассира и закройте кассовую смену.',
   [ErrorCode.IncorrectOrganization]: 'Выбран неверный контекст организации.',
   [ErrorCode.InsufficientPermissions]:
     'У вас недостаточно прав для этого действия.',
@@ -77,6 +87,14 @@ const messages: Record<ErrorCodeValue, string> = {
   [ErrorCode.PaymentDetailsInvalid]: 'Указаны некорректные данные оплаты.',
   [ErrorCode.ProductNotFound]: 'Товар не найден.',
   [ErrorCode.ProductNotSellable]: 'Этот товар нельзя продавать.',
+  [ErrorCode.ProductMarkingCodeDuplicate]:
+    'Этот Data Matrix уже добавлен в чек.',
+  [ErrorCode.ProductMarkingCodeNotAllowed]:
+    'Data Matrix нельзя указать для немаркированного товара.',
+  [ErrorCode.ProductMarkingCodeRequired]:
+    'Отсканируйте Data Matrix маркированного товара.',
+  [ErrorCode.ProductNktRequired]:
+    'Для продажи товара необходимо выбрать запись НКТ.',
   [ErrorCode.ProductSalePriceRequired]: 'Для товара не указана цена продажи.',
   [ErrorCode.InvalidProductQuantity]: 'Указано некорректное количество товара.',
   [ErrorCode.StoreAccessDenied]: 'У вас нет доступа к этому магазину.',

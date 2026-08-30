@@ -17,7 +17,11 @@ import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
 import { reportCancellation } from './report-cancellation';
 
 type TerminalCommand =
-  | { payments: SalePaymentPayload[]; type: 'checkout' }
+  | {
+      buyerBinIin?: string;
+      payments: SalePaymentPayload[];
+      type: 'checkout';
+    }
   | { type: 'hold' }
   | { reason: string; type: 'cancel' };
 
@@ -85,6 +89,9 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
       const result =
         command.type === 'checkout'
           ? await checkoutSale(sale.id, {
+              ...(command.buyerBinIin
+                ? { buyerBinIin: command.buyerBinIin }
+                : {}),
               expectedVersion: sale.version,
               payments: command.payments,
             })
@@ -123,8 +130,13 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
   });
 
   const checkout = useMutation({
-    mutationFn: (payments: SalePaymentPayload[]) =>
-      runTerminal({ payments, type: 'checkout' }),
+    mutationFn: ({
+      buyerBinIin,
+      payments,
+    }: {
+      buyerBinIin?: string;
+      payments: SalePaymentPayload[];
+    }) => runTerminal({ buyerBinIin, payments, type: 'checkout' }),
     scope,
   });
 

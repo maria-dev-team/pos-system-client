@@ -5,18 +5,49 @@ export type SaleItemResponse = {
   barcode: string;
   base_unit_price: string;
   id: string;
+  is_marked: boolean;
   line_number: number;
   line_total: string;
   name: string;
+  marking_code: string | null;
+  nkt_name: string | null;
+  ntin_code: string | null;
+  gtin: string | null;
   price_override_reason: string | null;
   price_overridden_by_membership_id: string | null;
   product_id: string;
   quantity: string;
   return_disposition: ReturnDisposition | null;
-  sku: string;
+  sku: string | null;
   source_sale_item_id: string | null;
   unit_code: ProductUnit;
   unit_price: string;
+  vat_amount: string;
+  vat_rate: 'NONE' | '0' | '5' | '10' | '16';
+};
+
+export type FiscalReceiptResponse = {
+  address: string;
+  buyer_bin_iin: string | null;
+  cashbox_unique_number: string;
+  currency: 'KZT';
+  fiscal_sign: string;
+  fiscalized_at: string;
+  offline: boolean;
+  ofd_name: string;
+  ofd_website: string;
+  operation_type: 'SALE' | 'RETURN';
+  print_url: string | null;
+  provider: 'REKASSA' | 'WEBKASSA';
+  qr_url: string;
+  receipt_number: string;
+  registration_number: string;
+  shift_number: string;
+  status: 'FISCALIZED';
+  taxpayer_bin_iin: string;
+  taxpayer_name: string;
+  total: string;
+  vat_total: string;
 };
 
 export type SalePaymentResponse = {
@@ -53,6 +84,7 @@ export type SaleResponse = {
   currency: 'KZT';
   held_at: string | null;
   id: string;
+  fiscal_receipt: FiscalReceiptResponse | null;
   items: SaleItemResponse[];
   organization_id: string;
   original_sale_id: string | null;
@@ -81,6 +113,7 @@ export type ReceiptSummaryResponse = {
   completed_at: string;
   currency: 'KZT';
   id: string;
+  fiscal_receipt: FiscalReceiptResponse | null;
   payments: Pick<SalePaymentResponse, 'amount' | 'method'>[];
   receipt_number: string;
   total: string;

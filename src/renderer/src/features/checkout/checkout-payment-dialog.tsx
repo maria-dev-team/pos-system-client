@@ -27,7 +27,10 @@ import {
 type PaymentMode = 'CASH' | 'CASHLESS' | 'MIXED';
 
 type CheckoutPaymentDialogProps = {
-  onConfirm: (payments: SalePaymentPayload[]) => Promise<void> | void;
+  onConfirm: (
+    payments: SalePaymentPayload[],
+    buyerBinIin?: string,
+  ) => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   pending: boolean;
@@ -51,6 +54,7 @@ function PaymentForm({
   const [mode, setMode] = useState<PaymentMode>('CASH');
   const [cashAmount, setCashAmount] = useState('');
   const [cashReceived, setCashReceived] = useState('');
+  const [buyerBinIin, setBuyerBinIin] = useState('');
   const [activeMixedInput, setActiveMixedInput] = useState<
     'amount' | 'received'
   >('amount');
@@ -107,12 +111,21 @@ function PaymentForm({
       );
       return;
     }
+    const normalizedBuyerBinIin = buyerBinIin.trim();
+    if (normalizedBuyerBinIin && !/^\d{12}$/u.test(normalizedBuyerBinIin)) {
+      setValidationError('БИН/ИИН покупателя должен содержать 12 цифр.');
+      return;
+    }
 
     setValidationError(null);
     setDismissedServerError(null);
     confirmingRef.current = true;
     try {
-      void Promise.resolve(onConfirm(payments))
+      void Promise.resolve(
+        normalizedBuyerBinIin
+          ? onConfirm(payments, normalizedBuyerBinIin)
+          : onConfirm(payments),
+      )
         .catch(() => undefined)
         .finally(() => {
           confirmingRef.current = false;
@@ -259,6 +272,24 @@ function PaymentForm({
             }
           />
         ) : null}
+
+        <FormField>
+          <Label htmlFor="checkout-buyer-bin-iin">
+            БИН/ИИН покупателя — по запросу
+          </Label>
+          <Input
+            disabled={pending}
+            id="checkout-buyer-bin-iin"
+            inputMode="numeric"
+            maxLength={12}
+            onChange={(event) => {
+              setBuyerBinIin(event.target.value.replace(/\D/gu, ''));
+              setValidationError(null);
+            }}
+            placeholder="12 цифр"
+            value={buyerBinIin}
+          />
+        </FormField>
 
         {cashlessRemainder || change ? (
           <div className="grid gap-3 sm:grid-cols-2">

@@ -25,7 +25,10 @@ import {
 } from '../returns-calculations';
 
 type ReturnPaymentDialogProps = {
-  onConfirm: (payments: ReturnPaymentPayload[]) => Promise<void> | void;
+  onConfirm: (
+    payments: ReturnPaymentPayload[],
+    buyerBinIin?: string,
+  ) => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   originalPayments?: ReturnPaymentPayload[];
@@ -79,6 +82,7 @@ export function ReturnPaymentDialog({
 }: ReturnPaymentDialogProps) {
   const [mode, setMode] = useState<ReturnPaymentMode | null>(null);
   const [cashAmount, setCashAmount] = useState('');
+  const [buyerBinIin, setBuyerBinIin] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const errorMessage = validationError ?? serverErrorMessage;
 
@@ -87,8 +91,15 @@ export function ReturnPaymentDialog({
     if (!mode || pending) return;
     try {
       const payments = buildReturnPayments(total, mode, cashAmount);
+      const normalizedBuyerBinIin = buyerBinIin.trim();
+      if (normalizedBuyerBinIin && !/^\d{12}$/u.test(normalizedBuyerBinIin)) {
+        setValidationError('БИН/ИИН покупателя должен содержать 12 цифр.');
+        return;
+      }
       setValidationError(null);
-      void onConfirm(payments);
+      void (normalizedBuyerBinIin
+        ? onConfirm(payments, normalizedBuyerBinIin)
+        : onConfirm(payments));
     } catch {
       setValidationError(
         'Наличная часть должна быть больше нуля и меньше итога.',
@@ -220,6 +231,24 @@ export function ReturnPaymentDialog({
               />
             </div>
           ) : null}
+
+          <FormField>
+            <Label htmlFor="return-buyer-bin-iin">
+              БИН/ИИН покупателя — по запросу
+            </Label>
+            <Input
+              disabled={pending}
+              id="return-buyer-bin-iin"
+              inputMode="numeric"
+              maxLength={12}
+              onChange={(event) => {
+                setBuyerBinIin(event.target.value.replace(/\D/gu, ''));
+                setValidationError(null);
+              }}
+              placeholder="12 цифр"
+              value={buyerBinIin}
+            />
+          </FormField>
 
           <div aria-live="polite" className="min-h-6">
             {errorMessage ? (

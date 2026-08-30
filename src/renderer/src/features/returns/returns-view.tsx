@@ -18,7 +18,10 @@ import { Label } from '@renderer/common/components/ui/label';
 import { VirtualKeyboardOverlay } from '@renderer/common/components/virtual-keyboard';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
-import { ReceiptPrinterSettingsButton } from '@renderer/features/receipt-printing';
+import {
+  ReceiptPrintButton,
+  ReceiptPrinterSettingsButton,
+} from '@renderer/features/receipt-printing';
 
 import { PriceOverrideDialogs } from './components/price-override-dialogs';
 import {
@@ -118,7 +121,12 @@ export function ReturnsView({
           <p className="mt-3 text-3xl font-extrabold text-primary">
             {formatCash(completedReturn.total)}
           </p>
-          <div className="mt-7 grid gap-3 sm:grid-cols-2">
+          <div className="mt-7 grid gap-3 sm:grid-cols-3">
+            <ReceiptPrintButton
+              cashierSession={cashierSession}
+              context={context}
+              sale={completedReturn}
+            />
             <Button onClick={onReset} type="button" variant="ghost">
               Новый возврат
             </Button>

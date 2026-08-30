@@ -39,6 +39,7 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   updated_at: '2026-08-25T10:00:00.000Z',
   version: 3,
   ...overrides,
+  fiscal_receipt: overrides.fiscal_receipt ?? null,
 });
 
 const renderDialog = (
@@ -76,6 +77,25 @@ describe('CheckoutPaymentDialog', () => {
     expect(onConfirm).toHaveBeenCalledWith([
       { amount: '100.00', method: 'CASH', received: '120' },
     ]);
+  });
+
+  it('includes a valid buyer BIN/IIN when requested', async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = renderDialog();
+
+    await user.click(screen.getByRole('button', { name: 'Безналичные' }));
+    await user.type(
+      screen.getByLabelText('БИН/ИИН покупателя — по запросу'),
+      '123456789012',
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить оплату' }),
+    );
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      [{ amount: '100.00', method: 'CASHLESS' }],
+      '123456789012',
+    );
   });
 
   it('submits once when two events arrive before pending updates', async () => {

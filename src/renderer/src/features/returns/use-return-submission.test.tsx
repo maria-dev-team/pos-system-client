@@ -48,6 +48,7 @@ const completedReturn: SaleResponse = {
   completed_at: '2026-08-27T10:00:00.000Z',
   created_at: '2026-08-27T10:00:00.000Z',
   currency: 'KZT',
+  fiscal_receipt: null,
   held_at: null,
   id: 'return-1',
   items: [],

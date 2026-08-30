@@ -53,6 +53,7 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
+import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
 import {
   adjustQuantityByOne,
   formatQuantity,
@@ -265,6 +266,18 @@ function ActiveCheckout({
         refocus();
         return;
       }
+      if (
+        (submitted.type === 'scan' || submitted.type === 'add') &&
+        getHttpErrorCode(error) === ErrorCode.ProductMarkingCodeRequired
+      ) {
+        setScanIssue({
+          barcode:
+            submitted.type === 'scan' ? submitted.barcode : submitted.productId,
+          message: 'Для этого товара отсканируйте Data Matrix с упаковки.',
+        });
+        refocus();
+        return;
+      }
       if (submitted.type === 'setQuantity' && quantityItem) {
         setQuantityError(message);
         return;
@@ -278,10 +291,8 @@ function ActiveCheckout({
     },
     onSuccess: (_updatedSale, submitted) => {
       if (submitted.type === 'scan' || submitted.type === 'add') {
+        setScanIssue(null);
         if (submitted.type === 'scan') {
-          setScanIssue((issue) =>
-            issue?.barcode === submitted.barcode ? null : issue,
-          );
           setSearch((value) =>
             value.trim() === submitted.barcode ? '' : value,
           );
@@ -301,46 +312,68 @@ function ActiveCheckout({
     },
   });
 
-  const scanFirstProduct = async (barcode: string) => {
+  const scanFirstProduct = async (scannedValue: string) => {
+    setScanIssue(null);
+    const dataMatrix = parseGs1DataMatrix(scannedValue);
+    const searchValue = dataMatrix?.gtin ?? scannedValue;
     try {
       const result = await searchProducts({
         limit: 20,
         offset: 0,
-        search: barcode,
+        search: searchValue,
       });
       const exact = result.products.find(
-        (product) => product.barcode === barcode,
+        (product) =>
+          product.barcode === searchValue || product.nkt?.gtin === searchValue,
       );
       if (!exact) {
         setScanIssue({
-          barcode,
-          message: `Товар с кодом ${barcode} не найден`,
+          barcode: scannedValue,
+          message: `Товар с кодом ${searchValue} не найден`,
         });
         return;
       }
       if (!exact.is_active) {
         setScanIssue({
-          barcode,
-          message: `Товар с кодом ${barcode} неактивен`,
+          barcode: scannedValue,
+          message: `Товар с кодом ${searchValue} неактивен`,
         });
         return;
       }
       if (exact.retail_price === null) {
         setScanIssue({
-          barcode,
-          message: `У товара с кодом ${barcode} нет цены`,
+          barcode: scannedValue,
+          message: `У товара с кодом ${searchValue} нет цены`,
         });
         return;
       }
-      await command.mutateAsync({ productId: exact.id, type: 'add' });
-      setScanIssue((issue) => (issue?.barcode === barcode ? null : issue));
-      setSearch((value) => (value.trim() === barcode ? '' : value));
+      if (exact.nkt?.is_marked && !dataMatrix) {
+        setScanIssue({
+          barcode: scannedValue,
+          message: `Товар «${exact.name}» маркирован. Отсканируйте Data Matrix с упаковки.`,
+        });
+        return;
+      }
+      if (!exact.nkt?.is_marked && dataMatrix) {
+        setScanIssue({
+          barcode: scannedValue,
+          message: `Товар с GTIN ${dataMatrix.gtin} не отмечен как маркированный.`,
+        });
+        return;
+      }
+      await command.mutateAsync({
+        ...(dataMatrix ? { markingCode: dataMatrix.markingCode } : {}),
+        productId: exact.id,
+        type: 'add',
+      });
+      setScanIssue(null);
+      setSearch((value) => (value.trim() === scannedValue ? '' : value));
     } catch (error) {
       setScanIssue({
-        barcode,
+        barcode: scannedValue,
         message: getHttpErrorMessage(
           error,
-          `Не удалось добавить товар с кодом ${barcode}`,
+          `Не удалось добавить товар с кодом ${searchValue}`,
         ),
       });
     } finally {
@@ -437,11 +470,16 @@ function ActiveCheckout({
     setTransitionError(undefined);
     setPaymentSale(sale);
   };
-  const confirmPayment = async (payments: SalePaymentPayload[]) => {
+  const confirmPayment = async (
+    payments: SalePaymentPayload[],
+    buyerBinIin?: string,
+  ) => {
     setPaymentError(undefined);
     setTransitionError(undefined);
     try {
-      finishTransition(await transitions.checkout.mutateAsync(payments));
+      finishTransition(
+        await transitions.checkout.mutateAsync({ buyerBinIin, payments }),
+      );
     } catch (error) {
       const message = getHttpErrorMessage(error, 'Не удалось оплатить чек.');
       const authoritative = queryClient.getQueryData<SaleResponse | null>(
@@ -566,11 +604,21 @@ function ActiveCheckout({
     const barcode = search.trim();
     if (!barcode || !canSearch || !canAddProduct || scannerBlocked) return;
     setSearch('');
-    if (sale) submitCommand({ barcode, type: 'scan' });
+    if (parseGs1DataMatrix(barcode)) void scanFirstProduct(barcode);
+    else if (sale) submitCommand({ barcode, type: 'scan' });
     else void scanFirstProduct(barcode);
   };
   const selectProduct = (product: ProductResponse) => {
     if (!canAddProduct) return;
+    if (product.nkt?.is_marked) {
+      setSearch('');
+      setScanIssue({
+        barcode: product.id,
+        message: `Товар «${product.name}» маркирован. Отсканируйте Data Matrix с упаковки.`,
+      });
+      refocus();
+      return;
+    }
     submitCommand({ productId: product.id, type: 'add' });
   };
   const openRemove = (row: CheckoutRow) => {
@@ -581,6 +629,7 @@ function ActiveCheckout({
     setRemoveItem(row);
   };
   const adjustQuantity = (row: CheckoutRow, delta: -1 | 1) => {
+    if (row.item.is_marked) return;
     const next = adjustQuantityByOne(row.item.quantity, delta);
     if (!next) {
       openRemove(row);
@@ -593,6 +642,7 @@ function ActiveCheckout({
     });
   };
   const openQuantity = (row: CheckoutRow) => {
+    if (row.item.is_marked) return;
     setQuantityItem(row);
     setQuantity(row.item.quantity);
     setQuantityError(null);
@@ -677,7 +727,7 @@ function ActiveCheckout({
               className="h-15 border-border bg-muted/35 pl-13 pr-4 text-lg shadow-none md:text-lg"
               disabled={!canSearch || !canAddProduct || scannerBlocked}
               id="checkout-search"
-              maxLength={255}
+              maxLength={512}
               onChange={(event) => setSearch(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
@@ -728,7 +778,7 @@ function ActiveCheckout({
 
         <VirtualKeyboardOverlay
           compact
-          maxLength={255}
+          maxLength={512}
           onOpenChange={(open) => {
             setKeyboardOpen(open);
             if (!open) refocus();
@@ -879,6 +929,11 @@ function ActiveCheckout({
                             Цена изменена
                           </span>
                         ) : null}
+                        {row.item.is_marked ? (
+                          <span className="mt-2 inline-flex rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
+                            Data Matrix считан
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-4">
                         <p className="mb-2 font-bold tabular-nums">
@@ -888,7 +943,7 @@ function ActiveCheckout({
                           <Button
                             aria-label={`Уменьшить ${name}`}
                             className="min-h-10 min-w-10 border-border bg-background"
-                            disabled={isBusy}
+                            disabled={isBusy || row.item.is_marked}
                             onClick={() => adjustQuantity(row, -1)}
                             size="icon"
                             type="button"
@@ -899,7 +954,7 @@ function ActiveCheckout({
                           <Button
                             aria-label={`Увеличить ${name}`}
                             className="min-h-10 min-w-10 border-border bg-background"
-                            disabled={isBusy}
+                            disabled={isBusy || row.item.is_marked}
                             onClick={() => adjustQuantity(row, 1)}
                             size="icon"
                             type="button"
@@ -910,7 +965,7 @@ function ActiveCheckout({
                           <Button
                             aria-label={`Изменить количество ${name}`}
                             className="min-h-10 min-w-10 border-border bg-background"
-                            disabled={isBusy}
+                            disabled={isBusy || row.item.is_marked}
                             onClick={() => openQuantity(row)}
                             size="icon"
                             type="button"

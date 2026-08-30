@@ -15,6 +15,7 @@ export type {
   ProductUnit,
 } from './product.response';
 export type {
+  FiscalReceiptResponse,
   HeldSaleResponse,
   PaginationMetaResponse,
   ReceiptResponse,
