@@ -149,7 +149,7 @@ export function ReceiptReturnPanel({
   );
 
   return (
-    <>
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <section>
         <h2 className="font-bold">Найти чек продажи</h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -183,132 +183,141 @@ export function ReceiptReturnPanel({
         </p>
       ) : null}
 
-      {selectedReceiptNumber && !selectedReceiptIsVisible ? (
-        <div className="rounded-xl border border-border bg-muted/15 p-4">
-          <h2 className="mb-3 font-bold">
-            Товары из чека №{selectedReceiptNumber}
-          </h2>
-          <ReceiptDetailContent
-            cashierSession={cashierSession}
-            context={context}
-            disabled={disabled}
-            onSelectionsChange={onSelectionsChange}
-            receiptDetail={receiptDetail}
-            selections={selections}
-          />
-        </div>
-      ) : null}
-
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h2 className="font-bold">Или выберите недавний чек</h2>
-            <p className="text-xs text-muted-foreground">
-              Сначала показаны самые новые операции
-            </p>
-          </div>
-          {receipts.isFetching && !receipts.isPending ? (
-            <LoaderCircle aria-hidden="true" className="size-5 animate-spin" />
-          ) : null}
-        </div>
-        {receipts.isPending ? (
-          <p className="py-8 text-center text-muted-foreground">
-            Загружаем последние чеки
-          </p>
-        ) : receipts.isError ? (
-          <div className="rounded-xl border border-destructive/20 p-5 text-center">
-            <p className="font-semibold">Не удалось загрузить чеки</p>
-            <Button
-              className="mt-3"
-              onClick={() => void receipts.refetch()}
-              type="button"
-              variant="ghost"
-            >
-              Повторить
-            </Button>
-          </div>
-        ) : !receipts.data ? null : receipts.data.receipts.length === 0 ? (
-          <p className="py-8 text-center text-muted-foreground">
-            В магазине пока нет завершённых чеков
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-background divide-y divide-border">
-            {receipts.data.receipts.map((receiptSummary) => {
-              const selected =
-                selectedReceiptNumber === receiptSummary.receipt_number;
-              const detailId = `return-receipt-${receiptSummary.receipt_number}`;
-              return (
-                <Fragment key={receiptSummary.id}>
-                  <button
-                    aria-controls={detailId}
-                    aria-expanded={selected}
-                    aria-label={`Открыть чек №${receiptSummary.receipt_number}`}
-                    aria-pressed={selected}
-                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-primary/5 ${
-                      selected ? 'bg-primary/10' : ''
-                    }`}
-                    onClick={() =>
-                      onSelectReceipt(receiptSummary.receipt_number)
-                    }
-                    type="button"
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-bold">
-                        Чек №{receiptSummary.receipt_number}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {readableDate(receiptSummary.completed_at)}
-                      </span>
-                    </span>
-                    <span className="font-extrabold tabular-nums text-primary">
-                      {formatCash(receiptSummary.total)}
-                    </span>
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={`size-5 transition-transform ${
-                        selected ? 'rotate-90' : ''
-                      }`}
-                    />
-                  </button>
-                  {selected ? (
-                    <div className="bg-muted/15 p-4" id={detailId}>
-                      <ReceiptDetailContent
-                        cashierSession={cashierSession}
-                        context={context}
-                        disabled={disabled}
-                        onSelectionsChange={onSelectionsChange}
-                        receiptDetail={receiptDetail}
-                        selections={selections}
-                      />
-                    </div>
-                  ) : null}
-                </Fragment>
-              );
-            })}
-          </div>
-        )}
-        {!receipts.isPending && !receipts.isError && receipts.data ? (
-          <div className="mt-4 flex justify-between gap-3">
-            <Button
-              disabled={page === 0 || receipts.isFetching}
-              onClick={onPreviousPage}
-              type="button"
-              variant="ghost"
-            >
-              Предыдущая
-            </Button>
-            <Button
-              disabled={!receipts.data.meta.has_more || receipts.isFetching}
-              onClick={onNextPage}
-              type="button"
-              variant="ghost"
-            >
-              Следующая
-            </Button>
+      <div
+        aria-label="Недавние чеки"
+        className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1"
+        role="region"
+      >
+        {selectedReceiptNumber && !selectedReceiptIsVisible ? (
+          <div className="rounded-xl border border-border bg-muted/15 p-4">
+            <h2 className="mb-3 font-bold">
+              Товары из чека №{selectedReceiptNumber}
+            </h2>
+            <ReceiptDetailContent
+              cashierSession={cashierSession}
+              context={context}
+              disabled={disabled}
+              onSelectionsChange={onSelectionsChange}
+              receiptDetail={receiptDetail}
+              selections={selections}
+            />
           </div>
         ) : null}
+
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <h2 className="font-bold">Или выберите недавний чек</h2>
+              <p className="text-xs text-muted-foreground">
+                Сначала показаны самые новые операции
+              </p>
+            </div>
+            {receipts.isFetching && !receipts.isPending ? (
+              <LoaderCircle
+                aria-hidden="true"
+                className="size-5 animate-spin"
+              />
+            ) : null}
+          </div>
+          {receipts.isPending ? (
+            <p className="py-8 text-center text-muted-foreground">
+              Загружаем последние чеки
+            </p>
+          ) : receipts.isError ? (
+            <div className="rounded-xl border border-destructive/20 p-5 text-center">
+              <p className="font-semibold">Не удалось загрузить чеки</p>
+              <Button
+                className="mt-3"
+                onClick={() => void receipts.refetch()}
+                type="button"
+                variant="ghost"
+              >
+                Повторить
+              </Button>
+            </div>
+          ) : !receipts.data ? null : receipts.data.receipts.length === 0 ? (
+            <p className="py-8 text-center text-muted-foreground">
+              В магазине пока нет завершённых чеков
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-border bg-background divide-y divide-border">
+              {receipts.data.receipts.map((receiptSummary) => {
+                const selected =
+                  selectedReceiptNumber === receiptSummary.receipt_number;
+                const detailId = `return-receipt-${receiptSummary.receipt_number}`;
+                return (
+                  <Fragment key={receiptSummary.id}>
+                    <button
+                      aria-controls={detailId}
+                      aria-expanded={selected}
+                      aria-label={`Открыть чек №${receiptSummary.receipt_number}`}
+                      aria-pressed={selected}
+                      className={`grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-primary/5 ${
+                        selected ? 'bg-primary/10' : ''
+                      }`}
+                      onClick={() =>
+                        onSelectReceipt(receiptSummary.receipt_number)
+                      }
+                      type="button"
+                    >
+                      <span className="min-w-0">
+                        <span className="block font-bold">
+                          Чек №{receiptSummary.receipt_number}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {readableDate(receiptSummary.completed_at)}
+                        </span>
+                      </span>
+                      <span className="font-extrabold tabular-nums text-primary">
+                        {formatCash(receiptSummary.total)}
+                      </span>
+                      <ChevronRight
+                        aria-hidden="true"
+                        className={`size-5 transition-transform ${
+                          selected ? 'rotate-90' : ''
+                        }`}
+                      />
+                    </button>
+                    {selected ? (
+                      <div className="bg-muted/15 p-4" id={detailId}>
+                        <ReceiptDetailContent
+                          cashierSession={cashierSession}
+                          context={context}
+                          disabled={disabled}
+                          onSelectionsChange={onSelectionsChange}
+                          receiptDetail={receiptDetail}
+                          selections={selections}
+                        />
+                      </div>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
+            </div>
+          )}
+          {!receipts.isPending && !receipts.isError && receipts.data ? (
+            <div className="mt-4 flex justify-between gap-3">
+              <Button
+                disabled={page === 0 || receipts.isFetching}
+                onClick={onPreviousPage}
+                type="button"
+                variant="ghost"
+              >
+                Предыдущая
+              </Button>
+              <Button
+                disabled={!receipts.data.meta.has_more || receipts.isFetching}
+                onClick={onNextPage}
+                type="button"
+                variant="ghost"
+              >
+                Следующая
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </>
+    </div>
   );
 }
 

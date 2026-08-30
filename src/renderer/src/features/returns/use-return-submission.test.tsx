@@ -27,6 +27,8 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
 });
 
 const cashierSessionId = 'cashier-session-1';
+const organizationId = 'organization-1';
+const storeId = 'store-1';
 const idempotencyKey = '123e4567-e89b-42d3-a456-426614174000';
 const payload: CreateReceiptReturnPayload = {
   items: [
@@ -99,6 +101,36 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('return submission recovery', () => {
+  it('refreshes only the current store receipt cache', async () => {
+    const client = queryClient();
+    const currentStoreFetch = vi.fn().mockResolvedValue({ store_id: storeId });
+    const otherStoreFetch = vi.fn().mockResolvedValue({ store_id: 'store-2' });
+    await client.fetchQuery({
+      queryFn: currentStoreFetch,
+      queryKey: queryKeys.sales.receipt('42', organizationId, storeId),
+    });
+    await client.fetchQuery({
+      queryFn: otherStoreFetch,
+      queryKey: queryKeys.sales.receipt('42', organizationId, 'store-2'),
+    });
+    vi.mocked(createReceiptReturn).mockResolvedValue(completedReturn);
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await act(() =>
+      result.current.submit.mutateAsync({
+        payload,
+        receiptNumber: '42',
+        type: 'receipt',
+      }),
+    );
+
+    expect(currentStoreFetch).toHaveBeenCalledTimes(2);
+    expect(otherStoreFetch).toHaveBeenCalledOnce();
+  });
+
   it('creates one UUID, retains an ambiguous command and retries the exact request', async () => {
     const client = queryClient();
     client.setQueryData(queryKeys.sales.receiptPage(20, 0), { receipts: [] });
@@ -108,9 +140,10 @@ describe('return submission recovery', () => {
     vi.mocked(triggerAntiFraudEvent).mockRejectedValue(
       new Error('Camera unavailable'),
     );
-    const { result } = renderHook(() => useReturnSubmission(cashierSessionId), {
-      wrapper: wrapperFor(client),
-    });
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(client) },
+    );
 
     await expect(
       act(() =>
@@ -166,13 +199,15 @@ describe('return submission recovery', () => {
 
   it('clears a definitive quantity error and refreshes the selected receipt', async () => {
     const client = queryClient();
-    client.setQueryData(queryKeys.sales.receipt('42'), { id: 'sale-1' });
+    const receiptKey = queryKeys.sales.receipt('42', organizationId, storeId);
+    client.setQueryData(receiptKey, { id: 'sale-1' });
     vi.mocked(createReceiptReturn).mockRejectedValue(
       responseError(ErrorCode.ReturnQuantityExceeded),
     );
-    const { result } = renderHook(() => useReturnSubmission(cashierSessionId), {
-      wrapper: wrapperFor(client),
-    });
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(client) },
+    );
 
     await expect(
       act(() =>
@@ -185,9 +220,7 @@ describe('return submission recovery', () => {
     ).rejects.toThrow();
 
     expect(result.current.pendingCommand).toBeUndefined();
-    expect(
-      client.getQueryState(queryKeys.sales.receipt('42'))?.isInvalidated,
-    ).toBe(true);
+    expect(client.getQueryState(receiptKey)?.isInvalidated).toBe(true);
   });
 
   it('keeps an idempotency conflict blocked and never creates a replacement UUID', async () => {
@@ -195,9 +228,10 @@ describe('return submission recovery', () => {
     vi.mocked(createWithoutReceiptReturn).mockRejectedValue(
       responseError(ErrorCode.ReturnIdempotencyConflict),
     );
-    const { result } = renderHook(() => useReturnSubmission(cashierSessionId), {
-      wrapper: wrapperFor(client),
-    });
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(client) },
+    );
     const withoutReceipt = {
       items: [
         {

@@ -22,6 +22,11 @@ type CheckoutApi = {
   setSaleItemQuantity: (...args: unknown[]) => Promise<unknown>;
 };
 
+type CatalogApi = {
+  getCategories: (...args: unknown[]) => Promise<unknown>;
+  searchProducts: (...args: unknown[]) => Promise<unknown>;
+};
+
 type ReturnsApi = {
   createReceiptReturn: (...args: unknown[]) => Promise<unknown>;
   createWithoutReceiptReturn: (...args: unknown[]) => Promise<unknown>;
@@ -157,6 +162,27 @@ const product = {
   unit: 'pcs' as const,
   updated_at: '2026-08-24T08:00:00.000Z',
 };
+const category = {
+  children: [
+    {
+      children: [],
+      created_at: '2026-08-24T08:00:00.000Z',
+      deleted_at: null,
+      id: 'category-2',
+      name: 'Молоко',
+      organization_id: 'organization-1',
+      parent_id: 'category-1',
+      updated_at: '2026-08-24T08:00:00.000Z',
+    },
+  ],
+  created_at: '2026-08-24T08:00:00.000Z',
+  deleted_at: null,
+  id: 'category-1',
+  name: 'Продукты',
+  organization_id: 'organization-1',
+  parent_id: null,
+  updated_at: '2026-08-24T08:00:00.000Z',
+};
 const sale = {
   cancelled_at: null,
   cancelled_by_membership_id: null,
@@ -212,6 +238,65 @@ const heldSale = {
 };
 
 afterEach(() => vi.unstubAllEnvs());
+
+it('fetches the category tree and serializes a category product filter', async () => {
+  const calls: InternalAxiosRequestConfig[] = [];
+  axios.defaults.adapter = async (config): Promise<AxiosResponse> => {
+    calls.push(config);
+    return {
+      config,
+      data: {
+        data:
+          config.url === '/v1/categories'
+            ? {
+                categories: [category],
+                meta: {
+                  has_more: false,
+                  limit: 100,
+                  offset: 0,
+                  total: 1,
+                },
+              }
+            : {
+                meta: {
+                  has_more: false,
+                  limit: 100,
+                  offset: 0,
+                  total: 1,
+                },
+                products: [product],
+              },
+      },
+      headers: {},
+      status: 200,
+      statusText: 'OK',
+    };
+  };
+  vi.resetModules();
+  vi.stubEnv('VITE_API_URL', 'http://localhost:4004');
+  const api = (await import('./requests')) as unknown as CatalogApi;
+
+  await expect(api.getCategories({ limit: 100, offset: 0 })).resolves.toEqual({
+    categories: [category],
+    meta: { has_more: false, limit: 100, offset: 0, total: 1 },
+  });
+  await expect(
+    api.searchProducts({ categoryId: 'category-2', limit: 100, offset: 0 }),
+  ).resolves.toEqual({
+    meta: { has_more: false, limit: 100, offset: 0, total: 1 },
+    products: [product],
+  });
+
+  expect(calls.map(({ method, url }) => [method, url])).toEqual([
+    ['get', '/v1/categories'],
+    ['get', '/v1/products'],
+  ]);
+  expect(calls[1]?.params).toEqual({
+    category_id: 'category-2',
+    limit: 100,
+    offset: 0,
+  });
+});
 
 describe('API endpoints', () => {
   it('uses the backend auth/context/register contracts and unwraps response data', async () => {
@@ -624,6 +709,7 @@ describe('API endpoints', () => {
     };
     const receipt = {
       ...sale,
+      cashier_name: 'Бекзат Омаров',
       items: sale.items.map((item) => ({
         ...item,
         returnable_quantity: '1',

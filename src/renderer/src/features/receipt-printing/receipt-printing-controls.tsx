@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import type {
   AuthContextResponse,
   CashierSessionResponse,
+  ReceiptResponse,
   SaleResponse,
 } from '@renderer/common/api';
 import { Button } from '@renderer/common/components/ui/button';
@@ -378,7 +379,7 @@ export function ReceiptPrintButton({
   cashierSession: CashierSessionResponse;
   className?: string;
   context: AuthContextResponse;
-  sale: SaleResponse;
+  sale: SaleResponse | ReceiptResponse;
 }) {
   const [isPrinting, setIsPrinting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -401,7 +402,14 @@ export function ReceiptPrintButton({
       toast.error('Печать недоступна в этом окружении.');
       return;
     }
+    const historicalCashierName =
+      'cashier_name' in sale ? sale.cashier_name : undefined;
+    if (historicalCashierName === null) {
+      toast.error('У кассира не заполнено имя');
+      return;
+    }
     const receipt = buildPrintableReceipt(sale, {
+      cashierName: historicalCashierName,
       currentCashier: cashierName
         ? { id: cashierSession.membership_id, name: cashierName }
         : null,

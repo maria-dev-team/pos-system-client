@@ -151,7 +151,7 @@ export function LoginView() {
               <TooltipTrigger asChild>
                 <Button
                   aria-label={passwordToggleLabel}
-                  className="absolute right-1 top-1/2 -translate-y-1/2"
+                  className="absolute inset-y-0 right-1 my-auto active:translate-y-0"
                   onClick={() => setIsPasswordVisible((current) => !current)}
                   size="icon"
                   type="button"

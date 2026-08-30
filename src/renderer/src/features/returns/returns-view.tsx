@@ -32,15 +32,19 @@ import { ReturnPaymentDialog } from './components/return-payment-dialog';
 import { useReturnsFlow } from './hooks/use-returns-flow';
 
 type ReturnsViewProps = {
+  backLabel?: string;
   cashierSession: CashierSessionResponse;
   context: AuthContextResponse;
-  onBackToSales: () => void;
+  initialReceiptNumber?: string;
+  onBack: () => void;
 };
 
 export function ReturnsView({
+  backLabel = 'Вернуться к продажам',
   cashierSession,
   context,
-  onBackToSales,
+  initialReceiptNumber,
+  onBack,
 }: ReturnsViewProps) {
   const {
     access,
@@ -56,14 +60,14 @@ export function ReturnsView({
     recovery,
     returnForm,
     withoutReceiptPanel,
-  } = useReturnsFlow(cashierSession, context);
+  } = useReturnsFlow(cashierSession, context, initialReceiptNumber);
 
   if (!access.canReceipt && !access.canWithoutReceipt) {
     return (
       <FullPageState
         description="Для работы нужен доступ к созданию возврата и хотя бы одному режиму."
-        onRetry={onBackToSales}
-        retryLabel="Вернуться к продажам"
+        onRetry={onBack}
+        retryLabel={backLabel}
         title="Нет доступа к возвратам"
       />
     );
@@ -130,8 +134,8 @@ export function ReturnsView({
             <Button onClick={onReset} type="button" variant="ghost">
               Новый возврат
             </Button>
-            <Button onClick={onBackToSales} type="button">
-              Вернуться к продажам
+            <Button onClick={onBack} type="button">
+              {backLabel}
             </Button>
           </div>
         </section>
@@ -140,13 +144,13 @@ export function ReturnsView({
   }
 
   return (
-    <main className="min-h-full bg-workspace px-4 py-5 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-5">
-        <header className="flex flex-col gap-4 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)] sm:flex-row sm:items-center sm:justify-between">
+    <main className="flex h-full min-h-0 flex-col overflow-hidden bg-workspace px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col gap-5">
+        <header className="flex shrink-0 flex-col gap-4 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <Button
-              aria-label="Вернуться к продажам"
-              onClick={onBackToSales}
+              aria-label={backLabel}
+              onClick={onBack}
               size="icon"
               type="button"
               variant="ghost"
@@ -191,8 +195,14 @@ export function ReturnsView({
           </div>
         </header>
 
-        <div className="grid min-h-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <section className="min-w-0 space-y-5 rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)]">
+        <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <section
+            className={`min-h-0 min-w-0 rounded-2xl border border-border/80 bg-card p-5 shadow-[var(--shadow-surface)] ${
+              mode === 'receipt'
+                ? 'flex flex-col overflow-hidden'
+                : 'overflow-auto'
+            }`}
+          >
             {mode === 'receipt' ? (
               <ReceiptReturnPanel
                 {...receiptPanel}

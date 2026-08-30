@@ -3,6 +3,10 @@ export const queryKeys = {
     context: () => ['auth', 'context'] as const,
     currentUser: () => ['auth', 'user'] as const,
   },
+  categories: {
+    tree: (organizationId: string | null | undefined) =>
+      ['categories', 'tree', organizationId ?? null] as const,
+  },
   cashierSessions: {
     all: () => ['cashier-sessions'] as const,
     current: (registerId: string) =>
@@ -13,6 +17,18 @@ export const queryKeys = {
   },
   products: {
     all: () => ['products'] as const,
+    category: (
+      organizationId: string | null | undefined,
+      storeId: string | null | undefined,
+      categoryId: string,
+    ) =>
+      [
+        'products',
+        'category',
+        organizationId ?? null,
+        storeId ?? null,
+        categoryId,
+      ] as const,
     detail: (productId: string) => ['products', 'detail', productId] as const,
     search: (
       organizationId: string | null | undefined,
@@ -47,10 +63,32 @@ export const queryKeys = {
     detail: (saleId: string) => ['sales', 'detail', saleId] as const,
     held: (cashierSessionId: string) =>
       ['sales', 'held', cashierSessionId] as const,
-    receipt: (receiptNumber: string) =>
-      ['sales', 'receipts', 'detail', receiptNumber] as const,
-    receiptPage: (limit: number, offset: number) =>
-      ['sales', 'receipts', 'page', limit, offset] as const,
+    receipt: (
+      receiptNumber: string,
+      organizationId?: string | null,
+      storeId?: string | null,
+    ) =>
+      [
+        'sales',
+        'receipts',
+        'detail',
+        receiptNumber,
+        ...(organizationId && storeId ? [organizationId, storeId] : []),
+      ] as const,
+    receiptPage: (
+      limit: number,
+      offset: number,
+      organizationId?: string | null,
+      storeId?: string | null,
+    ) =>
+      [
+        'sales',
+        'receipts',
+        'page',
+        limit,
+        offset,
+        ...(organizationId && storeId ? [organizationId, storeId] : []),
+      ] as const,
     receiptPages: () => ['sales', 'receipts', 'page'] as const,
   },
 };

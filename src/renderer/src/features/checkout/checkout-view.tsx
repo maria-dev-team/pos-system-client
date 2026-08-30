@@ -3,7 +3,9 @@ import {
   Ban,
   CheckCircle2,
   CreditCard,
+  History,
   Keyboard,
+  LayoutGrid,
   LoaderCircle,
   Minus,
   PackageSearch,
@@ -67,6 +69,7 @@ import {
   ReceiptPrinterSettingsButton,
 } from '@renderer/features/receipt-printing';
 
+import { CheckoutCategoryPicker } from './checkout-category-picker';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
 import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
 import { CheckoutPaymentDialog } from './checkout-payment-dialog';
@@ -91,6 +94,7 @@ const cancellationReasonOptions = [
 type CheckoutViewProps = {
   cashierSession: CashierSessionResponse;
   onOpenReturns?: () => void;
+  onOpenSalesHistory?: () => void;
   onRetrySession?: () => void;
   onSessionEnded: () => void;
   onSessionEndedLocally?: () => void;
@@ -172,6 +176,7 @@ function LockedCheckout({
 function ActiveCheckout({
   cashierSession,
   onOpenReturns,
+  onOpenSalesHistory,
   onSessionEnded,
   onSessionEndedLocally,
 }: CheckoutViewProps) {
@@ -184,6 +189,7 @@ function ActiveCheckout({
   const currentKey = queryKeys.sales.current(cashierSession.id);
   const [search, setSearch] = useState('');
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [scanIssue, setScanIssue] = useState<{
     barcode: string;
     message: string;
@@ -212,6 +218,12 @@ function ActiveCheckout({
   const canSearch = Boolean(
     context.data?.isSystemPosition ||
     context.data?.permissions.includes('product.read'),
+  );
+  const canBrowseCategories = Boolean(
+    context.data &&
+    (context.data.isSystemPosition ||
+      (context.data.permissions.includes('category.read') &&
+        context.data.permissions.includes('product.read'))),
   );
   const canAddProduct = Boolean(
     context.data &&
@@ -436,6 +448,9 @@ function ActiveCheckout({
     (hasPermission('sales.read') ||
       (hasPermission('returns.without_receipt') &&
         hasPermission('product.read'))),
+  );
+  const canOpenSalesHistory = Boolean(
+    onOpenSalesHistory && hasPermission('sales.read'),
   );
   const rows: CheckoutRow[] = sale?.items.map((item) => ({ item })) ?? [];
   const transitionPending =
@@ -743,6 +758,17 @@ function ActiveCheckout({
               Сканируйте или найдите товар
             </Label>
           </div>
+          {canBrowseCategories ? (
+            <Button
+              className="min-h-15 shrink-0 px-4"
+              disabled={!canAddProduct || scannerBlocked}
+              onClick={() => setCategoryPickerOpen(true)}
+              type="button"
+            >
+              <LayoutGrid aria-hidden="true" className="size-6" />
+              Товары по категориям
+            </Button>
+          ) : null}
           <Button
             aria-label="Показать виртуальную клавиатуру"
             className="min-h-15 min-w-15 bg-muted/50"
@@ -1088,6 +1114,18 @@ function ActiveCheckout({
                 Возвраты
               </Button>
             ) : null}
+            {canOpenSalesHistory ? (
+              <Button
+                className="min-h-12 w-full border-border bg-background"
+                disabled={isBusy}
+                onClick={onOpenSalesHistory}
+                type="button"
+                variant="ghost"
+              >
+                <History aria-hidden="true" />
+                История продаж
+              </Button>
+            ) : null}
             <ReceiptPrinterSettingsButton className="min-h-12 w-full border-border bg-background" />
             {rows.length > 0 && canHold ? (
               <Button
@@ -1127,6 +1165,22 @@ function ActiveCheckout({
           </div>
         </aside>
       </div>
+
+      {canBrowseCategories ? (
+        <CheckoutCategoryPicker
+          disabled={!canAddProduct || isBusy}
+          onOpenChange={(open) => {
+            setCategoryPickerOpen(open);
+            if (!open) refocus();
+          }}
+          onSelectProduct={(product) =>
+            command.mutateAsync({ productId: product.id, type: 'add' })
+          }
+          open={categoryPickerOpen}
+          organizationId={cashierSession.organization_id}
+          storeId={cashierSession.store_id}
+        />
+      ) : null}
 
       <Dialog
         onOpenChange={(open) => {
