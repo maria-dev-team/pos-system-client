@@ -69,6 +69,14 @@ describe('queryKeys', () => {
       'detail',
       '42',
     ]);
+    expect(
+      queryKeys.sales.receiptPage(20, 0, 'organization-1', 'store-1'),
+    ).not.toEqual(
+      queryKeys.sales.receiptPage(20, 0, 'organization-1', 'store-2'),
+    );
+    expect(
+      queryKeys.sales.receipt('42', 'organization-1', 'store-1'),
+    ).not.toEqual(queryKeys.sales.receipt('42', 'organization-1', 'store-2'));
     expect(queryKeys.health.api()).toEqual(['health', 'api']);
     expect(queryKeys.organizations.mine()).toEqual(['organizations', 'mine']);
     expect(queryKeys.registers.all()).toEqual(['registers']);
