@@ -3,6 +3,7 @@ import {
   Ban,
   CheckCircle2,
   CreditCard,
+  History,
   Keyboard,
   LayoutGrid,
   LoaderCircle,
@@ -92,6 +93,7 @@ const cancellationReasonOptions = [
 type CheckoutViewProps = {
   cashierSession: CashierSessionResponse;
   onOpenReturns?: () => void;
+  onOpenSalesHistory?: () => void;
   onRetrySession?: () => void;
   onSessionEnded: () => void;
   onSessionEndedLocally?: () => void;
@@ -173,6 +175,7 @@ function LockedCheckout({
 function ActiveCheckout({
   cashierSession,
   onOpenReturns,
+  onOpenSalesHistory,
   onSessionEnded,
   onSessionEndedLocally,
 }: CheckoutViewProps) {
@@ -412,6 +415,9 @@ function ActiveCheckout({
     (hasPermission('sales.read') ||
       (hasPermission('returns.without_receipt') &&
         hasPermission('product.read'))),
+  );
+  const canOpenSalesHistory = Boolean(
+    onOpenSalesHistory && hasPermission('sales.read'),
   );
   const rows: CheckoutRow[] = sale?.items.map((item) => ({ item })) ?? [];
   const transitionPending =
@@ -1051,6 +1057,18 @@ function ActiveCheckout({
               >
                 <RotateCcw aria-hidden="true" />
                 Возвраты
+              </Button>
+            ) : null}
+            {canOpenSalesHistory ? (
+              <Button
+                className="min-h-12 w-full border-border bg-background"
+                disabled={isBusy}
+                onClick={onOpenSalesHistory}
+                type="button"
+                variant="ghost"
+              >
+                <History aria-hidden="true" />
+                История продаж
               </Button>
             ) : null}
             <ReceiptPrinterSettingsButton className="min-h-12 w-full border-border bg-background" />

@@ -57,7 +57,11 @@ const reportReturn = (
   }).catch(() => undefined);
 };
 
-export function useReturnSubmission(cashierSessionId: string) {
+export function useReturnSubmission(
+  cashierSessionId: string,
+  organizationId: string,
+  storeId: string,
+) {
   const queryClient = useQueryClient();
   const pendingCommand = useReturnsPendingStore(
     (state) => state.pendingBySession[cashierSessionId],
@@ -70,13 +74,19 @@ export function useReturnSubmission(cashierSessionId: string) {
       queryKey: queryKeys.sales.receiptPages(),
     });
     if (command.type === 'receipt') {
+      const receiptKey = queryKeys.sales.receipt(
+        command.receiptNumber,
+        organizationId,
+        storeId,
+      );
       await queryClient.invalidateQueries({
-        queryKey: queryKeys.sales.receipt(command.receiptNumber),
+        exact: true,
+        queryKey: receiptKey,
         refetchType: 'none',
       });
       await queryClient.refetchQueries({
         exact: true,
-        queryKey: queryKeys.sales.receipt(command.receiptNumber),
+        queryKey: receiptKey,
         type: 'all',
       });
     }
@@ -110,7 +120,12 @@ export function useReturnSubmission(cashierSessionId: string) {
         command.type === 'receipt'
       ) {
         await queryClient.invalidateQueries({
-          queryKey: queryKeys.sales.receipt(command.receiptNumber),
+          exact: true,
+          queryKey: queryKeys.sales.receipt(
+            command.receiptNumber,
+            organizationId,
+            storeId,
+          ),
         });
       }
       throw error;

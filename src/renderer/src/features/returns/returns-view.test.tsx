@@ -195,6 +195,7 @@ const wrapper = (queryClient: QueryClient, children: ReactNode) => (
 const renderView = (
   overrides: Partial<{
     context: AuthContextResponse;
+    initialReceiptNumber: string;
     onBackToSales: () => void;
   }> = {},
 ) => {
@@ -206,7 +207,8 @@ const renderView = (
       <ReturnsView
         cashierSession={cashierSession}
         context={overrides.context ?? context}
-        onBackToSales={onBackToSales}
+        initialReceiptNumber={overrides.initialReceiptNumber}
+        onBack={onBackToSales}
       />,
     ),
   );
@@ -229,6 +231,27 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ReturnsView', () => {
+  it('keeps receipt scrolling inside the receipts region', async () => {
+    renderView();
+
+    const receiptsRegion = await screen.findByRole('region', {
+      name: 'Недавние чеки',
+    });
+    expect(receiptsRegion).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto');
+    expect(receiptsRegion.closest('main')).toHaveClass(
+      'h-full',
+      'overflow-hidden',
+    );
+  });
+
+  it('opens an initial receipt from sales history', async () => {
+    renderView({ initialReceiptNumber: '42' });
+
+    expect(await screen.findByText('Молоко')).toBeInTheDocument();
+    expect(screen.getByLabelText('Номер чека')).toHaveValue('42');
+    expect(getReceipt).toHaveBeenCalledWith('42');
+  });
+
   it('shows receipt loading and empty states', async () => {
     vi.mocked(getReceipts).mockReturnValueOnce(new Promise(() => undefined));
     const first = renderView();

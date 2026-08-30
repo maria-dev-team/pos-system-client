@@ -42,6 +42,7 @@ const permission = (context: AuthContextResponse, value: string) =>
 export function useReturnsFlow(
   cashierSession: CashierSessionResponse,
   context: AuthContextResponse,
+  initialReceiptNumber = '',
 ) {
   const queryClient = useQueryClient();
   const canCreate = permission(context, 'returns.create');
@@ -55,11 +56,12 @@ export function useReturnsFlow(
     canReceipt ? 'receipt' : 'withoutReceipt',
   );
   const [page, setPage] = useState(0);
-  const [receiptNumber, setReceiptNumberState] = useState('');
+  const [receiptNumber, setReceiptNumberState] = useState(initialReceiptNumber);
   const [receiptSearchError, setReceiptSearchError] = useState<string | null>(
     null,
   );
-  const [selectedReceiptNumber, setSelectedReceiptNumber] = useState('');
+  const [selectedReceiptNumber, setSelectedReceiptNumber] =
+    useState(initialReceiptNumber);
   const [receiptSelections, setReceiptSelections] = useState<
     Record<string, ReceiptSelection>
   >({});
@@ -87,12 +89,20 @@ export function useReturnsFlow(
 
   const offset = page * pageSize;
   const receipts = useQuery(
-    receiptPageQueryOptions(pageSize, offset, mode === 'receipt' && canReceipt),
+    receiptPageQueryOptions(
+      pageSize,
+      offset,
+      mode === 'receipt' && canReceipt,
+      cashierSession.organization_id,
+      cashierSession.store_id,
+    ),
   );
   const receiptDetail = useQuery(
     receiptQueryOptions(
       selectedReceiptNumber,
       mode === 'receipt' && canReceipt && Boolean(selectedReceiptNumber),
+      cashierSession.organization_id,
+      cashierSession.store_id,
     ),
   );
   const products = useProductSearchQuery(
@@ -110,7 +120,11 @@ export function useReturnsFlow(
       Boolean(overrideLine && canOverridePrice),
     ),
   );
-  const submission = useReturnSubmission(cashierSession.id);
+  const submission = useReturnSubmission(
+    cashierSession.id,
+    cashierSession.organization_id,
+    cashierSession.store_id,
+  );
 
   const receiptLines = useMemo(() => {
     if (!receiptDetail.data) return [];
