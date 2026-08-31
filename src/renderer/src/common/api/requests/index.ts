@@ -9,4 +9,5 @@ export * from './registers';
 export * from './returns';
 export * from './products';
 export * from './sales';
+export * from './support';
 export * from './users';
