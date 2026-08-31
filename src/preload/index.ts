@@ -9,6 +9,8 @@ type PrintableReceipt = {
   cashier: string;
   completedAt: string;
   currency: 'KZT';
+  discountAmount: string;
+  discountPercentage: string | null;
   fiscal: {
     address: string;
     buyerBinIin: string | null;
@@ -25,7 +27,9 @@ type PrintableReceipt = {
   };
   isTest: boolean;
   items: Array<{
+    discountAmount: string;
     lineNumber: number;
+    lineSubtotal: string;
     lineTotal: string;
     markingCode: string | null;
     name: string;
@@ -50,6 +54,7 @@ type PrintableReceipt = {
     received: string | null;
   }>;
   store: { address: string | null; name: string };
+  subtotal: string;
   timeZone: string;
   total: string;
 };

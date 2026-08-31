@@ -13,10 +13,12 @@ import {
   type ProductSearchResponse,
   type SaleResponse,
   addSaleItem,
+  applySaleDiscount,
   createSale,
   getCurrentSale,
   getHeldSales,
   getSale,
+  resetSaleDiscount,
   scanSaleItem,
   searchProducts,
   setSaleItemQuantity,
@@ -36,10 +38,12 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
   return {
     ...actual,
     addSaleItem: vi.fn(),
+    applySaleDiscount: vi.fn(),
     createSale: vi.fn(),
     getCurrentSale: vi.fn(),
     getHeldSales: vi.fn(),
     getSale: vi.fn(),
+    resetSaleDiscount: vi.fn(),
     scanSaleItem: vi.fn(),
     searchProducts: vi.fn(),
     setSaleItemQuantity: vi.fn(),
@@ -57,6 +61,10 @@ const saleFixture = (version: number, id = 'sale-1'): SaleResponse => ({
   completed_at: null,
   created_at: '2026-08-24T10:00:00.000Z',
   currency: 'KZT',
+  discount_amount: '0.00',
+  discount_applied_by_membership_id: null,
+  discount_percentage: null,
+  discount_reason: null,
   fiscal_receipt: null,
   held_at: null,
   id,
@@ -69,6 +77,7 @@ const saleFixture = (version: number, id = 'sale-1'): SaleResponse => ({
   register_shift_id: 'register-shift-1',
   status: 'DRAFT',
   store_id: 'store-1',
+  subtotal: '0.00',
   total: '0.00',
   transaction_type: 'SALE',
   return_reason: null,
@@ -219,10 +228,15 @@ describe('checkout sale queries', () => {
     const held = [
       {
         created_at: '2026-08-24T10:00:00.000Z',
+        discount_amount: '0.00',
+        discount_applied_by_membership_id: null,
+        discount_percentage: null,
+        discount_reason: null,
         held_at: '2026-08-24T10:05:00.000Z',
         id: 'sale-held',
         items_count: 2,
         status: 'HELD' as const,
+        subtotal: '25.00',
         total: '25.00',
         version: 4,
       },
@@ -511,6 +525,41 @@ describe('sale command mutation', () => {
     expect(setSaleItemQuantity).toHaveBeenCalledWith('sale-1', 'item-1', {
       expectedVersion: 2,
       quantity: '2.5',
+    });
+    expect(
+      queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),
+    ).toEqual(sale3);
+  });
+
+  it('applies and resets the receipt discount with fresh sale versions', async () => {
+    const queryClient = createTestQueryClient();
+    const sale1 = saleFixture(1);
+    const sale2 = saleFixture(2);
+    const sale3 = saleFixture(3);
+    queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), sale1);
+    vi.mocked(applySaleDiscount).mockResolvedValue(sale2);
+    vi.mocked(resetSaleDiscount).mockResolvedValue(sale3);
+    const { result } = renderHook(
+      () => useSaleCommandMutation(cashierSessionId, sale1),
+      { wrapper: wrapperFor(queryClient) },
+    );
+
+    await act(() =>
+      result.current.mutateAsync({
+        percentage: '10.50',
+        reason: 'Постоянный покупатель',
+        type: 'applyDiscount',
+      }),
+    );
+    await act(() => result.current.mutateAsync({ type: 'resetDiscount' }));
+
+    expect(applySaleDiscount).toHaveBeenCalledWith('sale-1', {
+      expectedVersion: 1,
+      percentage: '10.50',
+      reason: 'Постоянный покупатель',
+    });
+    expect(resetSaleDiscount).toHaveBeenCalledWith('sale-1', {
+      expectedVersion: 2,
     });
     expect(
       queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),

@@ -1,6 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { Toaster } from 'sonner';
@@ -14,13 +20,16 @@ import {
   type SaleItemResponse,
   type SaleResponse,
   addSaleItem,
+  applySaleDiscount,
   cancelSale,
   checkoutSale,
   createSale,
   getAuthContext,
   getCategories,
   getCurrentSale,
+  overrideSaleItemPrice,
   removeSaleItem,
+  resetSaleDiscount,
   searchProducts,
   triggerAntiFraudEvent,
 } from '@renderer/common/api';
@@ -32,13 +41,16 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
   return {
     ...actual,
     addSaleItem: vi.fn(),
+    applySaleDiscount: vi.fn(),
     cancelSale: vi.fn(),
     checkoutSale: vi.fn(),
     createSale: vi.fn(),
     getAuthContext: vi.fn(),
     getCategories: vi.fn(),
     getCurrentSale: vi.fn(),
+    overrideSaleItemPrice: vi.fn(),
     removeSaleItem: vi.fn(),
+    resetSaleDiscount: vi.fn(),
     searchProducts: vi.fn(),
     triggerAntiFraudEvent: vi.fn(),
   };
@@ -134,7 +146,9 @@ const itemFixture = (
   base_unit_price: '650.00',
   id: 'item-1',
   is_marked: false,
+  discount_amount: '0.00',
   line_number: 1,
+  line_subtotal: overrides.line_total ?? '650.00',
   line_total: '650.00',
   name: 'Молоко',
   marking_code: null,
@@ -164,6 +178,10 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   completed_at: null,
   created_at: '2026-08-24T10:00:00.000Z',
   currency: 'KZT',
+  discount_amount: '0.00',
+  discount_applied_by_membership_id: null,
+  discount_percentage: null,
+  discount_reason: null,
   held_at: null,
   id: 'sale-1',
   items: [],
@@ -175,6 +193,7 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
   register_shift_id: 'register-shift-1',
   status: 'DRAFT',
   store_id: 'store-1',
+  subtotal: overrides.total ?? '0.00',
   total: '0.00',
   transaction_type: 'SALE',
   return_reason: null,
@@ -546,6 +565,168 @@ describe('server-authoritative checkout', () => {
     await waitFor(() =>
       expect(removeSaleItem).toHaveBeenCalledWith('sale-1', 'item-1', {
         expectedVersion: 1,
+      }),
+    );
+  });
+
+  it('asks for a price first, then a preset reason with the screen keyboard', async () => {
+    const user = userEvent.setup();
+    const draft = saleFixture({
+      items: [itemFixture()],
+      subtotal: '650.00',
+      total: '650.00',
+    });
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture([
+        'product.read',
+        'sales.create',
+        'sales.modify',
+        'sales.price.override',
+      ]),
+    );
+    vi.mocked(getCurrentSale).mockResolvedValue(draft);
+    vi.mocked(overrideSaleItemPrice).mockResolvedValue(
+      saleFixture({
+        items: [
+          itemFixture({
+            line_subtotal: '600.00',
+            line_total: '600.00',
+            price_override_reason: 'Цена по договорённости',
+            unit_price: '600.00',
+          }),
+        ],
+        subtotal: '600.00',
+        total: '600.00',
+        version: 2,
+      }),
+    );
+    renderCheckout();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Изменить цену Молоко' }),
+    );
+    expect(screen.getByLabelText('Новая цена, ₸')).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Причина изменения цены'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('group', { name: 'Виртуальная клавиатура' }),
+    ).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Новая цена, ₸'), '600');
+    await user.click(screen.getByRole('button', { name: 'Далее' }));
+
+    const priceReason = screen.getByLabelText('Причина изменения цены');
+    expect(priceReason).toBeInTheDocument();
+    expect(screen.queryByLabelText('Новая цена, ₸')).not.toBeInTheDocument();
+    expect(overrideSaleItemPrice).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole('button', { name: 'Цена по договорённости' }),
+    );
+    expect(priceReason).toHaveValue('Цена по договорённости');
+    await user.click(
+      screen.getByRole('button', { name: 'Экранная клавиатура' }),
+    );
+    const keyboard = await screen.findByRole('dialog', {
+      name: 'Экранная клавиатура',
+    });
+    expect(
+      within(keyboard).getByRole('group', { name: 'Виртуальная клавиатура' }),
+    ).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Сохранить цену' }));
+
+    await waitFor(() =>
+      expect(overrideSaleItemPrice).toHaveBeenCalledWith('sale-1', 'item-1', {
+        expectedVersion: 1,
+        reason: 'Цена по договорённости',
+        unitPrice: '600',
+      }),
+    );
+  });
+
+  it('applies, displays, edits, and resets a whole-receipt discount', async () => {
+    const user = userEvent.setup();
+    const draft = saleFixture({
+      items: [itemFixture()],
+      subtotal: '650.00',
+      total: '650.00',
+    });
+    const discounted = saleFixture({
+      discount_amount: '68.25',
+      discount_applied_by_membership_id: 'membership-1',
+      discount_percentage: '10.50',
+      discount_reason: 'Постоянный покупатель',
+      items: [
+        itemFixture({
+          discount_amount: '68.25',
+          line_subtotal: '650.00',
+          line_total: '581.75',
+        }),
+      ],
+      subtotal: '650.00',
+      total: '581.75',
+      version: 2,
+    });
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture([
+        'product.read',
+        'sales.complete',
+        'sales.create',
+        'sales.modify',
+        'sales.price.override',
+      ]),
+    );
+    vi.mocked(getCurrentSale).mockResolvedValue(draft);
+    vi.mocked(applySaleDiscount).mockResolvedValue(discounted);
+    vi.mocked(resetSaleDiscount).mockResolvedValue({ ...draft, version: 3 });
+    renderCheckout();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Скидка на чек' }),
+    );
+    await user.type(screen.getByLabelText('Скидка, %'), '10.50');
+    expect(screen.queryByLabelText('Причина скидки')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Далее' }));
+    const discountReason = screen.getByLabelText('Причина скидки');
+    await user.click(
+      screen.getByRole('button', { name: 'Постоянный покупатель' }),
+    );
+    expect(discountReason).toHaveValue('Постоянный покупатель');
+    await user.click(
+      screen.getByRole('button', { name: 'Экранная клавиатура' }),
+    );
+    expect(
+      await screen.findByRole('dialog', { name: 'Экранная клавиатура' }),
+    ).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('button', { name: 'Применить скидку' }));
+
+    await waitFor(() =>
+      expect(applySaleDiscount).toHaveBeenCalledWith('sale-1', {
+        expectedVersion: 1,
+        percentage: '10.50',
+        reason: 'Постоянный покупатель',
+      }),
+    );
+    expect(screen.getByText('Подытог')).toBeInTheDocument();
+    expect(screen.getByText('Скидка 10,5%')).toBeInTheDocument();
+    expect(screen.getByText('Постоянный покупатель')).toBeInTheDocument();
+    expect(screen.getAllByText('−68,25 ₸')).toHaveLength(2);
+
+    await user.click(screen.getByRole('button', { name: 'Изменить скидку' }));
+    expect(screen.getByLabelText('Скидка, %')).toHaveValue('10.50');
+    await user.click(screen.getByRole('button', { name: 'Далее' }));
+    expect(screen.getByLabelText('Причина скидки')).toHaveValue(
+      'Постоянный покупатель',
+    );
+    await user.click(screen.getByRole('button', { name: 'Назад' }));
+    await user.click(screen.getByRole('button', { name: 'Отмена' }));
+    await user.click(screen.getByRole('button', { name: 'Сбросить скидку' }));
+
+    await waitFor(() =>
+      expect(resetSaleDiscount).toHaveBeenCalledWith('sale-1', {
+        expectedVersion: 2,
       }),
     );
   });

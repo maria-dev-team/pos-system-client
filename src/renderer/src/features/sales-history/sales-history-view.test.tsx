@@ -92,10 +92,15 @@ const summary: ReceiptSummaryResponse = {
   cashier_membership_id: 'membership-2',
   completed_at: '2026-08-27T09:00:00.000Z',
   currency: 'KZT',
+  discount_amount: '100.00',
+  discount_applied_by_membership_id: 'membership-2',
+  discount_percentage: '10.00',
+  discount_reason: 'Лояльный клиент',
   fiscal_receipt: fiscalReceipt,
   id: 'sale-1',
   payments: [{ amount: '900.00', method: 'CASH' }],
   receipt_number: '42',
+  subtotal: '1000.00',
   total: '900.00',
 };
 
@@ -109,16 +114,22 @@ const receipt: ReceiptResponse = {
   completed_at: summary.completed_at,
   created_at: summary.completed_at,
   currency: 'KZT',
+  discount_amount: summary.discount_amount,
+  discount_applied_by_membership_id: summary.discount_applied_by_membership_id,
+  discount_percentage: summary.discount_percentage,
+  discount_reason: summary.discount_reason,
   fiscal_receipt: fiscalReceipt,
   held_at: null,
   id: summary.id,
   items: [
     {
       barcode: '001',
-      base_unit_price: '450.00',
+      base_unit_price: '500.00',
+      discount_amount: '100.00',
       id: 'item-1',
       is_marked: false,
       line_number: 1,
+      line_subtotal: '1000.00',
       line_total: '900.00',
       marking_code: null,
       name: 'Молоко',
@@ -135,7 +146,7 @@ const receipt: ReceiptResponse = {
       sku: 'MILK',
       source_sale_item_id: null,
       unit_code: 'pcs',
-      unit_price: '450.00',
+      unit_price: '500.00',
       vat_amount: '0.00',
       vat_rate: 'NONE',
     },
@@ -162,6 +173,7 @@ const receipt: ReceiptResponse = {
   return_reason: null,
   status: 'COMPLETED',
   store_id: cashierSession.store_id,
+  subtotal: summary.subtotal,
   total: summary.total,
   transaction_type: 'SALE',
   updated_at: summary.completed_at,
@@ -218,6 +230,7 @@ describe('SalesHistoryView', () => {
     ).toBeInTheDocument();
     expect(getReceipts).toHaveBeenCalledWith({ limit: 20, offset: 0 });
     expect(screen.getByText('1–1 из 1')).toBeInTheDocument();
+    expect(screen.queryByText('Лояльный клиент')).not.toBeInTheDocument();
   });
 
   it('shows empty receipts and retries a failed list request', async () => {
@@ -292,6 +305,10 @@ describe('SalesHistoryView', () => {
     expect(await screen.findByText('Бекзат Омаров')).toBeInTheDocument();
     expect(screen.getByText('Молоко')).toBeInTheDocument();
     expect(screen.getByText('Возвращено: 1 шт.')).toBeInTheDocument();
+    expect(screen.getByText('Подытог')).toBeInTheDocument();
+    expect(screen.getByText('Скидка 10%')).toBeInTheDocument();
+    expect(screen.getByText('Лояльный клиент')).toBeInTheDocument();
+    expect(screen.getAllByText('−100,00 ₸')).toHaveLength(2);
     expect(screen.getAllByText('Наличные').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Печать чека' })).toBeVisible();
 

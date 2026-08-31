@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildReturnPayments,
+  calculateReceiptReturnLineTotal,
   calculateReturnLineTotal,
   calculateReturnTotal,
 } from './returns-calculations';
@@ -46,6 +47,19 @@ describe('return quantities and money', () => {
         { quantity: '2', unitPrice: '10.00' },
       ]),
     ).toBe('21.01');
+  });
+
+  it('preserves cumulative rounding across partial discounted returns', () => {
+    expect(
+      calculateReceiptReturnLineTotal(
+        {
+          line_total: '2.00',
+          quantity: '3.000',
+          returned_quantity: '1.000',
+        },
+        '1',
+      ),
+    ).toBe('0.66');
   });
 });
 

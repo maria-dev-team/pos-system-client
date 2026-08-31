@@ -13,6 +13,18 @@ export const priceOverrideSchema = z.object({
   unitPrice: cashAmountSchema,
 });
 
+export const saleDiscountSchema = z.object({
+  percentage: z
+    .string()
+    .trim()
+    .regex(/^\d+(?:\.\d{1,2})?$/, 'Укажите процент с точностью до сотых')
+    .refine(
+      (percentage) => Number(percentage) > 0 && Number(percentage) < 100,
+      'Скидка должна быть больше 0 и меньше 100 процентов',
+    ),
+  reason: reasonSchema,
+});
+
 export const saleCancellationSchema = z.object({
   reason: reasonSchema,
 });

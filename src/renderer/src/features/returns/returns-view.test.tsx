@@ -105,10 +105,15 @@ const receiptSummary: ReceiptSummaryResponse = {
   cashier_membership_id: 'membership-1',
   completed_at: '2026-08-27T09:00:00.000Z',
   currency: 'KZT',
+  discount_amount: '0.00',
+  discount_applied_by_membership_id: null,
+  discount_percentage: null,
+  discount_reason: null,
   fiscal_receipt: fiscalReceipt,
   id: 'sale-1',
   payments: [{ amount: '900.00', method: 'CASH' }],
   receipt_number: '42',
+  subtotal: '900.00',
   total: '900.00',
 };
 const saleBase: SaleResponse = {
@@ -120,6 +125,10 @@ const saleBase: SaleResponse = {
   completed_at: '2026-08-27T09:00:00.000Z',
   created_at: '2026-08-27T09:00:00.000Z',
   currency: 'KZT',
+  discount_amount: '0.00',
+  discount_applied_by_membership_id: null,
+  discount_percentage: null,
+  discount_reason: null,
   fiscal_receipt: fiscalReceipt,
   held_at: null,
   id: 'sale-1',
@@ -133,6 +142,7 @@ const saleBase: SaleResponse = {
   return_reason: null,
   status: 'COMPLETED',
   store_id: 'store-1',
+  subtotal: '900.00',
   total: '900.00',
   transaction_type: 'SALE',
   updated_at: '2026-08-27T09:00:00.000Z',
@@ -145,9 +155,11 @@ const receipt: ReceiptResponse = {
     {
       barcode: '001',
       base_unit_price: '450.00',
+      discount_amount: '0.00',
       id: 'item-1',
       is_marked: false,
       line_number: 1,
+      line_subtotal: '450.00',
       line_total: '450.00',
       name: 'Молоко',
       marking_code: null,
@@ -171,9 +183,11 @@ const receipt: ReceiptResponse = {
     {
       barcode: '002',
       base_unit_price: '450.00',
+      discount_amount: '0.00',
       id: 'item-2',
       is_marked: false,
       line_number: 2,
+      line_subtotal: '450.00',
       line_total: '450.00',
       name: 'Хлеб',
       marking_code: null,
@@ -413,6 +427,60 @@ describe('ReturnsView', () => {
     );
     expect(await screen.findAllByText('Возвращено полностью')).toHaveLength(2);
     expect(screen.getByLabelText('Выбрать Молоко')).toBeDisabled();
+  });
+
+  it('refunds the discounted total of a receipt line', async () => {
+    const user = userEvent.setup();
+    vi.mocked(getReceipt).mockResolvedValue({
+      ...receipt,
+      discount_amount: '100.00',
+      discount_percentage: '10.00',
+      discount_reason: 'Постоянный покупатель',
+      items: [
+        {
+          ...receipt.items[0]!,
+          base_unit_price: '500.00',
+          discount_amount: '100.00',
+          line_subtotal: '1000.00',
+          line_total: '900.00',
+          quantity: '2',
+          returnable_quantity: '2',
+          unit_price: '500.00',
+        },
+      ],
+      subtotal: '1000.00',
+      total: '900.00',
+    });
+    renderView();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Открыть чек №42' }),
+    );
+    await user.click(screen.getByLabelText('Выбрать Молоко'));
+    await user.click(screen.getByLabelText('Увеличить количество Молоко'));
+    expect(
+      screen.getByLabelText('Выбрать Молоко').closest('div'),
+    ).toHaveTextContent('900,00 ₸');
+    await user.click(screen.getByRole('button', { name: 'На склад Молоко' }));
+    await user.type(
+      screen.getByLabelText('Причина возврата'),
+      'Товар не подошёл',
+    );
+    await user.click(screen.getByRole('button', { name: 'Оформить возврат' }));
+    await user.click(screen.getByRole('button', { name: 'Безналичные' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить возврат' }),
+    );
+
+    await waitFor(() =>
+      expect(createReceiptReturn).toHaveBeenCalledWith(
+        '42',
+        expect.any(String),
+        expect.objectContaining({
+          payments: [{ amount: '900.00', method: 'CASHLESS' }],
+        }),
+      ),
+    );
   });
 
   it('supports receipt pagination and an error retry state', async () => {

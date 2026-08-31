@@ -6,6 +6,8 @@ export type SaleItemResponse = {
   base_unit_price: string;
   id: string;
   is_marked: boolean;
+  line_subtotal: string;
+  discount_amount: string;
   line_number: number;
   line_total: string;
   name: string;
@@ -65,10 +67,15 @@ export type SalePaymentResponse = {
 
 export type HeldSaleResponse = {
   created_at: string;
+  discount_amount: string;
+  discount_applied_by_membership_id: string | null;
+  discount_percentage: string | null;
+  discount_reason: string | null;
   held_at: string;
   id: string;
   items_count: number;
   status: 'HELD';
+  subtotal: string;
   total: string;
   version: number;
 };
@@ -82,6 +89,10 @@ export type SaleResponse = {
   completed_at: string | null;
   created_at: string;
   currency: 'KZT';
+  discount_amount: string;
+  discount_applied_by_membership_id: string | null;
+  discount_percentage: string | null;
+  discount_reason: string | null;
   held_at: string | null;
   id: string;
   fiscal_receipt: FiscalReceiptResponse | null;
@@ -94,6 +105,7 @@ export type SaleResponse = {
   register_shift_id: string;
   status: 'DRAFT' | 'HELD' | 'COMPLETED' | 'CANCELLED';
   store_id: string;
+  subtotal: string;
   total: string;
   transaction_type: 'SALE' | 'RETURN';
   return_reason: string | null;
@@ -112,10 +124,15 @@ export type ReceiptSummaryResponse = {
   cashier_membership_id: string;
   completed_at: string;
   currency: 'KZT';
+  discount_amount: string;
+  discount_applied_by_membership_id: string | null;
+  discount_percentage: string | null;
+  discount_reason: string | null;
   id: string;
   fiscal_receipt: FiscalReceiptResponse | null;
   payments: Pick<SalePaymentResponse, 'amount' | 'method'>[];
   receipt_number: string;
+  subtotal: string;
   total: string;
 };
 

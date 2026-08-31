@@ -23,6 +23,8 @@ const receipt: PrintableReceipt = {
   cashier: 'Ә Ғ Қ Ң Ө Ұ Ү Һ І',
   completedAt: '2026-08-28T08:15:00.000Z',
   currency: 'KZT',
+  discountAmount: '0.00',
+  discountPercentage: null,
   fiscal: {
     address: 'Алматы',
     buyerBinIin: null,
@@ -40,7 +42,9 @@ const receipt: PrintableReceipt = {
   isTest: false,
   items: [
     {
+      discountAmount: '0.00',
       lineNumber: 1,
+      lineSubtotal: '100.00',
       lineTotal: '100.00',
       markingCode: null,
       name: 'Қазақша тауар',
@@ -59,6 +63,7 @@ const receipt: PrintableReceipt = {
     { amount: '100.00', change: null, method: 'CASHLESS', received: null },
   ],
   store: { address: null, name: 'Магазин' },
+  subtotal: '100.00',
   timeZone: 'Asia/Almaty',
   total: '100.00',
 };
@@ -236,6 +241,31 @@ describe('registerReceiptPrinterIpc', () => {
     });
     expect(raw.sendRawReceipt).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { ...receipt, discountAmount: undefined },
+    {
+      ...receipt,
+      items: [{ ...receipt.items[0], lineSubtotal: undefined }],
+    },
+  ])(
+    'rejects an incomplete discount print contract',
+    async (invalidReceipt) => {
+      const mainWebContents = register();
+
+      await expect(
+        handlerFor('receipt-printer:print')(
+          { sender: mainWebContents },
+          { ...request(), receipt: invalidReceipt },
+        ),
+      ).resolves.toEqual({
+        code: 'PRINT_FAILED',
+        message: 'Некорректные данные чека.',
+        ok: false,
+      });
+      expect(raw.sendRawReceipt).not.toHaveBeenCalled();
+    },
+  );
 
   it('does not silently fall back when the selected printer is missing', async () => {
     const mainWebContents = register();

@@ -17,10 +17,15 @@ const pendingPayment = {
 
 const heldSale = {
   created_at: '2026-08-24T08:10:00.000Z',
+  discount_amount: '0.00',
+  discount_applied_by_membership_id: null,
+  discount_percentage: null,
+  discount_reason: null,
   held_at: '2026-08-24T08:15:00.000Z',
   id: 'sale-1',
   items_count: 2,
   status: 'HELD',
+  subtotal: '900.00',
   total: '900.00',
   version: 3,
 } satisfies HeldSaleResponse;

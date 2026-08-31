@@ -40,6 +40,11 @@ export type OverrideSaleItemPricePayload = SaleVersionPayload & {
   unitPrice: string;
 };
 
+export type ApplySaleDiscountPayload = SaleVersionPayload & {
+  percentage: string;
+  reason: string;
+};
+
 export type CancelSalePayload = SaleVersionPayload & {
   reason?: string;
 };

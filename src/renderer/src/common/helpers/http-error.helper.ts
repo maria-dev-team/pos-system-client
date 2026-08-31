@@ -60,11 +60,19 @@ const messages: Record<ErrorCodeValue, string> = {
     'Новая цена должна отличаться от цены каталога.',
   [ErrorCode.ReturnQuantityExceeded]:
     'Количество превышает доступное для возврата.',
+  [ErrorCode.ReturnAmountNotRepresentable]:
+    'Сумму частичного возврата нельзя корректно распределить. Измените количество.',
   [ErrorCode.ReturnTotalZero]: 'Сумма возврата должна быть больше нуля.',
   [ErrorCode.SaleAmountOverflow]: 'Сумма продажи слишком велика.',
   [ErrorCode.SaleCancellationReasonInvalid]:
     'Укажите корректную причину отмены продажи.',
   [ErrorCode.SaleDraftAlreadyExists]: 'У вас уже есть открытая продажа.',
+  [ErrorCode.SaleDiscountNotApplicable]:
+    'Эту скидку нельзя применить к текущей сумме чека.',
+  [ErrorCode.SaleDiscountPercentageInvalid]:
+    'Укажите скидку больше 0 и меньше 100 процентов.',
+  [ErrorCode.SaleDiscountReasonInvalid]:
+    'Укажите причину скидки не короче 3 символов.',
   [ErrorCode.SaleEmpty]: 'Продажа пуста. Добавьте хотя бы один товар.',
   [ErrorCode.SaleHeldLimitExceeded]: 'Достигнут лимит отложенных продаж.',
   [ErrorCode.SaleItemLimitExceeded]: 'Достигнут лимит позиций в продаже.',

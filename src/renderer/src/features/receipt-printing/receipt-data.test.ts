@@ -13,6 +13,10 @@ const sale: SaleResponse = {
   completed_at: '2026-08-28T08:15:00.000Z',
   created_at: '2026-08-28T08:00:00.000Z',
   currency: 'KZT',
+  discount_amount: '100.00',
+  discount_applied_by_membership_id: 'membership-1',
+  discount_percentage: '10.00',
+  discount_reason: 'Лояльный клиент',
   fiscal_receipt: {
     address: 'Алматы, Абай 1',
     buyer_bin_iin: null,
@@ -41,10 +45,12 @@ const sale: SaleResponse = {
   items: [
     {
       barcode: '123',
-      base_unit_price: '1800.00',
+      base_unit_price: '2000.00',
+      discount_amount: '100.00',
       id: 'item-1',
       is_marked: false,
       line_number: 1,
+      line_subtotal: '1000.00',
       line_total: '900.00',
       name: 'Қазақша тауар',
       marking_code: null,
@@ -59,7 +65,7 @@ const sale: SaleResponse = {
       sku: 'SKU-1',
       source_sale_item_id: null,
       unit_code: 'kg',
-      unit_price: '1800.00',
+      unit_price: '2000.00',
       vat_amount: '0.00',
       vat_rate: 'NONE',
     },
@@ -97,6 +103,7 @@ const sale: SaleResponse = {
   register_shift_id: 'shift-1',
   status: 'COMPLETED',
   store_id: 'store-1',
+  subtotal: '1000.00',
   total: '900.00',
   transaction_type: 'SALE',
   return_reason: null,
@@ -122,17 +129,21 @@ const organization: OrganizationResponse = {
 
 describe('buildPrintableReceipt', () => {
   it('uses directory metadata and only completed incoming payments', () => {
-    expect(
-      buildPrintableReceipt(sale, {
-        currentCashier: { id: 'membership-1', name: 'Айжан Қасымова' },
-        organization,
-        store: { address: 'Абай 1', name: 'Магазин №1' },
-      }),
-    ).toMatchObject({
+    const printable = buildPrintableReceipt(sale, {
+      currentCashier: { id: 'membership-1', name: 'Айжан Қасымова' },
+      organization,
+      store: { address: 'Абай 1', name: 'Магазин №1' },
+    });
+
+    expect(printable).toMatchObject({
       cashier: 'Айжан Қасымова',
+      discountAmount: '100.00',
+      discountPercentage: '10.00',
       items: [
         {
+          discountAmount: '100.00',
           lineNumber: 1,
+          lineSubtotal: '1000.00',
           name: 'Қазақша тауар',
           quantity: '0.500',
           unitLabel: 'кг',
@@ -146,8 +157,10 @@ describe('buildPrintableReceipt', () => {
       payments: [{ amount: '900.00', method: 'CASHLESS' }],
       localReceiptNumber: '42',
       store: { address: 'Алматы, Абай 1', name: 'Магазин №1' },
+      subtotal: '1000.00',
       timeZone: 'Asia/Almaty',
     });
+    expect(printable).not.toHaveProperty('discountReason');
   });
 
   it('uses the resolved cashier name for a historical receipt', () => {

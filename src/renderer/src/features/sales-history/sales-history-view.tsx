@@ -100,9 +100,19 @@ function ReceiptDetail({ receipt }: { receipt: ReceiptResponse }) {
                     </p>
                   ) : null}
                 </div>
-                <p className="shrink-0 font-bold tabular-nums">
-                  {formatCash(item.line_total)}
-                </p>
+                <div className="shrink-0 text-right tabular-nums">
+                  {item.discount_amount !== '0.00' ? (
+                    <>
+                      <p className="text-xs text-muted-foreground line-through">
+                        {formatCash(item.line_subtotal)}
+                      </p>
+                      <p className="text-xs font-semibold text-destructive">
+                        −{formatCash(item.discount_amount)}
+                      </p>
+                    </>
+                  ) : null}
+                  <p className="font-bold">{formatCash(item.line_total)}</p>
+                </div>
               </div>
             </article>
           ))}
@@ -126,6 +136,33 @@ function ReceiptDetail({ receipt }: { receipt: ReceiptResponse }) {
             </div>
           ))}
         </div>
+        {receipt.discount_percentage ? (
+          <div className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground">Подытог</span>
+              <span className="font-semibold tabular-nums">
+                {formatCash(receipt.subtotal)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground">
+                Скидка{' '}
+                {Number(receipt.discount_percentage).toLocaleString('ru-RU', {
+                  maximumFractionDigits: 2,
+                })}
+                %
+              </span>
+              <span className="font-semibold tabular-nums text-destructive">
+                −{formatCash(receipt.discount_amount)}
+              </span>
+            </div>
+            {receipt.discount_reason ? (
+              <p className="break-words text-xs text-muted-foreground">
+                {receipt.discount_reason}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-4 flex items-end justify-between gap-4 border-t border-border pt-4">
           <span className="font-bold">Итого</span>
           <span className="text-2xl font-extrabold tabular-nums text-primary">

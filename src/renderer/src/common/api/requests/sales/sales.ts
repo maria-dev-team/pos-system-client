@@ -5,6 +5,7 @@ import type {
 } from '../../responses/sale.response';
 import type {
   AddSaleItemPayload,
+  ApplySaleDiscountPayload,
   CancelSalePayload,
   CheckoutSalePayload,
   CreateSalePayload,
@@ -90,6 +91,18 @@ export const resetSaleItemPrice = async (
       payload,
     ),
   );
+
+export const applySaleDiscount = async (
+  saleId: string,
+  payload: ApplySaleDiscountPayload,
+): Promise<SaleResponse> =>
+  unwrapSale(await request.post(`/v1/sales/${saleId}/apply-discount`, payload));
+
+export const resetSaleDiscount = async (
+  saleId: string,
+  payload: SaleVersionPayload,
+): Promise<SaleResponse> =>
+  unwrapSale(await request.post(`/v1/sales/${saleId}/reset-discount`, payload));
 
 export const cancelSale = async (
   saleId: string,
