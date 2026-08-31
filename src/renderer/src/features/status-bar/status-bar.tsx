@@ -14,6 +14,7 @@ import {
   useLogout,
 } from '@renderer/features/auth';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
+import { SupportAction } from '@renderer/features/support';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
 import { useMinuteClock } from './use-minute-clock';
@@ -166,6 +167,9 @@ export function StatusBar() {
             <span>{timeFormatter.format(now)}</span>
           </time>
         );
+      case 'support':
+        if (!isAuthenticated) return null;
+        return <SupportAction key={item} />;
       case 'logout':
         if (!isAuthenticated) return null;
         return (

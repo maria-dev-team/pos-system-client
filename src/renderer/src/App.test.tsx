@@ -47,6 +47,7 @@ const api = vi.hoisted(() => ({
   scanSaleItem: vi.fn(),
   searchProducts: vi.fn(),
   selectContext: vi.fn(),
+  sendSupportMessage: vi.fn(),
   setSaleItemQuantity: vi.fn(),
   startCashierSession: vi.fn(),
   triggerAntiFraudEvent: vi.fn(),

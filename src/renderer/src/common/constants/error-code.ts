@@ -68,6 +68,7 @@ export const ErrorCode = {
   InvalidProductQuantity: 'INVALID_PRODUCT_QUANTITY',
   StoreAccessDenied: 'STORE_ACCESS_DENIED',
   StoreContextRequired: 'STORE_CONTEXT_REQUIRED',
+  SupportUnavailable: 'SUPPORT_UNAVAILABLE',
   TooManyRequests: 'TOO_MANY_REQUESTS',
 } as const;
 

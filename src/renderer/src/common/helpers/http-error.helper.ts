@@ -107,6 +107,8 @@ const messages: Record<ErrorCodeValue, string> = {
   [ErrorCode.InvalidProductQuantity]: 'Указано некорректное количество товара.',
   [ErrorCode.StoreAccessDenied]: 'У вас нет доступа к этому магазину.',
   [ErrorCode.StoreContextRequired]: 'Сначала выберите магазин.',
+  [ErrorCode.SupportUnavailable]:
+    'Служба поддержки временно недоступна. Повторите попытку позже.',
   [ErrorCode.TooManyRequests]:
     'Слишком много попыток. Попробуйте немного позже.',
 };
