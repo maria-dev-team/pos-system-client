@@ -61,9 +61,11 @@ const isDecimal = (value: unknown): value is string =>
 
 const isReceiptItem = (value: unknown): boolean =>
   isRecord(value) &&
+  isDecimal(value.discountAmount) &&
   Number.isInteger(value.lineNumber) &&
   (value.lineNumber as number) > 0 &&
   isDecimal(value.lineTotal) &&
+  isDecimal(value.lineSubtotal) &&
   isNullableText(value.markingCode, 512) &&
   isText(value.name) &&
   isNullableText(value.ntinCode) &&
@@ -109,6 +111,9 @@ const isPrintableReceipt = (value: unknown): value is PrintableReceipt => {
     isText(value.completedAt, 100) &&
     !Number.isNaN(Date.parse(value.completedAt)) &&
     value.currency === 'KZT' &&
+    isDecimal(value.discountAmount) &&
+    (value.discountPercentage === null ||
+      isDecimal(value.discountPercentage)) &&
     isText(value.fiscal.address, 1000) &&
     isNullableText(value.fiscal.buyerBinIin) &&
     isText(value.fiscal.cashboxUniqueNumber) &&
@@ -135,6 +140,7 @@ const isPrintableReceipt = (value: unknown): value is PrintableReceipt => {
     Array.from(value.payments).every(isReceiptPayment) &&
     isNullableText(value.store.address) &&
     isText(value.store.name) &&
+    isDecimal(value.subtotal) &&
     hasValidTimeZone(value.timeZone) &&
     isDecimal(value.total)
   );

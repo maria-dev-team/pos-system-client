@@ -56,8 +56,12 @@ export const buildPrintableReceipt = (
     cashier: cashierName,
     completedAt: fiscal.fiscalized_at,
     currency: sale.currency,
+    discountAmount: sale.discount_amount,
+    discountPercentage: sale.discount_percentage,
     items: sale.items.map((item) => ({
+      discountAmount: item.discount_amount,
       lineNumber: item.line_number,
+      lineSubtotal: item.line_subtotal,
       lineTotal: item.line_total,
       markingCode: item.marking_code,
       name: item.nkt_name ?? item.name,
@@ -96,6 +100,7 @@ export const buildPrintableReceipt = (
       address: fiscal.address,
       name: metadata.store?.name ?? sale.store_id,
     },
+    subtotal: sale.subtotal,
     timeZone: organization?.timezone ?? 'Asia/Almaty',
     total: sale.total,
   };

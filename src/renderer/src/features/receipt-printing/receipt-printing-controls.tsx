@@ -43,6 +43,8 @@ const testReceipt: Parameters<
   cashier: 'Ә Ғ Қ Ң Ө Ұ Ү Һ І',
   completedAt: '2026-01-01T00:00:00.000Z',
   currency: 'KZT',
+  discountAmount: '0.00',
+  discountPercentage: null,
   fiscal: {
     address: 'Тестовый адрес',
     buyerBinIin: null,
@@ -60,7 +62,9 @@ const testReceipt: Parameters<
   isTest: true,
   items: [
     {
+      discountAmount: '0.00',
       lineNumber: 1,
+      lineSubtotal: '100.00',
       lineTotal: '100.00',
       markingCode: null,
       name: 'Тестовая печать: длинное название товара',
@@ -88,6 +92,7 @@ const testReceipt: Parameters<
     },
   ],
   store: { address: null, name: 'Проверка принтера' },
+  subtotal: '100.00',
   timeZone: 'Asia/Almaty',
   total: '100.00',
 };

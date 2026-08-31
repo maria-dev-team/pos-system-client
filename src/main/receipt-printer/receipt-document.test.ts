@@ -14,6 +14,8 @@ const receipt: PrintableReceipt = {
   cashier: 'Айжан Қасымова',
   completedAt: '2026-08-28T08:15:00.000Z',
   currency: 'KZT',
+  discountAmount: '127.78',
+  discountPercentage: '10.00',
   fiscal: {
     address: 'Алматы, Абай 1',
     buyerBinIin: null,
@@ -31,7 +33,9 @@ const receipt: PrintableReceipt = {
   isTest: false,
   items: [
     {
+      discountAmount: '100.00',
       lineNumber: 2,
+      lineSubtotal: '1000.00',
       lineTotal: '900.00',
       markingCode: null,
       name: 'Ұзын тауар <script>alert(1)</script>',
@@ -43,7 +47,9 @@ const receipt: PrintableReceipt = {
       vatRate: 'NONE',
     },
     {
+      discountAmount: '27.78',
       lineNumber: 1,
+      lineSubtotal: '277.78',
       lineTotal: '250.00',
       markingCode: null,
       name: 'Әже наны',
@@ -71,6 +77,7 @@ const receipt: PrintableReceipt = {
     },
   ],
   store: { address: 'Алматы, Абай 1', name: 'Магазин №1' },
+  subtotal: '1277.78',
   timeZone: 'Asia/Almaty',
   total: '1150.00',
 };
@@ -111,6 +118,11 @@ describe('renderReceiptDocument', () => {
     expect(html).toContain('1 шт. × 250,00 ₸');
     expect(html).toContain('Получено: 1 200,00 ₸');
     expect(html).toContain('Сдача: 50,00 ₸');
+    expect(html).toContain('Скидка на позицию');
+    expect(html).toContain('−27,78 ₸');
+    expect(html).toContain('ПОДЫТОГ');
+    expect(html).toContain('СКИДКА 10%');
+    expect(html).toContain('−127,78 ₸');
   });
 
   it('matches regular ESC/POS Font A proportions without extra spacing', () => {

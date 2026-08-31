@@ -4,11 +4,13 @@ import axios from 'axios';
 import {
   type SaleResponse,
   addSaleItem,
+  applySaleDiscount,
   createSale,
   getCurrentSale,
   getSale,
   overrideSaleItemPrice,
   removeSaleItem,
+  resetSaleDiscount,
   resetSaleItemPrice,
   scanSaleItem,
   setSaleItemQuantity,
@@ -32,7 +34,9 @@ export type SaleCommand =
       type: 'overridePrice';
       unitPrice: string;
     }
-  | { itemId: string; type: 'resetPrice' };
+  | { itemId: string; type: 'resetPrice' }
+  | { percentage: string; reason: string; type: 'applyDiscount' }
+  | { type: 'resetDiscount' };
 
 type SaleCommandMutationOptions = {
   onError?: (
@@ -155,6 +159,14 @@ export function useSaleCommandMutation(
           return resetSaleItemPrice(currentSale.id, command.itemId, {
             expectedVersion,
           });
+        case 'applyDiscount':
+          return applySaleDiscount(currentSale.id, {
+            expectedVersion,
+            percentage: command.percentage,
+            reason: command.reason,
+          });
+        case 'resetDiscount':
+          return resetSaleDiscount(currentSale.id, { expectedVersion });
       }
     },
     onError: async (error, command) => {

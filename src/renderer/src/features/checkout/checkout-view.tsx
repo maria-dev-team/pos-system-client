@@ -44,10 +44,7 @@ import {
 import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
-import {
-  VirtualKeyboard,
-  VirtualKeyboardOverlay,
-} from '@renderer/common/components/virtual-keyboard';
+import { VirtualKeyboardOverlay } from '@renderer/common/components/virtual-keyboard';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import {
@@ -71,7 +68,11 @@ import {
 
 import { CheckoutCategoryPicker } from './checkout-category-picker';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
-import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
+import {
+  priceOverrideSchema,
+  saleCancellationSchema,
+  saleDiscountSchema,
+} from './checkout-input';
 import { CheckoutPaymentDialog } from './checkout-payment-dialog';
 import {
   currentSaleQueryOptions,
@@ -89,6 +90,16 @@ const cancellationReasonOptions = [
   'Покупатель передумал',
   'Ошибка при добавлении товара',
   'Дублирующий чек',
+] as const;
+const priceReasonOptions = [
+  'Ошибка в цене',
+  'Цена по договорённости',
+  'Акция',
+] as const;
+const discountReasonOptions = [
+  'Постоянный покупатель',
+  'Акция',
+  'Компенсация',
 ] as const;
 
 type CheckoutViewProps = {
@@ -202,6 +213,14 @@ function ActiveCheckout({
   const [unitPrice, setUnitPrice] = useState('');
   const [priceReason, setPriceReason] = useState('');
   const [priceError, setPriceError] = useState<string | null>(null);
+  const [priceStep, setPriceStep] = useState<'value' | 'reason'>('value');
+  const [priceKeyboardOpen, setPriceKeyboardOpen] = useState(false);
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [discountPercentage, setDiscountPercentage] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const [discountStep, setDiscountStep] = useState<'value' | 'reason'>('value');
+  const [discountKeyboardOpen, setDiscountKeyboardOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -238,6 +257,9 @@ function ActiveCheckout({
     setQuantityItem(null);
     setRemoveItem(null);
     setPriceItem(null);
+    setPriceKeyboardOpen(false);
+    setDiscountOpen(false);
+    setDiscountKeyboardOpen(false);
     setCancelOpen(false);
     setCancelKeyboardOpen(false);
     refocus();
@@ -310,6 +332,10 @@ function ActiveCheckout({
         setPriceError(message);
         return;
       }
+      if (submitted.type === 'applyDiscount') {
+        setDiscountError(message);
+        return;
+      }
       httpErrorHandler(error, 'Не удалось изменить чек.');
       refocus();
     },
@@ -331,6 +357,9 @@ function ActiveCheckout({
       } else if (submitted.type === 'overridePrice') {
         setPriceError(null);
         setPriceItem(null);
+      } else if (submitted.type === 'applyDiscount') {
+        setDiscountError(null);
+        setDiscountOpen(false);
       }
       refocus();
     },
@@ -715,10 +744,23 @@ function ActiveCheckout({
     setUnitPrice('');
     setPriceReason('');
     setPriceError(null);
+    setPriceStep('value');
+    setPriceKeyboardOpen(false);
   };
   const submitPrice = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!priceItem) return;
+    if (priceStep === 'value') {
+      const parsedPrice =
+        priceOverrideSchema.shape.unitPrice.safeParse(unitPrice);
+      if (!parsedPrice.success) {
+        setPriceError(parsedPrice.error.issues[0]?.message ?? 'Проверьте цену');
+        return;
+      }
+      setPriceError(null);
+      setPriceStep('reason');
+      return;
+    }
     const parsed = priceOverrideSchema.safeParse({
       reason: priceReason,
       unitPrice,
@@ -738,6 +780,41 @@ function ActiveCheckout({
   const resetPrice = (row: CheckoutRow) => {
     submitCommand({ itemId: row.item.id, type: 'resetPrice' });
   };
+  const openDiscount = () => {
+    setDiscountPercentage(sale?.discount_percentage ?? '');
+    setDiscountReason(sale?.discount_reason ?? '');
+    setDiscountError(null);
+    setDiscountStep('value');
+    setDiscountKeyboardOpen(false);
+    setDiscountOpen(true);
+  };
+  const submitDiscount = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (discountStep === 'value') {
+      const parsedPercentage =
+        saleDiscountSchema.shape.percentage.safeParse(discountPercentage);
+      if (!parsedPercentage.success) {
+        setDiscountError(
+          parsedPercentage.error.issues[0]?.message ?? 'Проверьте скидку',
+        );
+        return;
+      }
+      setDiscountError(null);
+      setDiscountStep('reason');
+      return;
+    }
+    const parsed = saleDiscountSchema.safeParse({
+      percentage: discountPercentage,
+      reason: discountReason,
+    });
+    if (!parsed.success) {
+      setDiscountError(parsed.error.issues[0]?.message ?? 'Проверьте скидку');
+      return;
+    }
+    setDiscountError(null);
+    submitCommand({ ...parsed.data, type: 'applyDiscount' });
+  };
+  const resetDiscount = () => submitCommand({ type: 'resetDiscount' });
   const submitCancel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const parsed = saleCancellationSchema.safeParse({ reason: cancelReason });
@@ -1084,8 +1161,20 @@ function ActiveCheckout({
                           </div>
                         ) : null}
                       </td>
-                      <td className="px-4 py-4 text-right text-base font-bold tabular-nums">
-                        {formatCash(rowLineTotal(row))}
+                      <td className="px-4 py-4 text-right tabular-nums">
+                        {row.item.discount_amount !== '0.00' ? (
+                          <>
+                            <p className="text-sm text-muted-foreground line-through">
+                              {formatCash(row.item.line_subtotal)}
+                            </p>
+                            <p className="text-sm font-semibold text-destructive">
+                              −{formatCash(row.item.discount_amount)}
+                            </p>
+                          </>
+                        ) : null}
+                        <p className="text-base font-bold">
+                          {formatCash(rowLineTotal(row))}
+                        </p>
                       </td>
                     </tr>
                   );
@@ -1111,6 +1200,33 @@ function ActiveCheckout({
           </div>
 
           <div className="mt-4 min-w-0 rounded-xl border border-primary/15 bg-primary/[0.045] p-4">
+            {sale?.discount_percentage ? (
+              <div className="mb-4 space-y-2 border-b border-primary/10 pb-4 text-sm">
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">Подытог</span>
+                  <span className="font-semibold tabular-nums">
+                    {formatCash(sale.subtotal)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground">
+                    Скидка{' '}
+                    {Number(sale.discount_percentage).toLocaleString('ru-RU', {
+                      maximumFractionDigits: 2,
+                    })}
+                    %
+                  </span>
+                  <span className="font-semibold tabular-nums text-destructive">
+                    −{formatCash(sale.discount_amount)}
+                  </span>
+                </div>
+                {sale.discount_reason ? (
+                  <p className="break-words text-xs text-muted-foreground">
+                    {sale.discount_reason}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Итого
             </p>
@@ -1120,6 +1236,32 @@ function ActiveCheckout({
           </div>
 
           <div className="space-y-4 pt-4">
+            {rows.length > 0 && canOverridePrice ? (
+              <div className="grid gap-2">
+                <Button
+                  className="min-h-12 w-full"
+                  disabled={isBusy}
+                  onClick={openDiscount}
+                  type="button"
+                  variant="ghost"
+                >
+                  {sale?.discount_percentage
+                    ? 'Изменить скидку'
+                    : 'Скидка на чек'}
+                </Button>
+                {sale?.discount_percentage ? (
+                  <Button
+                    className="min-h-12 w-full"
+                    disabled={isBusy}
+                    onClick={resetDiscount}
+                    type="button"
+                    variant="ghost"
+                  >
+                    Сбросить скидку
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             {rows.length > 0 && canPay ? (
               <Button
                 className="min-h-14 w-full text-base shadow-md shadow-primary/20"
@@ -1384,6 +1526,151 @@ function ActiveCheckout({
         onOpenChange={(open) => {
           if (!open && !command.isPending) closeDialogs();
         }}
+        open={discountOpen}
+      >
+        <DialogContent
+          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-2xl"
+          showCloseButton={!command.isPending}
+        >
+          <DialogHeader>
+            <DialogTitle>Скидка на весь чек</DialogTitle>
+            <DialogDescription>
+              Скидку рассчитает сервер для каждой позиции и итоговой суммы.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-5" onSubmit={submitDiscount}>
+            {discountStep === 'value' ? (
+              <>
+                <FormField>
+                  <Label htmlFor="sale-discount-percentage">Скидка, %</Label>
+                  <Input
+                    autoFocus
+                    id="sale-discount-percentage"
+                    inputMode="decimal"
+                    maxLength={6}
+                    onChange={(event) => {
+                      setDiscountPercentage(event.target.value);
+                      setDiscountError(null);
+                    }}
+                    value={discountPercentage}
+                  />
+                </FormField>
+                <NumericKeypad
+                  disabled={command.isPending}
+                  onValueChange={(value) => {
+                    setDiscountPercentage(value);
+                    setDiscountError(null);
+                  }}
+                  value={discountPercentage}
+                />
+              </>
+            ) : (
+              <FormField>
+                <Label htmlFor="sale-discount-reason">Причина скидки</Label>
+                <textarea
+                  aria-label="Причина скидки"
+                  autoFocus
+                  className="min-h-24 w-full resize-none rounded-lg border border-input bg-background p-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
+                  id="sale-discount-reason"
+                  maxLength={500}
+                  onChange={(event) => {
+                    setDiscountReason(event.target.value);
+                    setDiscountError(null);
+                  }}
+                  placeholder="Коротко укажите причину скидки"
+                  value={discountReason}
+                />
+                <div className="flex flex-wrap gap-2">
+                  {discountReasonOptions.map((reason) => (
+                    <Button
+                      className="min-h-9 px-3 py-1.5 text-xs"
+                      key={reason}
+                      onClick={() => {
+                        setDiscountReason(reason);
+                        setDiscountError(null);
+                      }}
+                      type="button"
+                      variant="ghost"
+                    >
+                      {reason}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <Button
+                    onClick={() => setDiscountKeyboardOpen(true)}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Keyboard aria-hidden="true" />
+                    Экранная клавиатура
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {discountReason.length}/500
+                  </span>
+                </div>
+                <VirtualKeyboardOverlay
+                  compact
+                  disabled={command.isPending}
+                  maxLength={500}
+                  onOpenChange={setDiscountKeyboardOpen}
+                  onValueChange={(value) => {
+                    setDiscountReason(value);
+                    setDiscountError(null);
+                  }}
+                  open={discountKeyboardOpen}
+                  value={discountReason}
+                />
+              </FormField>
+            )}
+            {discountError ? (
+              <p className="text-sm font-medium text-destructive">
+                {discountError}
+              </p>
+            ) : null}
+            <DialogFooter>
+              {discountStep === 'value' ? (
+                <DialogClose asChild>
+                  <Button
+                    className="min-h-12"
+                    disabled={command.isPending}
+                    type="button"
+                    variant="ghost"
+                  >
+                    Отмена
+                  </Button>
+                </DialogClose>
+              ) : (
+                <Button
+                  className="min-h-12"
+                  disabled={command.isPending}
+                  onClick={() => {
+                    setDiscountKeyboardOpen(false);
+                    setDiscountError(null);
+                    setDiscountStep('value');
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Назад
+                </Button>
+              )}
+              <Button
+                className="min-h-12"
+                disabled={command.isPending}
+                type="submit"
+              >
+                {discountStep === 'value' ? 'Далее' : 'Применить скидку'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open && !command.isPending) closeDialogs();
+        }}
         open={Boolean(priceItem)}
       >
         <DialogContent
@@ -1399,70 +1686,127 @@ function ActiveCheckout({
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-5" onSubmit={submitPrice}>
-            <FormField>
-              <Label htmlFor="override-unit-price">Новая цена, ₸</Label>
-              <Input
-                autoFocus
-                id="override-unit-price"
-                inputMode="decimal"
-                onChange={(event) => {
-                  setUnitPrice(event.target.value);
-                  setPriceError(null);
-                }}
-                value={unitPrice}
-              />
-            </FormField>
-            <NumericKeypad
-              disabled={command.isPending}
-              onValueChange={(value) => {
-                setUnitPrice(value);
-                setPriceError(null);
-              }}
-              value={unitPrice}
-            />
-            <FormField>
-              <Label htmlFor="override-reason">Причина изменения цены</Label>
-              <Input
-                id="override-reason"
-                maxLength={500}
-                onChange={(event) => {
-                  setPriceReason(event.target.value);
-                  setPriceError(null);
-                }}
-                value={priceReason}
-              />
-            </FormField>
-            <VirtualKeyboard
-              disabled={command.isPending}
-              maxLength={500}
-              onValueChange={(value) => {
-                setPriceReason(value);
-                setPriceError(null);
-              }}
-              value={priceReason}
-            />
+            {priceStep === 'value' ? (
+              <>
+                <FormField>
+                  <Label htmlFor="override-unit-price">Новая цена, ₸</Label>
+                  <Input
+                    autoFocus
+                    id="override-unit-price"
+                    inputMode="decimal"
+                    onChange={(event) => {
+                      setUnitPrice(event.target.value);
+                      setPriceError(null);
+                    }}
+                    value={unitPrice}
+                  />
+                </FormField>
+                <NumericKeypad
+                  disabled={command.isPending}
+                  onValueChange={(value) => {
+                    setUnitPrice(value);
+                    setPriceError(null);
+                  }}
+                  value={unitPrice}
+                />
+              </>
+            ) : (
+              <FormField>
+                <Label htmlFor="override-reason">Причина изменения цены</Label>
+                <textarea
+                  aria-label="Причина изменения цены"
+                  autoFocus
+                  className="min-h-24 w-full resize-none rounded-lg border border-input bg-background p-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/25"
+                  id="override-reason"
+                  maxLength={500}
+                  onChange={(event) => {
+                    setPriceReason(event.target.value);
+                    setPriceError(null);
+                  }}
+                  placeholder="Коротко укажите причину изменения цены"
+                  value={priceReason}
+                />
+                <div className="flex flex-wrap gap-2">
+                  {priceReasonOptions.map((reason) => (
+                    <Button
+                      className="min-h-9 px-3 py-1.5 text-xs"
+                      key={reason}
+                      onClick={() => {
+                        setPriceReason(reason);
+                        setPriceError(null);
+                      }}
+                      type="button"
+                      variant="ghost"
+                    >
+                      {reason}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <Button
+                    onClick={() => setPriceKeyboardOpen(true)}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Keyboard aria-hidden="true" />
+                    Экранная клавиатура
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {priceReason.length}/500
+                  </span>
+                </div>
+                <VirtualKeyboardOverlay
+                  compact
+                  disabled={command.isPending}
+                  maxLength={500}
+                  onOpenChange={setPriceKeyboardOpen}
+                  onValueChange={(value) => {
+                    setPriceReason(value);
+                    setPriceError(null);
+                  }}
+                  open={priceKeyboardOpen}
+                  value={priceReason}
+                />
+              </FormField>
+            )}
             {priceError ? (
               <p className="text-sm font-medium text-destructive">
                 {priceError}
               </p>
             ) : null}
             <DialogFooter>
-              <DialogClose asChild>
+              {priceStep === 'value' ? (
+                <DialogClose asChild>
+                  <Button
+                    className="min-h-12"
+                    disabled={command.isPending}
+                    type="button"
+                    variant="ghost"
+                  >
+                    Отмена
+                  </Button>
+                </DialogClose>
+              ) : (
                 <Button
                   className="min-h-12"
                   disabled={command.isPending}
+                  onClick={() => {
+                    setPriceKeyboardOpen(false);
+                    setPriceError(null);
+                    setPriceStep('value');
+                  }}
                   type="button"
                   variant="ghost"
                 >
-                  Отмена
+                  Назад
                 </Button>
-              </DialogClose>
+              )}
               <Button
                 className="min-h-12"
                 disabled={command.isPending}
                 type="submit"
               >
-                Сохранить цену
+                {priceStep === 'value' ? 'Далее' : 'Сохранить цену'}
               </Button>
             </DialogFooter>
           </form>

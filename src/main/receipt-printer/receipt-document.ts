@@ -1,7 +1,9 @@
 import QRCode from 'qrcode';
 
 export type PrintableReceiptItem = {
+  discountAmount: string;
   lineNumber: number;
+  lineSubtotal: string;
   lineTotal: string;
   markingCode: string | null;
   name: string;
@@ -24,6 +26,8 @@ export type PrintableReceipt = {
   cashier: string;
   completedAt: string;
   currency: 'KZT';
+  discountAmount: string;
+  discountPercentage: string | null;
   fiscal: {
     address: string;
     buyerBinIin: string | null;
@@ -49,6 +53,7 @@ export type PrintableReceipt = {
   };
   payments: PrintableReceiptPayment[];
   store: { address: string | null; name: string };
+  subtotal: string;
   timeZone: string;
   total: string;
 };
@@ -128,18 +133,25 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
     .join('');
   const items = [...receipt.items]
     .sort((left, right) => left.lineNumber - right.lineNumber)
-    .map(
-      (item) => `<section class="item">
+    .map((item) => {
+      const discounted = item.discountAmount !== '0.00';
+      return `<section class="item">
         <div class="item-name">${item.lineNumber}. ${escapeHtml(item.name)}</div>
         ${item.ntinCode ? `<div>NTIN/KZTIN: ${escapeHtml(item.ntinCode)}</div>` : ''}
         ${item.markingCode ? `<div>Маркировка: ${escapeHtml(item.markingCode)}</div>` : ''}
         <div class="item-totals">
           <span>${escapeHtml(formatQuantity(item.quantity))} ${escapeHtml(item.unitLabel)} × ${escapeHtml(formatMoney(item.unitPrice))}</span>
-          <strong>${escapeHtml(formatMoney(item.lineTotal))}</strong>
+          <strong>${escapeHtml(formatMoney(discounted ? item.lineSubtotal : item.lineTotal))}</strong>
         </div>
+        ${
+          discounted
+            ? `<div class="item-totals"><span>Скидка на позицию</span><strong>−${escapeHtml(formatMoney(item.discountAmount))}</strong></div>
+        <div class="item-totals"><span>Сумма позиции</span><strong>${escapeHtml(formatMoney(item.lineTotal))}</strong></div>`
+            : ''
+        }
         <div>${item.vatRate === 'NONE' ? 'Без НДС' : `НДС ${escapeHtml(item.vatRate)}%: ${escapeHtml(formatMoney(item.vatAmount))}`}</div>
-      </section>`,
-    )
+      </section>`;
+    })
     .join('');
   const payments = receipt.payments
     .map((payment) => {
@@ -226,6 +238,12 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
     <div class="separator"></div>
     ${payments}
     <div class="separator"></div>
+    ${
+      receipt.discountPercentage
+        ? `${receiptLine('ПОДЫТОГ', formatMoney(receipt.subtotal))}
+    ${receiptLine(`СКИДКА ${formatQuantity(receipt.discountPercentage)}%`, `−${formatMoney(receipt.discountAmount)}`)}`
+        : ''
+    }
     <div class="grand-total"><span>ИТОГО</span><strong>${escapeHtml(formatMoney(receipt.total))}</strong></div>
     ${
       receipt.isTest
