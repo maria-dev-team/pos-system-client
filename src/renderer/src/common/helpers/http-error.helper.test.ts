@@ -77,6 +77,18 @@ describe('getHttpErrorMessage', () => {
     ['SALE_ITEM_LIMIT_EXCEEDED', 'Достигнут лимит позиций в продаже.'],
     ['SALE_AMOUNT_OVERFLOW', 'Сумма продажи слишком велика.'],
     [
+      'SALE_DISCOUNT_PERCENTAGE_INVALID',
+      'Укажите скидку больше 0 и меньше 100 процентов.',
+    ],
+    [
+      'SALE_DISCOUNT_REASON_INVALID',
+      'Укажите причину скидки не короче 3 символов.',
+    ],
+    [
+      'SALE_DISCOUNT_NOT_APPLICABLE',
+      'Эту скидку нельзя применить к текущей сумме чека.',
+    ],
+    [
       'SALE_PRICE_OVERRIDE_SAME_VALUE',
       'Новая цена совпадает с текущей ценой товара.',
     ],
@@ -89,6 +101,10 @@ describe('getHttpErrorMessage', () => {
     [
       'RETURN_QUANTITY_EXCEEDED',
       'Количество превышает доступное для возврата.',
+    ],
+    [
+      'RETURN_AMOUNT_NOT_REPRESENTABLE',
+      'Сумму частичного возврата нельзя корректно распределить. Измените количество.',
     ],
     [
       'RETURN_IDEMPOTENCY_CONFLICT',

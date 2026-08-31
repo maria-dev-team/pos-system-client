@@ -1,5 +1,6 @@
 export {
   addSaleItem,
+  applySaleDiscount,
   cancelSale,
   checkoutSale,
   createSale,
@@ -10,6 +11,7 @@ export {
   overrideSaleItemPrice,
   removeSaleItem,
   resetSaleItemPrice,
+  resetSaleDiscount,
   resumeSale,
   scanSaleItem,
   setSaleItemQuantity,

@@ -6,7 +6,11 @@ import {
   quantitySchema,
 } from '@renderer/common/lib/quantity';
 
-import { priceOverrideSchema, saleCancellationSchema } from './checkout-input';
+import {
+  priceOverrideSchema,
+  saleCancellationSchema,
+  saleDiscountSchema,
+} from './checkout-input';
 
 describe('quantitySchema', () => {
   it.each(['1', '999999', '1.2', '1.234'])(
@@ -45,6 +49,30 @@ describe('quantity display and arithmetic', () => {
 });
 
 describe('checkout reason schemas', () => {
+  it('normalizes a valid whole-sale discount without converting the percentage to number', () => {
+    expect(
+      saleDiscountSchema.parse({
+        percentage: ' 10.50 ',
+        reason: '  Постоянный покупатель  ',
+      }),
+    ).toEqual({
+      percentage: '10.50',
+      reason: 'Постоянный покупатель',
+    });
+  });
+
+  it.each(['0', '100', '-1', '10.000', '.5', ''])(
+    'rejects invalid whole-sale discount percentage %s',
+    (percentage) => {
+      expect(
+        saleDiscountSchema.safeParse({
+          percentage,
+          reason: 'Постоянный покупатель',
+        }).success,
+      ).toBe(false);
+    },
+  );
+
   it('normalizes a valid price override using the common cash amount schema', () => {
     expect(
       priceOverrideSchema.parse({

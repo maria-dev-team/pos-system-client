@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type CheckoutApi = {
   addSaleItem: (...args: unknown[]) => Promise<unknown>;
+  applySaleDiscount: (...args: unknown[]) => Promise<unknown>;
   cancelSale: (...args: unknown[]) => Promise<unknown>;
   checkoutSale: (...args: unknown[]) => Promise<unknown>;
   createSale: (...args: unknown[]) => Promise<unknown>;
@@ -16,6 +17,7 @@ type CheckoutApi = {
   overrideSaleItemPrice: (...args: unknown[]) => Promise<unknown>;
   removeSaleItem: (...args: unknown[]) => Promise<unknown>;
   resetSaleItemPrice: (...args: unknown[]) => Promise<unknown>;
+  resetSaleDiscount: (...args: unknown[]) => Promise<unknown>;
   resumeSale: (...args: unknown[]) => Promise<unknown>;
   scanSaleItem: (...args: unknown[]) => Promise<unknown>;
   searchProducts: (...args: unknown[]) => Promise<unknown>;
@@ -457,6 +459,7 @@ describe('API endpoints', () => {
         '/v1/sales/held': { data: { sales: [heldSale] } },
         '/v1/sales/sale-1': { data: { sale } },
         '/v1/sales/sale-1/cancel': { data: { sale } },
+        '/v1/sales/sale-1/apply-discount': { data: { sale } },
         '/v1/sales/sale-1/checkout': { data: { sale } },
         '/v1/sales/sale-1/hold': { data: { sale } },
         '/v1/sales/sale-1/items': { data: { sale } },
@@ -472,6 +475,7 @@ describe('API endpoints', () => {
           data: { sale },
         },
         '/v1/sales/sale-1/resume': { data: { sale } },
+        '/v1/sales/sale-1/reset-discount': { data: { sale } },
       };
       return {
         config,
@@ -487,6 +491,7 @@ describe('API endpoints', () => {
 
     expect(api).toMatchObject({
       addSaleItem: expect.any(Function),
+      applySaleDiscount: expect.any(Function),
       cancelSale: expect.any(Function),
       checkoutSale: expect.any(Function),
       createSale: expect.any(Function),
@@ -497,6 +502,7 @@ describe('API endpoints', () => {
       overrideSaleItemPrice: expect.any(Function),
       removeSaleItem: expect.any(Function),
       resetSaleItemPrice: expect.any(Function),
+      resetSaleDiscount: expect.any(Function),
       resumeSale: expect.any(Function),
       scanSaleItem: expect.any(Function),
       searchProducts: expect.any(Function),
@@ -573,8 +579,18 @@ describe('API endpoints', () => {
       }),
     ).resolves.toEqual(sale);
     await expect(
-      api.cancelSale('sale-1', {
+      api.applySaleDiscount('sale-1', {
         expectedVersion: 7,
+        percentage: '10.00',
+        reason: 'Постоянный покупатель',
+      }),
+    ).resolves.toEqual(sale);
+    await expect(
+      api.resetSaleDiscount('sale-1', { expectedVersion: 8 }),
+    ).resolves.toEqual(sale);
+    await expect(
+      api.cancelSale('sale-1', {
+        expectedVersion: 9,
         reason: 'Клиент передумал',
       }),
     ).resolves.toEqual(sale);
@@ -595,6 +611,8 @@ describe('API endpoints', () => {
       ['post', '/v1/sales/sale-1/items/sale-item-1/remove'],
       ['post', '/v1/sales/sale-1/items/sale-item-1/override-price'],
       ['post', '/v1/sales/sale-1/items/sale-item-1/reset-price'],
+      ['post', '/v1/sales/sale-1/apply-discount'],
+      ['post', '/v1/sales/sale-1/reset-discount'],
       ['post', '/v1/sales/sale-1/cancel'],
     ]);
     expect(calls.at(0)?.params).toEqual({
@@ -648,6 +666,14 @@ describe('API endpoints', () => {
     });
     expect(JSON.parse(calls.at(15)?.data as string)).toEqual({
       expected_version: 7,
+      percentage: '10.00',
+      reason: 'Постоянный покупатель',
+    });
+    expect(JSON.parse(calls.at(16)?.data as string)).toEqual({
+      expected_version: 8,
+    });
+    expect(JSON.parse(calls.at(17)?.data as string)).toEqual({
+      expected_version: 9,
       reason: 'Клиент передумал',
     });
   });
