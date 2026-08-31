@@ -18,6 +18,7 @@ import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
 import { useProductSearchQuery } from '@renderer/features/products';
 
 import {
+  calculateReceiptReturnTotal,
   calculateReturnTotal,
   getReturnUnitPrice,
 } from '../returns-calculations';
@@ -183,17 +184,14 @@ export function useReturnsFlow(
       : withoutReceiptLines.length > 0;
   const previewTotal =
     hasLines && quantitiesValid
-      ? calculateReturnTotal(
-          mode === 'receipt'
-            ? receiptLines.map(({ item, quantity }) => ({
-                quantity,
-                unitPrice: item.unit_price,
-              }))
-            : withoutReceiptLines.map((line) => ({
-                quantity: line.quantity,
-                unitPrice: getReturnUnitPrice(line),
-              })),
-        )
+      ? mode === 'receipt'
+        ? calculateReceiptReturnTotal(receiptLines)
+        : calculateReturnTotal(
+            withoutReceiptLines.map((line) => ({
+              quantity: line.quantity,
+              unitPrice: getReturnUnitPrice(line),
+            })),
+          )
       : '0.00';
   const formReady =
     hasLines &&
@@ -349,17 +347,15 @@ export function useReturnsFlow(
     try {
       const lines =
         mode === 'withoutReceipt' ? await refreshProducts() : receiptLines;
-      const total = calculateReturnTotal(
+      const total =
         mode === 'receipt'
-          ? receiptLines.map(({ item, quantity }) => ({
-              quantity,
-              unitPrice: item.unit_price,
-            }))
-          : (lines as WithoutReceiptLine[]).map((line) => ({
-              quantity: line.quantity,
-              unitPrice: getReturnUnitPrice(line),
-            })),
-      );
+          ? calculateReceiptReturnTotal(receiptLines)
+          : calculateReturnTotal(
+              (lines as WithoutReceiptLine[]).map((line) => ({
+                quantity: line.quantity,
+                unitPrice: getReturnUnitPrice(line),
+              })),
+            );
       if (total === '0.00') {
         throw new Error('Сумма возврата должна быть больше нуля.');
       }

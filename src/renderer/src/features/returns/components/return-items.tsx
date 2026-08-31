@@ -30,7 +30,7 @@ import {
 } from '@renderer/common/lib/quantity';
 
 import {
-  calculateReturnLineTotal,
+  calculateReceiptReturnLineTotal,
   getReturnUnitPrice,
 } from '../returns-calculations';
 import { returnQuantitySchema } from '../returns.schema';
@@ -238,8 +238,11 @@ export function ReceiptItems({
           : false;
         const amount =
           selected && quantityIsValid
-            ? calculateReturnLineTotal(selected.quantity, item.unit_price)
-            : item.unit_price;
+            ? calculateReceiptReturnLineTotal(item, selected.quantity)
+            : calculateReceiptReturnLineTotal(
+                item,
+                initialReceiptQuantity(item.returnable_quantity),
+              );
         return (
           <div
             className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border px-4 py-4 last:border-b-0 min-[1360px]:grid-cols-[minmax(220px,1fr)_130px_190px_240px] ${

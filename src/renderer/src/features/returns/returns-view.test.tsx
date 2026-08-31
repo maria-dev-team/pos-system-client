@@ -429,6 +429,60 @@ describe('ReturnsView', () => {
     expect(screen.getByLabelText('Выбрать Молоко')).toBeDisabled();
   });
 
+  it('refunds the discounted total of a receipt line', async () => {
+    const user = userEvent.setup();
+    vi.mocked(getReceipt).mockResolvedValue({
+      ...receipt,
+      discount_amount: '100.00',
+      discount_percentage: '10.00',
+      discount_reason: 'Постоянный покупатель',
+      items: [
+        {
+          ...receipt.items[0]!,
+          base_unit_price: '500.00',
+          discount_amount: '100.00',
+          line_subtotal: '1000.00',
+          line_total: '900.00',
+          quantity: '2',
+          returnable_quantity: '2',
+          unit_price: '500.00',
+        },
+      ],
+      subtotal: '1000.00',
+      total: '900.00',
+    });
+    renderView();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Открыть чек №42' }),
+    );
+    await user.click(screen.getByLabelText('Выбрать Молоко'));
+    await user.click(screen.getByLabelText('Увеличить количество Молоко'));
+    expect(
+      screen.getByLabelText('Выбрать Молоко').closest('div'),
+    ).toHaveTextContent('900,00 ₸');
+    await user.click(screen.getByRole('button', { name: 'На склад Молоко' }));
+    await user.type(
+      screen.getByLabelText('Причина возврата'),
+      'Товар не подошёл',
+    );
+    await user.click(screen.getByRole('button', { name: 'Оформить возврат' }));
+    await user.click(screen.getByRole('button', { name: 'Безналичные' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить возврат' }),
+    );
+
+    await waitFor(() =>
+      expect(createReceiptReturn).toHaveBeenCalledWith(
+        '42',
+        expect.any(String),
+        expect.objectContaining({
+          payments: [{ amount: '900.00', method: 'CASHLESS' }],
+        }),
+      ),
+    );
+  });
+
   it('supports receipt pagination and an error retry state', async () => {
     const user = userEvent.setup();
     vi.mocked(getReceipts)
