@@ -394,7 +394,50 @@ afterEach(() => {
   delete window.receiptPrinter;
 });
 
-describe('Maria POS authorization flow', () => {
+describe('DukenAI POS authorization flow', () => {
+  it('keeps daily actions in the sale panel and rare equipment settings in the header', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getRegisterShifts.mockResolvedValue([
+      registerShiftResponse,
+      previousClosedRegisterShiftResponse,
+    ]);
+    const { router } = renderApp();
+
+    const startRegister = await screen.findByRole('button', {
+      name: 'Начать работу на кассе Основная касса',
+    });
+    expect(screen.queryByText('Касса и отчёты')).not.toBeInTheDocument();
+
+    await user.click(startRegister);
+    expect(await screen.findByText('Касса и отчёты')).toBeInTheDocument();
+    expect(screen.getAllByRole('complementary')).toHaveLength(1);
+    expect(
+      screen.getByRole('button', { name: 'Печать X-отчёта' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: 'Печать последнего Z-отчёта',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Принтер чеков и отчётов' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Техническая поддержка' }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', { name: 'Настройки приложения' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Настройки приложения' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/checkout');
+  });
+
   it('navigates checkout to receipts and returns and back', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
@@ -409,6 +452,9 @@ describe('Maria POS authorization flow', () => {
         name: 'Начать работу на кассе Основная касса',
       }),
     );
+    expect(
+      screen.queryByRole('button', { name: 'Возврат' }),
+    ).not.toBeInTheDocument();
     await user.click(
       await screen.findByRole('button', { name: 'Чеки и возвраты' }),
     );
@@ -487,20 +533,19 @@ describe('Maria POS authorization flow', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'Возвраты' }),
+      await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: 'Возврат по чеку №42' }),
     ).toBeInTheDocument();
     expect(router.state.location.search).toMatchObject({
-      historyPage: 0,
+      flow: 'return',
+      page: 0,
       receiptNumber: '42',
-      returnTo: 'sales-history',
+      returnReceiptNumber: '42',
     });
 
-    await user.click(
-      screen.getByRole('button', { name: 'Вернуться в историю' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'К списку чеков' }));
     expect(
       await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
@@ -536,24 +581,22 @@ describe('Maria POS authorization flow', () => {
     );
 
     expect(
-      await screen.findByRole('heading', { name: 'Возвраты' }),
+      await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/returns');
+    expect(router.state.location.pathname).toBe('/sales-history');
     expect(router.state.location.search).toEqual({
-      historyPage: 0,
+      flow: 'return',
+      page: 0,
       registerId: 'register-1',
       registerShiftId: 'register-shift-1',
       returnMode: 'withoutReceipt',
-      returnTo: 'sales-history',
     });
     expect(screen.getByText('Найти товар')).toBeInTheDocument();
     expect(
       screen.queryByRole('group', { name: 'Режим возврата' }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole('button', { name: 'Вернуться в историю' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'К списку чеков' }));
     expect(
       await screen.findByRole('heading', { name: 'Чеки и возвраты' }),
     ).toBeInTheDocument();
@@ -619,14 +662,14 @@ describe('Maria POS authorization flow', () => {
     renderApp();
 
     expect(
-      await screen.findByRole('heading', { name: 'Вход в Maria POS' }),
+      await screen.findByRole('heading', { name: 'Вход в DukenAI POS' }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Email или телефон')).toHaveAttribute(
       'type',
       'text',
     );
     expect(screen.getByLabelText('Пароль')).toHaveAttribute('type', 'password');
-    expect(screen.getByText('Maria POS')).toBeInTheDocument();
+    expect(screen.getByText('DukenAI POS')).toBeInTheDocument();
     expect(await screen.findByText('Сервер доступен')).toBeInTheDocument();
     expect(screen.getByLabelText('Текущее время')).toBeInTheDocument();
     expect(
@@ -710,10 +753,6 @@ describe('Maria POS authorization flow', () => {
     expect(
       await screen.findByRole('button', { name: 'Печать X-отчёта' }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
-    ).toBeInTheDocument();
-
     await user.click(screen.getByRole('button', { name: 'Печать X-отчёта' }));
 
     await waitFor(() =>
@@ -742,6 +781,7 @@ describe('Maria POS authorization flow', () => {
         'Пересчитайте наличные. Касса будет закрыта, ОФД сформирует Z-отчёт. После закрытия сумму нельзя изменить.',
       ),
     ).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Фактические наличные, ₸'));
     await user.click(screen.getByRole('button', { name: '9' }));
     await user.click(screen.getByRole('button', { name: '8' }));
     await user.click(screen.getByRole('button', { name: '00' }));
@@ -897,6 +937,7 @@ describe('Maria POS authorization flow', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Закрыть кассу' }),
     );
+    await user.click(screen.getByLabelText('Фактические наличные, ₸'));
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: '00' }));
     await user.click(
@@ -974,7 +1015,7 @@ describe('Maria POS authorization flow', () => {
 
     expect(await screen.findByText('Нет связи с сервером')).toBeInTheDocument();
     expect(
-      await screen.findByRole('heading', { name: 'Вход в Maria POS' }),
+      await screen.findByRole('heading', { name: 'Вход в DukenAI POS' }),
     ).toBeInTheDocument();
   });
 
@@ -997,7 +1038,7 @@ describe('Maria POS authorization flow', () => {
     renderApp();
 
     expect(
-      await screen.findByRole('heading', { name: 'Вход в Maria POS' }),
+      await screen.findByRole('heading', { name: 'Вход в DukenAI POS' }),
     ).toBeInTheDocument();
   });
 
@@ -1118,7 +1159,7 @@ describe('Maria POS authorization flow', () => {
     await user.click(screen.getByRole('button', { name: 'Выйти' }));
 
     expect(
-      await screen.findByRole('heading', { name: 'Вход в Maria POS' }),
+      await screen.findByRole('heading', { name: 'Вход в DukenAI POS' }),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(queryClient.getQueryCache().getAll()).toHaveLength(0),
@@ -1181,6 +1222,7 @@ describe('Maria POS authorization flow', () => {
       await screen.findByRole('heading', { name: 'Начало работы' }),
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Наличные у кассира, ₸')).toHaveValue('');
+    await user.click(screen.getByLabelText('Наличные у кассира, ₸'));
     expect(screen.getByLabelText('Цифровая клавиатура')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '5' }));
     for (let index = 0; index < 3; index += 1) {

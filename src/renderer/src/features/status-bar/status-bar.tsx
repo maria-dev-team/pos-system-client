@@ -17,6 +17,7 @@ import { organizationsQueryOptions } from '@renderer/features/organizations';
 import { SupportAction } from '@renderer/features/support';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
+import { PosSettingsAction } from './pos-settings-action';
 import { useMinuteClock } from './use-minute-clock';
 
 const visibleItems: readonly StatusBarItem[] = [
@@ -75,8 +76,7 @@ export function StatusBar() {
     .toUpperCase();
   const contextName =
     [membership?.organization?.name, store?.name].filter(Boolean).join(' · ') ||
-    'Maria POS';
-
+    'DukenAI POS';
   const renderItem = (item: StatusBarItem) => {
     switch (item) {
       case 'context':
@@ -86,9 +86,9 @@ export function StatusBar() {
               aria-hidden="true"
               className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary font-extrabold text-primary-foreground shadow-sm shadow-primary/20"
             >
-              M
+              D
             </span>
-            <span className="truncate text-sm font-semibold text-foreground">
+            <span className="hidden truncate text-sm font-semibold text-foreground sm:inline">
               {contextName}
             </span>
           </div>
@@ -170,6 +170,9 @@ export function StatusBar() {
       case 'support':
         if (!isAuthenticated) return null;
         return <SupportAction key={item} />;
+      case 'settings':
+        if (!isAuthenticated) return null;
+        return <PosSettingsAction key={item} />;
       case 'logout':
         if (!isAuthenticated) return null;
         return (
@@ -198,10 +201,10 @@ export function StatusBar() {
       aria-label="Статус приложения"
       className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-card px-4 sm:px-5"
     >
-      <div className="flex min-w-0 items-center gap-4">
+      <div className="flex min-w-0 items-center">
         {statusBarConfig.leftItems.map(renderItem)}
       </div>
-      <div className="flex min-w-0 shrink items-center gap-3 sm:gap-4">
+      <div className="flex min-w-0 items-center justify-end gap-3 sm:gap-4">
         {statusBarConfig.rightItems.map(renderItem)}
       </div>
     </header>

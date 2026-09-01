@@ -167,6 +167,7 @@ export function CashierSessionView({
                 aria-invalid={Boolean(validationError)}
                 autoFocus
                 className="h-14 pl-12 text-lg tabular-nums md:text-lg"
+                data-keyboard-inline
                 disabled={startMutation.isPending}
                 id="cashier-opening-cash"
                 inputMode="decimal"

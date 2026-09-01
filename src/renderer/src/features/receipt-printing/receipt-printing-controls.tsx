@@ -80,7 +80,7 @@ const testReceipt: Parameters<
   operationType: 'SALE',
   organization: {
     binIin: null,
-    displayName: 'Maria POS',
+    displayName: 'DukenAI POS',
     legalName: null,
   },
   payments: [

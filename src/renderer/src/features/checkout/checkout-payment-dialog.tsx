@@ -2,7 +2,6 @@ import { Banknote, CreditCard, LoaderCircle, Split } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 
 import type { SalePaymentPayload, SaleResponse } from '@renderer/common/api';
-import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
 import {
   Dialog,
@@ -55,9 +54,6 @@ function PaymentForm({
   const [cashAmount, setCashAmount] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [buyerBinIin, setBuyerBinIin] = useState('');
-  const [activeMixedInput, setActiveMixedInput] = useState<
-    'amount' | 'received'
-  >('amount');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [dismissedServerError, setDismissedServerError] = useState<
     string | null
@@ -230,7 +226,6 @@ function PaymentForm({
                 id="checkout-mixed-cash"
                 inputMode="decimal"
                 onChange={(event) => edit(setCashAmount, event.target.value)}
-                onFocus={() => setActiveMixedInput('amount')}
                 placeholder="0.00"
                 value={cashAmount}
               />
@@ -246,31 +241,11 @@ function PaymentForm({
                 id="checkout-mixed-received"
                 inputMode="decimal"
                 onChange={(event) => edit(setCashReceived, event.target.value)}
-                onFocus={() => setActiveMixedInput('received')}
                 placeholder="0.00"
                 value={cashReceived}
               />
             </FormField>
           </div>
-        ) : null}
-
-        {mode !== 'CASHLESS' ? (
-          <NumericKeypad
-            disabled={pending}
-            onValueChange={(value) =>
-              edit(
-                mode === 'MIXED' && activeMixedInput === 'amount'
-                  ? setCashAmount
-                  : setCashReceived,
-                value,
-              )
-            }
-            value={
-              mode === 'MIXED' && activeMixedInput === 'amount'
-                ? cashAmount
-                : cashReceived
-            }
-          />
         ) : null}
 
         <FormField>

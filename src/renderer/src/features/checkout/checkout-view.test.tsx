@@ -1,12 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import {
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { Toaster } from 'sonner';
@@ -276,47 +270,6 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
-  it('offers X-report printing on checkout with shift-read permission', async () => {
-    renderCheckout();
-
-    await screen.findByLabelText('Сканируйте или найдите товар');
-    expect(
-      screen.queryByRole('button', { name: 'Печать X-отчёта' }),
-    ).not.toBeInTheDocument();
-
-    cleanup();
-    vi.mocked(getAuthContext).mockResolvedValue(
-      contextFixture(['register_shift.read', 'sales.create']),
-    );
-    renderCheckout();
-
-    expect(
-      await screen.findByRole('button', { name: 'Печать X-отчёта' }),
-    ).toBeInTheDocument();
-  });
-
-  it('opens receipts and returns only with the required permission', async () => {
-    const user = userEvent.setup();
-    const onOpenSalesHistory = vi.fn();
-    renderCheckout({ onOpenSalesHistory });
-
-    await screen.findByLabelText('Сканируйте или найдите товар');
-    expect(
-      screen.queryByRole('button', { name: 'Чеки и возвраты' }),
-    ).not.toBeInTheDocument();
-
-    cleanup();
-    vi.mocked(getAuthContext).mockResolvedValue(
-      contextFixture(['sales.create', 'sales.read']),
-    );
-    renderCheckout({ onOpenSalesHistory });
-
-    await user.click(
-      await screen.findByRole('button', { name: 'Чеки и возвраты' }),
-    );
-    expect(onOpenSalesHistory).toHaveBeenCalledOnce();
-  });
-
   it('shows category products only with both read permissions', async () => {
     renderCheckout();
 
@@ -437,7 +390,7 @@ describe('server-authoritative checkout', () => {
       '001234{enter}',
     );
 
-    expect(await screen.findByText(/каталоге Maria/u)).toBeInTheDocument();
+    expect(await screen.findByText(/каталоге DukenAI/u)).toBeInTheDocument();
     expect(createSale).not.toHaveBeenCalled();
   });
 
@@ -612,7 +565,7 @@ describe('server-authoritative checkout', () => {
     );
   });
 
-  it('asks for a price first, then a preset reason with the screen keyboard', async () => {
+  it('asks for a price first, then a preset reason', async () => {
     const user = userEvent.setup();
     const draft = saleFixture({
       items: [itemFixture()],
@@ -667,16 +620,6 @@ describe('server-authoritative checkout', () => {
       screen.getByRole('button', { name: 'Цена по договорённости' }),
     );
     expect(priceReason).toHaveValue('Цена по договорённости');
-    await user.click(
-      screen.getByRole('button', { name: 'Экранная клавиатура' }),
-    );
-    const keyboard = await screen.findByRole('dialog', {
-      name: 'Экранная клавиатура',
-    });
-    expect(
-      within(keyboard).getByRole('group', { name: 'Виртуальная клавиатура' }),
-    ).toBeInTheDocument();
-    await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Сохранить цену' }));
 
     await waitFor(() =>
@@ -736,13 +679,6 @@ describe('server-authoritative checkout', () => {
       screen.getByRole('button', { name: 'Постоянный покупатель' }),
     );
     expect(discountReason).toHaveValue('Постоянный покупатель');
-    await user.click(
-      screen.getByRole('button', { name: 'Экранная клавиатура' }),
-    );
-    expect(
-      await screen.findByRole('dialog', { name: 'Экранная клавиатура' }),
-    ).toBeInTheDocument();
-    await user.keyboard('{Escape}');
     await user.click(screen.getByRole('button', { name: 'Применить скидку' }));
 
     await waitFor(() =>

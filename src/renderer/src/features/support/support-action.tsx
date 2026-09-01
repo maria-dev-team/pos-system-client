@@ -16,10 +16,19 @@ import {
 import { Label } from '@renderer/common/components/ui/label';
 import { Textarea } from '@renderer/common/components/ui/textarea';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import { cn } from '@renderer/common/lib/utils';
 
 const MAX_MESSAGE_LENGTH = 6000;
 
-export function SupportAction() {
+export function SupportAction({
+  className,
+  labelClassName,
+  showLabel = false,
+}: {
+  className?: string;
+  labelClassName?: string;
+  showLabel?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -65,14 +74,16 @@ export function SupportAction() {
     <>
       <Button
         aria-label="Техническая поддержка"
-        className="min-h-12 min-w-12 px-3"
+        className={cn('min-h-12 min-w-12 px-3', className)}
         onClick={() => setOpen(true)}
         title="Техническая поддержка"
         type="button"
         variant="ghost"
       >
         <LifeBuoy aria-hidden="true" />
-        <span className="sr-only">Техническая поддержка</span>
+        <span className={showLabel ? labelClassName : 'sr-only'}>
+          Техническая поддержка
+        </span>
       </Button>
 
       <Dialog
@@ -88,7 +99,7 @@ export function SupportAction() {
           <DialogHeader>
             <DialogTitle>Техническая поддержка</DialogTitle>
             <DialogDescription>
-              Опишите вопрос или проблему — команда Maria получит сообщение
+              Опишите вопрос или проблему — команда DukenAI получит сообщение
               вместе с данными вашей организации, магазина и приложения.
             </DialogDescription>
           </DialogHeader>

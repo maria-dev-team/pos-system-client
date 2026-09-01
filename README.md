@@ -1,4 +1,4 @@
-# Maria POS
+# DukenAI POS
 
 Кассовое Electron-приложение на React и TypeScript.
 
@@ -50,7 +50,7 @@ before a release is not required. The public download URL for the latest
 installer is stable:
 
 ```text
-https://github.com/maria-dev-team/pos-system-client/releases/latest/download/Maria-POS-Setup.exe
+https://github.com/maria-dev-team/pos-system-client/releases/latest/download/dukenai-pos-setup.exe
 ```
 
 The repository must be public for unauthenticated downloads from a website. If

@@ -13,6 +13,7 @@ import {
 import { useEffect, useState } from 'react';
 
 import { FullPageState } from '@renderer/common/components/full-page-state';
+import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
 import { receiptNumberSchema } from '@renderer/common/schemas/receipt-number.schema';
 import {
@@ -70,13 +71,15 @@ function SessionRedirect(): null {
 
 function RootLayout() {
   return (
-    <div className="flex h-svh flex-col overflow-hidden">
-      <StatusBar />
-      <div className="min-h-0 flex-1 overflow-auto">
-        <SessionRedirect />
-        <Outlet />
+    <OnScreenKeyboardProvider>
+      <div className="flex h-svh flex-col overflow-hidden">
+        <StatusBar />
+        <div className="min-h-0 flex-1 overflow-auto">
+          <SessionRedirect />
+          <Outlet />
+        </div>
       </div>
-    </div>
+    </OnScreenKeyboardProvider>
   );
 }
 
@@ -274,8 +277,14 @@ function CheckoutRouteComponent() {
       cashierSession={retainedSession}
       onOpenReturns={() =>
         void navigate({
-          search: { registerId, registerShiftId },
-          to: '/returns',
+          search: {
+            flow: 'return',
+            page: 0,
+            registerId,
+            registerShiftId,
+            returnMode: 'withoutReceipt',
+          },
+          to: '/sales-history',
         })
       }
       onOpenSalesHistory={() =>
@@ -350,8 +359,15 @@ const checkoutRoute = createRoute({
 
 function SalesHistoryRouteComponent() {
   const navigate = useNavigate();
-  const { page, receiptNumber, registerId, registerShiftId } =
-    salesHistoryRoute.useSearch();
+  const {
+    flow,
+    page,
+    receiptNumber,
+    registerId,
+    registerShiftId,
+    returnMode,
+    returnReceiptNumber,
+  } = salesHistoryRoute.useSearch();
   const context = useQuery(authContextQueryOptions());
   const cashierSession = useQuery(
     currentCashierSessionQueryOptions(registerId ?? ''),
@@ -416,16 +432,42 @@ function SalesHistoryRouteComponent() {
       search: { registerId, registerShiftId },
       to: '/checkout',
     });
-  if (
-    !context.data.isSystemPosition &&
-    !context.data.permissions.includes('sales.read')
-  ) {
+  const canReadHistory = Boolean(
+    context.data.isSystemPosition ||
+    context.data.permissions.includes('sales.read'),
+  );
+  if (flow !== 'return' && !canReadHistory) {
     return (
       <FullPageState
         description="Для просмотра завершённых продаж нужен доступ sales.read."
         onRetry={backToCheckout}
         retryLabel="Вернуться к продажам"
         title="Нет доступа к истории продаж"
+      />
+    );
+  }
+
+  if (flow === 'return') {
+    return (
+      <ReturnsView
+        backLabel="К списку чеков"
+        cashierSession={session}
+        context={context.data}
+        focusedFlow
+        initialMode={returnMode}
+        initialReceiptNumber={returnReceiptNumber}
+        key={`${returnReceiptNumber ?? ''}:${returnMode ?? ''}`}
+        onBack={() =>
+          void navigate({
+            search: {
+              page,
+              receiptNumber,
+              registerId,
+              registerShiftId,
+            },
+            to: '/sales-history',
+          })
+        }
       />
     );
   }
@@ -438,25 +480,27 @@ function SalesHistoryRouteComponent() {
       onOpenReturn={(nextReceiptNumber) =>
         void navigate({
           search: {
-            historyPage: page,
-            receiptNumber: nextReceiptNumber,
+            flow: 'return',
+            page,
+            receiptNumber,
             registerId,
             registerShiftId,
-            returnTo: 'sales-history',
+            returnReceiptNumber: nextReceiptNumber,
           },
-          to: '/returns',
+          to: '/sales-history',
         })
       }
       onOpenReturnWithoutReceipt={() =>
         void navigate({
           search: {
-            historyPage: page,
+            flow: 'return',
+            page,
+            receiptNumber,
             registerId,
             registerShiftId,
             returnMode: 'withoutReceipt',
-            returnTo: 'sales-history',
           },
-          to: '/returns',
+          to: '/sales-history',
         })
       }
       onPageChange={(nextPage) =>
@@ -532,7 +576,9 @@ const salesHistoryRoute = createRoute({
   path: 'sales-history',
   validateSearch: (search: Record<string, unknown>) => {
     const receiptNumber = parseReceiptNumber(search.receiptNumber);
+    const returnReceiptNumber = parseReceiptNumber(search.returnReceiptNumber);
     return {
+      ...(search.flow === 'return' ? { flow: 'return' as const } : {}),
       page: parsePage(search.page),
       ...(receiptNumber ? { receiptNumber } : {}),
       registerId:
@@ -543,6 +589,10 @@ const salesHistoryRoute = createRoute({
         typeof search.registerShiftId === 'string' && search.registerShiftId
           ? search.registerShiftId
           : undefined,
+      ...(search.returnMode === 'withoutReceipt'
+        ? { returnMode: 'withoutReceipt' as const }
+        : {}),
+      ...(returnReceiptNumber ? { returnReceiptNumber } : {}),
     };
   },
 });
@@ -635,9 +685,7 @@ function ReturnsRouteComponent() {
   return (
     <ReturnsView
       backLabel={
-        returnTo === 'sales-history'
-          ? 'Вернуться в историю'
-          : 'Вернуться к продажам'
+        returnTo === 'sales-history' ? 'К списку чеков' : 'Вернуться к продажам'
       }
       cashierSession={session}
       context={context.data}

@@ -44,7 +44,6 @@ import { authContextQueryOptions, useAuthStore } from '@renderer/features/auth';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import {
   LastZReportPrintButton,
-  ReceiptPrinterSettingsButton,
   XReportPrintButton,
 } from '@renderer/features/receipt-printing';
 
@@ -217,7 +216,6 @@ export function RegisterShiftSelectionView() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <ReceiptPrinterSettingsButton className="min-h-11 border-border bg-background px-4" />
             <Button
               className="min-h-11 border-border bg-background px-4"
               onClick={() =>
@@ -465,6 +463,7 @@ export function RegisterShiftSelectionView() {
                 aria-invalid={Boolean(validationError)}
                 autoFocus
                 className="h-14 text-lg tabular-nums md:text-lg"
+                data-keyboard-inline
                 disabled={openingMutation.isPending}
                 id="opening-cash"
                 inputMode="decimal"

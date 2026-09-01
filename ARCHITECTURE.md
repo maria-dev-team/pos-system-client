@@ -1,4 +1,4 @@
-# Архитектура Maria POS
+# Архитектура DukenAI POS
 
 Проект состоит из Electron runtime и React-интерфейса. Процессные границы Electron
 важнее удобства импорта: renderer не получает прямой доступ к Node.js или Electron API.
@@ -328,7 +328,7 @@ Skeleton используется для известного layout, spinner �
 
 ### Текущий визуальный язык
 
-Maria POS использует светлый touch-first интерфейс: почти белый workspace, белые
+DukenAI POS использует светлый touch-first интерфейс: почти белый workspace, белые
 карточки с тонкой границей и мягкой тенью, фиолетово-индиговый primary и отдельные
 success, warning и destructive состояния. Цвета задаются семантическими OKLCH
 tokens в `base.css`; feature не копирует их hex/rgb-значения.
