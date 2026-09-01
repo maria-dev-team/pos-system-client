@@ -59,6 +59,9 @@ type PrintableReceipt = {
   total: string;
 };
 
+type PrintableShiftReport =
+  import('../main/receipt-printer/shift-report-document').PrintableShiftReport;
+
 contextBridge.exposeInMainWorld('camera', {
   setContext: (context: CameraContext | null) => {
     ipcRenderer.send('camera:set-context', context);
@@ -83,5 +86,22 @@ contextBridge.exposeInMainWorld('receiptPrinter', {
       paperWidthMm,
       rasterThreshold,
       receipt,
+    }),
+  printShiftReport: ({
+    deviceName,
+    paperWidthMm,
+    rasterThreshold,
+    report,
+  }: {
+    deviceName: string | null;
+    paperWidthMm: 58 | 80;
+    rasterThreshold: 112 | 136 | 160 | 192 | 216;
+    report: PrintableShiftReport;
+  }) =>
+    ipcRenderer.invoke('receipt-printer:print-shift-report', {
+      deviceName,
+      paperWidthMm,
+      rasterThreshold,
+      report,
     }),
 });

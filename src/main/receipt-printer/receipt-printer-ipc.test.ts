@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PrintableReceipt } from './receipt-document';
 import { registerReceiptPrinterIpc } from './receipt-printer-ipc';
+import type { PrintableShiftReport } from './shift-report-document';
 
 const electron = vi.hoisted(() => ({
   BrowserWindow: vi.fn(),
@@ -68,6 +69,41 @@ const receipt: PrintableReceipt = {
   total: '100.00',
 };
 
+const report: PrintableShiftReport = {
+  cash: { balance: '720.00', deposited: '0.00', withdrawn: '0.00' },
+  cashbox: {
+    identityNumber: 'IN-1',
+    registrationNumber: 'RN-1',
+    serialNumber: 'SWK00000001',
+  },
+  cashier: { code: null, name: 'Айжан' },
+  change: '0.00',
+  closedAt: null,
+  controlSum: 'control',
+  discount: '80.00',
+  documentCount: 1,
+  generatedAt: '2026-08-31T08:57:06.000Z',
+  markup: '0.00',
+  ofd: { name: 'ОФД', website: null },
+  offline: false,
+  openedAt: '2026-08-31T08:30:00.000Z',
+  operations: {
+    purchaseReturns: { amount: '0.00', count: 0 },
+    purchases: { amount: '0.00', count: 0 },
+    saleReturns: { amount: '0.00', count: 0 },
+    sales: { amount: '720.00', count: 1 },
+  },
+  payments: [{ amount: '720.00', providerType: 1 }],
+  provider: 'WEBKASSA',
+  reportNumber: '10',
+  reportType: 'X',
+  shiftNumber: '2',
+  taken: '720.00',
+  taxpayer: { binIin: '000000000000', name: 'Demo' },
+  timeZone: 'Asia/Almaty',
+  vat: '0.00',
+};
+
 type Handler = (event: { sender: unknown }, request?: unknown) => unknown;
 
 const handlerFor = (channel: string): Handler => {
@@ -104,6 +140,20 @@ const request = (
   rasterThreshold: unknown;
   receipt: PrintableReceipt;
 } => ({ deviceName: 'XP-58IIH', paperWidthMm, rasterThreshold, receipt });
+
+const reportRequest = (
+  printableReport: unknown = report,
+): {
+  deviceName: string;
+  paperWidthMm: number;
+  rasterThreshold: number;
+  report: unknown;
+} => ({
+  deviceName: 'XP-58IIH',
+  paperWidthMm: 58,
+  rasterThreshold: 160,
+  report: printableReport,
+});
 
 const rasterWindow = (): {
   images: Array<Record<string, ReturnType<typeof vi.fn>>>;
@@ -165,6 +215,63 @@ describe('registerReceiptPrinterIpc', () => {
     await expect(
       handlerFor('receipt-printer:get-printers')({ sender: mainWebContents }),
     ).resolves.toEqual([printer]);
+  });
+
+  it('rejects shift report printing from another WebContents', async () => {
+    const mainWebContents = register();
+    expect(
+      electron.handle.mock.calls.some(
+        ([channel]) => channel === 'receipt-printer:print-shift-report',
+      ),
+    ).toBe(true);
+
+    await expect(
+      handlerFor('receipt-printer:print-shift-report')(
+        { sender: {} },
+        reportRequest(),
+      ),
+    ).rejects.toThrow('Unauthorized receipt printer request');
+    expect(mainWebContents.getPrintersAsync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['report type', { ...report, reportType: 'Q' }],
+    ['generated date', { ...report, generatedAt: 'yesterday' }],
+    ['report number', { ...report, reportNumber: '0' }],
+    ['money', { ...report, cash: { ...report.cash, balance: '-1.00' } }],
+    ['count', { ...report, documentCount: -1 }],
+    ['payments', { ...report, payments: Array(1) }],
+  ])('rejects invalid shift report %s before rendering', async (_, value) => {
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print-shift-report')(
+        { sender: mainWebContents },
+        reportRequest(value),
+      ),
+    ).resolves.toEqual({
+      code: 'PRINT_FAILED',
+      message: 'Некорректные данные отчёта.',
+      ok: false,
+    });
+    expect(electron.BrowserWindow).not.toHaveBeenCalled();
+    expect(raw.sendRawReceipt).not.toHaveBeenCalled();
+  });
+
+  it('prints a valid shift report through the receipt raster transport', async () => {
+    rasterWindow();
+    const mainWebContents = register();
+
+    await expect(
+      handlerFor('receipt-printer:print-shift-report')(
+        { sender: mainWebContents },
+        reportRequest(),
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(raw.sendRawReceipt).toHaveBeenCalledWith(
+      'XP-58IIH',
+      expect.any(Buffer),
+    );
   });
 
   it.each([57, 81, 384, '58'])(
