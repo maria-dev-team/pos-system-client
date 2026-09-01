@@ -750,7 +750,7 @@ describe('Maria POS authorization flow', () => {
     );
     await user.click(
       screen.getByRole('button', {
-        name: 'Закрыть кассу и сформировать Z-отчёт',
+        name: 'Закрыть смену',
       }),
     );
 
@@ -794,8 +794,8 @@ describe('Maria POS authorization flow', () => {
   it('reprints the latest stored Z report after its shift is closed', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentRegisterShift.mockResolvedValue(null);
     api.getRegisterShifts.mockResolvedValue([
-      registerShiftResponse,
       previousClosedRegisterShiftResponse,
     ]);
     renderApp();
@@ -814,6 +814,30 @@ describe('Maria POS authorization flow', () => {
         report: expect.objectContaining({ reportType: 'Z' }),
       }),
     );
+  });
+
+  it('hides the latest Z report while choosing an open register for cashier work', async () => {
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getRegisterShifts.mockResolvedValue([
+      previousClosedRegisterShiftResponse,
+    ]);
+    const { queryClient } = renderApp();
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData(['register-shifts', 'history', 'register-1']),
+      ).toEqual([previousClosedRegisterShiftResponse]),
+    );
+    expect(
+      screen.queryByRole('button', {
+        name: 'Печать последнего Z-отчёта',
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it('retries a CLOSING shift with its saved cash and handles a missing Z report', async () => {
@@ -877,7 +901,7 @@ describe('Maria POS authorization flow', () => {
     await user.click(screen.getByRole('button', { name: '00' }));
     await user.click(
       screen.getByRole('button', {
-        name: 'Закрыть кассу и сформировать Z-отчёт',
+        name: 'Закрыть смену',
       }),
     );
 

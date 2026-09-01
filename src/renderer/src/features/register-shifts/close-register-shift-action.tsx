@@ -291,7 +291,7 @@ export function CloseRegisterShiftAction({
                     ) : null}
                     {registerShift.status === 'CLOSING'
                       ? 'Завершить закрытие'
-                      : 'Закрыть кассу и сформировать Z-отчёт'}
+                      : 'Закрыть смену'}
                   </Button>
                 </DialogFooter>
               </form>

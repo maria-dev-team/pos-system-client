@@ -408,7 +408,6 @@ export function RegisterShiftSelectionView() {
                           timeZone={timeZone}
                         />
                       ) : null}
-                      {lastZReportAction}
                     </div>
                   ) : (
                     <div className="grid gap-3">
