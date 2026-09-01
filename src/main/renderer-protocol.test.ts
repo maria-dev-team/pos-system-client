@@ -1,10 +1,10 @@
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { resolveRendererFilePath } from './renderer-protocol';
 
 describe('resolveRendererFilePath', () => {
-  const rendererRoot = '/app/out/renderer';
+  const rendererRoot = resolve('/app/out/renderer');
 
   it('maps the app root and assets inside the renderer bundle', () => {
     expect(resolveRendererFilePath(rendererRoot, 'maria://app/')).toBe(
