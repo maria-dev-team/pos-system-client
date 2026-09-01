@@ -8,16 +8,53 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     env:
       VITE_API_URL: http://localhost:4004
+      MAIN_VITE_API_URL: http://localhost:4004
+      FFMPEG_WINDOWS_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-8.1.zip
+      FFMPEG_WINDOWS_SHA256: f6274bbd9c247f9e90c1bbed066b03ed4a3907cece2fb91be6dd352393936365
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout pull request
+        uses: actions/checkout@v5
+
       - name: Use Node.js 22
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download and verify FFmpeg
+        shell: pwsh
+        run: |
+          $archivePath = Join-Path $env:RUNNER_TEMP 'ffmpeg-windows.zip'
+          $extractPath = Join-Path $env:RUNNER_TEMP 'ffmpeg-windows'
+
+          Invoke-WebRequest -Uri $env:FFMPEG_WINDOWS_URL -OutFile $archivePath
+          $actualHash = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:FFMPEG_WINDOWS_SHA256) {
+            throw "FFmpeg checksum mismatch. Expected $env:FFMPEG_WINDOWS_SHA256, received $actualHash."
+          }
+
+          Expand-Archive -Path $archivePath -DestinationPath $extractPath
+          $ffmpeg = Get-ChildItem $extractPath -Filter ffmpeg.exe -File -Recurse | Select-Object -First 1
+          if ($null -eq $ffmpeg) {
+            throw 'The FFmpeg archive does not contain ffmpeg.exe.'
+          }
+          Copy-Item $ffmpeg.FullName resources/ffmpeg.exe
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Build Windows installer
+        run: npm run build:win
