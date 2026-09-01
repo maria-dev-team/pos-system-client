@@ -60,10 +60,12 @@ import {
 } from '@renderer/common/lib/quantity';
 import { authContextQueryOptions } from '@renderer/features/auth';
 import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
+import { organizationsQueryOptions } from '@renderer/features/organizations';
 import { useProductSearchQuery } from '@renderer/features/products';
 import {
   ReceiptPrintButton,
   ReceiptPrinterSettingsButton,
+  XReportPrintButton,
 } from '@renderer/features/receipt-printing';
 
 import { CheckoutCategoryPicker } from './checkout-category-picker';
@@ -194,6 +196,15 @@ function ActiveCheckout({
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const context = useQuery(authContextQueryOptions());
+  const canReadShift = Boolean(
+    context.data &&
+    (context.data.isSystemPosition ||
+      context.data.permissions.includes('register_shift.read')),
+  );
+  const organizations = useQuery({
+    ...organizationsQueryOptions(),
+    enabled: canReadShift,
+  });
   const currentSale = useQuery(currentSaleQueryOptions(cashierSession.id));
   const transitions = useCheckoutSaleTransitions(cashierSession.id);
   const sale = currentSale.data?.status === 'DRAFT' ? currentSale.data : null;
@@ -238,6 +249,10 @@ function ActiveCheckout({
     context.data?.isSystemPosition ||
     context.data?.permissions.includes('product.read'),
   );
+  const timeZone =
+    organizations.data?.find(
+      ({ organization }) => organization?.id === context.data?.organizationId,
+    )?.organization?.timezone ?? 'Asia/Almaty';
   const canBrowseCategories = Boolean(
     context.data &&
     (context.data.isSystemPosition ||
@@ -1278,7 +1293,7 @@ function ActiveCheckout({
                 Разделы
               </p>
               <div
-                className={`grid auto-rows-fr items-stretch gap-3 ${canOpenReceipts ? 'grid-cols-3' : 'grid-cols-2'}`}
+                className={`grid auto-rows-fr items-stretch gap-3 ${canOpenReceipts === canReadShift ? 'grid-cols-2' : 'grid-cols-3'}`}
               >
                 <Button
                   className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
@@ -1307,6 +1322,13 @@ function ActiveCheckout({
                       Чеки и возвраты
                     </span>
                   </Button>
+                ) : null}
+                {canReadShift ? (
+                  <XReportPrintButton
+                    className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                    registerShiftId={cashierSession.register_shift_id}
+                    timeZone={timeZone}
+                  />
                 ) : null}
                 <ReceiptPrinterSettingsButton
                   className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"

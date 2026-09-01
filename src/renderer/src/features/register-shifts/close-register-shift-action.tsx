@@ -3,6 +3,7 @@ import { CircleCheck, CircleStop, LoaderCircle } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 
 import {
+  type FiscalShiftReportResponse,
   type RegisterShiftResponse,
   closeRegisterShift,
 } from '@renderer/common/api';
@@ -23,32 +24,47 @@ import { Label } from '@renderer/common/components/ui/label';
 import { queryKeys } from '@renderer/common/constants';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
+import { ZReportPrintButton } from '@renderer/features/receipt-printing';
 
 import { registerShiftClosingSchema } from './register-shift.schema';
 
 type CloseRegisterShiftActionProps = {
   onClosed?: (registerShift: RegisterShiftResponse) => void;
-  registerShiftId: string;
+  registerShift: RegisterShiftResponse;
+  timeZone: string;
 };
 
 export function CloseRegisterShiftAction({
   onClosed,
-  registerShiftId,
+  registerShift,
+  timeZone,
 }: CloseRegisterShiftActionProps) {
   const queryClient = useQueryClient();
   const reconciliationRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [actualCash, setActualCash] = useState('');
+  const recoveryCash =
+    registerShift.status === 'CLOSING' ? (registerShift.actual_cash ?? '') : '';
+  const [actualCash, setActualCash] = useState(recoveryCash);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [closedShift, setClosedShift] = useState<RegisterShiftResponse | null>(
     null,
   );
+  const [zReport, setZReport] = useState<FiscalShiftReportResponse | null>();
   const mutation = useMutation({
     mutationFn: (cash: string) =>
-      closeRegisterShift(registerShiftId, { actualCash: cash }),
-    onError: (error) => httpErrorHandler(error, 'Не удалось закрыть кассу.'),
-    onSuccess: (registerShift) => {
-      setClosedShift(registerShift);
+      closeRegisterShift(registerShift.id, { actualCash: cash }),
+    onError: async (error) => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.registerShifts.current(registerShift.register_id),
+      });
+      httpErrorHandler(error, 'Не удалось закрыть кассу.');
+    },
+    onSuccess: ({ register_shift, z_report }) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.registerShifts.history(registerShift.register_id),
+      });
+      setClosedShift(register_shift);
+      setZReport(z_report);
     },
   });
 
@@ -57,9 +73,10 @@ export function CloseRegisterShiftAction({
   }, [closedShift]);
 
   const reset = () => {
-    setActualCash('');
+    setActualCash(recoveryCash);
     setValidationError(null);
     setClosedShift(null);
+    setZReport(undefined);
     mutation.reset();
   };
 
@@ -102,14 +119,20 @@ export function CloseRegisterShiftAction({
   return (
     <>
       <Button
-        aria-label="Закрыть кассу"
+        aria-label={
+          registerShift.status === 'CLOSING'
+            ? 'Завершить закрытие'
+            : 'Закрыть кассу'
+        }
         className="min-h-11 w-full border-border bg-background px-4 text-muted-foreground hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
         onClick={() => setIsOpen(true)}
         type="button"
         variant="ghost"
       >
         <CircleStop aria-hidden="true" />
-        Закрыть кассу
+        {registerShift.status === 'CLOSING'
+          ? 'Завершить закрытие'
+          : 'Закрыть кассу'}
       </Button>
 
       <Dialog onOpenChange={changeOpen} open={isOpen}>
@@ -162,6 +185,14 @@ export function CloseRegisterShiftAction({
                 </div>
               </div>
 
+              {zReport ? (
+                <ZReportPrintButton report={zReport} timeZone={timeZone} />
+              ) : (
+                <p className="text-sm font-medium text-muted-foreground">
+                  Печать Z-отчёта недоступна для этого провайдера.
+                </p>
+              )}
+
               <Button className="min-h-13 w-full text-base" onClick={finish}>
                 К списку касс
               </Button>
@@ -169,45 +200,72 @@ export function CloseRegisterShiftAction({
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>Закрыть кассу</DialogTitle>
+                <DialogTitle>
+                  {registerShift.status === 'CLOSING'
+                    ? 'Завершить закрытие'
+                    : 'Закрыть кассу'}
+                </DialogTitle>
                 <DialogDescription>
-                  Пересчитайте наличные. После закрытия кассы сумму нельзя
-                  изменить.
+                  {registerShift.status === 'CLOSING'
+                    ? 'Сервер сохранил сумму. Повторите закрытие смены.'
+                    : 'Пересчитайте наличные. Касса будет закрыта, ОФД сформирует Z-отчёт. После закрытия сумму нельзя изменить.'}
                 </DialogDescription>
               </DialogHeader>
 
               <form className="space-y-5" onSubmit={submit}>
-                <FormField>
-                  <Label htmlFor="actual-cash">Фактические наличные, ₸</Label>
-                  <Input
-                    aria-describedby={
-                      validationError ? 'actual-cash-error' : undefined
-                    }
-                    aria-invalid={Boolean(validationError)}
-                    autoFocus
-                    className="h-14 text-lg tabular-nums md:text-lg"
-                    disabled={mutation.isPending}
-                    id="actual-cash"
-                    inputMode="decimal"
-                    onChange={(event) => changeActualCash(event.target.value)}
-                    placeholder="0.00"
-                    value={actualCash}
-                  />
-                  {validationError ? (
-                    <p
-                      className="text-sm font-medium text-destructive"
-                      id="actual-cash-error"
-                    >
-                      {validationError}
+                {registerShift.status === 'CLOSING' ? (
+                  <div className="rounded-xl bg-muted p-4">
+                    <p className="text-sm text-muted-foreground">
+                      Сохранённые фактические наличные
                     </p>
-                  ) : null}
-                </FormField>
+                    <p className="mt-2 text-lg font-bold tabular-nums text-foreground">
+                      {actualCash ? formatCash(actualCash) : 'Не указаны'}
+                    </p>
+                    {validationError ? (
+                      <p className="mt-2 text-sm font-medium text-destructive">
+                        {validationError}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <>
+                    <FormField>
+                      <Label htmlFor="actual-cash">
+                        Фактические наличные, ₸
+                      </Label>
+                      <Input
+                        aria-describedby={
+                          validationError ? 'actual-cash-error' : undefined
+                        }
+                        aria-invalid={Boolean(validationError)}
+                        autoFocus
+                        className="h-14 text-lg tabular-nums md:text-lg"
+                        disabled={mutation.isPending}
+                        id="actual-cash"
+                        inputMode="decimal"
+                        onChange={(event) =>
+                          changeActualCash(event.target.value)
+                        }
+                        placeholder="0.00"
+                        value={actualCash}
+                      />
+                      {validationError ? (
+                        <p
+                          className="text-sm font-medium text-destructive"
+                          id="actual-cash-error"
+                        >
+                          {validationError}
+                        </p>
+                      ) : null}
+                    </FormField>
 
-                <NumericKeypad
-                  disabled={mutation.isPending}
-                  onValueChange={changeActualCash}
-                  value={actualCash}
-                />
+                    <NumericKeypad
+                      disabled={mutation.isPending}
+                      onValueChange={changeActualCash}
+                      value={actualCash}
+                    />
+                  </>
+                )}
 
                 <DialogFooter>
                   <DialogClose asChild>
@@ -231,7 +289,9 @@ export function CloseRegisterShiftAction({
                         className="animate-spin"
                       />
                     ) : null}
-                    Закрыть кассу
+                    {registerShift.status === 'CLOSING'
+                      ? 'Завершить закрытие'
+                      : 'Закрыть кассу и сформировать Z-отчёт'}
                   </Button>
                 </DialogFooter>
               </form>
