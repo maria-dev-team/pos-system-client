@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { win32 } from 'node:path';
+import { join, win32 } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,6 +41,7 @@ vi.mock('node:fs/promises', () => ({
 const spawn = dependencies.spawn;
 const unlink = dependencies.unlink;
 const writeFile = dependencies.writeFile;
+const receiptJobPath = join('/tmp', 'maria-receipt-job.bin');
 
 const nextChild = (
   exitCode: number | null,
@@ -109,7 +110,7 @@ describe('sendRawReceipt', () => {
     await sendRawReceipt('XP-58IIH"; exit 1', Buffer.from([1, 2]), 'win32');
 
     expect(writeFile).toHaveBeenCalledWith(
-      '/tmp/maria-receipt-job.bin',
+      receiptJobPath,
       Buffer.from([1, 2]),
       { flag: 'wx' },
     );
@@ -126,13 +127,13 @@ describe('sendRawReceipt', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           MARIA_RECEIPT_COMPILE_ONLY: '0',
-          MARIA_RECEIPT_PATH: '/tmp/maria-receipt-job.bin',
+          MARIA_RECEIPT_PATH: receiptJobPath,
           MARIA_RECEIPT_PRINTER: 'XP-58IIH"; exit 1',
         }),
         shell: false,
       }),
     );
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('rejects unsupported platforms without spawning', async () => {
@@ -148,7 +149,7 @@ describe('sendRawReceipt', () => {
     await expect(
       sendRawReceipt(null, Buffer.from([1]), 'win32'),
     ).rejects.toThrow(DefaultPrinterNotFoundError);
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('cleans up when the Windows queue rejects the job', async () => {
@@ -157,7 +158,7 @@ describe('sendRawReceipt', () => {
     await expect(
       sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32'),
     ).rejects.toThrow('Системная очередь печати отклонила чек.');
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('cleans up when spawning the Windows queue fails', async () => {
@@ -177,7 +178,7 @@ describe('sendRawReceipt', () => {
     await expect(outcome).resolves.toMatchObject({
       message: 'Системная очередь печати отклонила чек.',
     });
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('maps a synchronous spawn failure to a cashier-safe error and cleans up', async () => {
@@ -188,7 +189,7 @@ describe('sendRawReceipt', () => {
     await expect(
       sendRawReceipt('XP-58IIH', Buffer.from([1]), 'win32'),
     ).rejects.toThrow('Системная очередь печати отклонила чек.');
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('kills after a stderr failure and waits for close before cleaning up', async () => {
@@ -209,7 +210,7 @@ describe('sendRawReceipt', () => {
     await expect(outcome).resolves.toMatchObject({
       message: 'Системная очередь печати отклонила чек.',
     });
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('maps a Windows write failure without deleting an unowned path', async () => {
@@ -253,7 +254,7 @@ describe('sendRawReceipt', () => {
     await expect(outcome).resolves.toMatchObject({
       message: 'Системная очередь печати не ответила вовремя.',
     });
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('uses a bounded termination grace before Windows timeout cleanup', async () => {
@@ -274,7 +275,7 @@ describe('sendRawReceipt', () => {
       message: 'Системная очередь печати не ответила вовремя.',
     });
     expect(child.kill).toHaveBeenCalledOnce();
-    expect(unlink).toHaveBeenCalledWith('/tmp/maria-receipt-job.bin');
+    expect(unlink).toHaveBeenCalledWith(receiptJobPath);
   });
 
   it('maps a non-zero macOS queue result to a cashier-safe error', async () => {
