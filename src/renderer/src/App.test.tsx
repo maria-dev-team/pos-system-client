@@ -30,12 +30,15 @@ const api = vi.hoisted(() => ({
   getCurrentSale: vi.fn(),
   getCurrentUser: vi.fn(),
   getHeldSales: vi.fn(),
+  getRegisterShifts: vi.fn(),
   getSale: vi.fn(),
   holdSale: vi.fn(),
   getMyOrganizations: vi.fn(),
   getProduct: vi.fn(),
   getReceipt: vi.fn(),
   getReceipts: vi.fn(),
+  getXReport: vi.fn(),
+  getZReport: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   openRegisterShift: vi.fn(),
@@ -94,6 +97,7 @@ const contextResponse = {
     'register.read',
     'register_shift.close',
     'register_shift.open',
+    'register_shift.read',
     'sales.cancel',
     'sales.create',
     'sales.modify',
@@ -127,6 +131,8 @@ const registerShiftResponse = {
   deleted_at: null,
   difference: null,
   expected_cash: null,
+  fiscal_closed_at: null,
+  fiscal_shift_number: '2',
   id: 'register-shift-1',
   opened_at: '2026-08-24T08:00:00.000Z',
   opened_by_membership_id: 'membership-1',
@@ -145,6 +151,51 @@ const closedRegisterShiftResponse = {
   difference: '-200.00',
   expected_cash: '10000.00',
   status: 'CLOSED' as const,
+};
+const previousClosedRegisterShiftResponse = {
+  ...closedRegisterShiftResponse,
+  closed_at: '2026-08-23T10:00:00.000Z',
+  fiscal_closed_at: '2026-08-23T10:00:00.000Z',
+  id: 'register-shift-0',
+  opened_at: '2026-08-23T08:00:00.000Z',
+};
+const xReportResponse = {
+  cash: { balance: '9800.00', deposited: '0.00', withdrawn: '0.00' },
+  cashbox: {
+    identity_number: 'IN-1',
+    registration_number: 'RN-1',
+    serial_number: 'SWK00000001',
+  },
+  cashier: { code: null, name: 'Maria Cashier' },
+  change: '0.00',
+  closed_at: null,
+  control_sum: 'control',
+  discount: '0.00',
+  document_count: 1,
+  generated_at: '2026-08-24T09:00:00.000Z',
+  markup: '0.00',
+  ofd: { name: 'ОФД', website: null },
+  offline: false,
+  opened_at: registerShiftResponse.opened_at,
+  operations: {
+    purchase_returns: { amount: '0.00', count: 0 },
+    purchases: { amount: '0.00', count: 0 },
+    sale_returns: { amount: '0.00', count: 0 },
+    sales: { amount: '9800.00', count: 1 },
+  },
+  payments: [{ amount: '9800.00', provider_type: 0 }],
+  provider: 'WEBKASSA' as const,
+  report_number: '10',
+  report_type: 'X' as const,
+  shift_number: '2',
+  taken: '9800.00',
+  taxpayer: { bin_iin: '123456789012', name: 'Maria LLP' },
+  vat: '0.00',
+};
+const zReportResponse = {
+  ...xReportResponse,
+  closed_at: closedRegisterShiftResponse.closed_at,
+  report_type: 'Z' as const,
 };
 const cashierSessionResponse = {
   actual_cash: null,
@@ -299,6 +350,11 @@ const renderApp = () => {
 beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
+  window.receiptPrinter = {
+    getPrinters: vi.fn(),
+    print: vi.fn(),
+    printShiftReport: vi.fn().mockResolvedValue({ ok: true }),
+  };
   useAuthStore.setState({
     accessToken: null,
     isInitialized: false,
@@ -314,11 +370,17 @@ beforeEach(() => {
   api.getCurrentRegisterShift.mockResolvedValue(registerShiftResponse);
   api.getCurrentCashierSession.mockResolvedValue(cashierSessionResponse);
   api.getCurrentSale.mockResolvedValue(null);
+  api.getRegisterShifts.mockResolvedValue([registerShiftResponse]);
   api.getReceipts.mockResolvedValue({
     meta: { has_more: false, limit: 20, offset: 0, total: 0 },
     receipts: [],
   });
-  api.closeRegisterShift.mockResolvedValue(closedRegisterShiftResponse);
+  api.getXReport.mockResolvedValue(xReportResponse);
+  api.getZReport.mockResolvedValue(zReportResponse);
+  api.closeRegisterShift.mockResolvedValue({
+    register_shift: closedRegisterShiftResponse,
+    z_report: zReportResponse,
+  });
   api.endCashierSession.mockResolvedValue(endedCashierSessionResponse);
   api.logout.mockResolvedValue(undefined);
   api.openRegisterShift.mockResolvedValue(registerShiftResponse);
@@ -327,7 +389,10 @@ beforeEach(() => {
   api.triggerAntiFraudEvent.mockResolvedValue(undefined);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete window.receiptPrinter;
+});
 
 describe('Maria POS authorization flow', () => {
   it('navigates checkout to receipts and returns and back', async () => {
@@ -637,6 +702,33 @@ describe('Maria POS authorization flow', () => {
     expect(screen.getAllByRole('button', { name: 'Выйти' })).toHaveLength(1);
   });
 
+  it('requests and prints a fresh X report from an open register shift', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    renderApp();
+
+    expect(
+      await screen.findByRole('button', { name: 'Печать X-отчёта' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Печать X-отчёта' }));
+
+    await waitFor(() =>
+      expect(api.getXReport).toHaveBeenCalledWith('register-shift-1'),
+    );
+    expect(window.receiptPrinter?.printShiftReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        report: expect.objectContaining({
+          reportType: 'X',
+          timeZone: 'Asia/Almaty',
+        }),
+      }),
+    );
+  });
+
   it('shows register shift reconciliation before returning to shift selection', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
@@ -645,13 +737,22 @@ describe('Maria POS authorization flow', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Закрыть кассу' }),
     );
+    expect(
+      screen.getByText(
+        'Пересчитайте наличные. Касса будет закрыта, ОФД сформирует Z-отчёт. После закрытия сумму нельзя изменить.',
+      ),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '9' }));
     await user.click(screen.getByRole('button', { name: '8' }));
     await user.click(screen.getByRole('button', { name: '00' }));
     expect(screen.getByLabelText('Фактические наличные, ₸')).toHaveValue(
       '9800',
     );
-    await user.click(screen.getByRole('button', { name: /^Закрыть кассу$/ }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Закрыть смену',
+      }),
+    );
 
     expect(
       await screen.findByRole('heading', { name: 'Касса закрыта' }),
@@ -663,6 +764,13 @@ describe('Maria POS authorization flow', () => {
       name: 'Результат сверки',
     });
     await waitFor(() => expect(reconciliation).toHaveFocus());
+    await user.click(screen.getByRole('button', { name: 'Печать Z-отчёта' }));
+    expect(window.receiptPrinter?.printShiftReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        report: expect.objectContaining({ reportType: 'Z' }),
+      }),
+    );
+    expect(api.getXReport).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe('/select-register-shift');
     expect(
       queryClient.getQueryData(['register-shifts', 'current', 'register-1']),
@@ -683,6 +791,103 @@ describe('Maria POS authorization flow', () => {
     ).toBeNull();
   });
 
+  it('reprints the latest stored Z report after its shift is closed', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentRegisterShift.mockResolvedValue(null);
+    api.getRegisterShifts.mockResolvedValue([
+      previousClosedRegisterShiftResponse,
+    ]);
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Печать последнего Z-отчёта',
+      }),
+    );
+
+    await waitFor(() =>
+      expect(api.getZReport).toHaveBeenCalledWith('register-shift-0'),
+    );
+    expect(window.receiptPrinter?.printShiftReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        report: expect.objectContaining({ reportType: 'Z' }),
+      }),
+    );
+  });
+
+  it('hides the latest Z report while choosing an open register for cashier work', async () => {
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getRegisterShifts.mockResolvedValue([
+      previousClosedRegisterShiftResponse,
+    ]);
+    const { queryClient } = renderApp();
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData(['register-shifts', 'history', 'register-1']),
+      ).toEqual([previousClosedRegisterShiftResponse]),
+    );
+    expect(
+      screen.queryByRole('button', {
+        name: 'Печать последнего Z-отчёта',
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('retries a CLOSING shift with its saved cash and handles a missing Z report', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getCurrentRegisterShift.mockResolvedValue({
+      ...registerShiftResponse,
+      actual_cash: '9800.00',
+      status: 'CLOSING',
+    });
+    api.closeRegisterShift.mockResolvedValue({
+      register_shift: closedRegisterShiftResponse,
+      z_report: null,
+    });
+    renderApp();
+
+    expect(
+      await screen.findByText('Закрытие не завершено'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Печать X-отчёта' }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Завершить закрытие' }),
+    );
+    expect(
+      screen.queryByLabelText('Фактические наличные, ₸'),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', { name: 'Завершить закрытие' }),
+    );
+
+    await waitFor(() =>
+      expect(api.closeRegisterShift).toHaveBeenCalledWith('register-shift-1', {
+        actualCash: '9800.00',
+      }),
+    );
+    expect(
+      await screen.findByText(
+        'Печать Z-отчёта недоступна для этого провайдера.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('keeps the counted cash when closing the register shift fails', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
@@ -694,7 +899,11 @@ describe('Maria POS authorization flow', () => {
     );
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: '00' }));
-    await user.click(screen.getByRole('button', { name: /^Закрыть кассу$/ }));
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Закрыть смену',
+      }),
+    );
 
     expect(
       await screen.findByText('Не удалось закрыть кассу.'),
@@ -718,6 +927,9 @@ describe('Maria POS authorization flow', () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Закрыть кассу' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Печать X-отчёта' }),
     ).not.toBeInTheDocument();
   });
 
