@@ -26,10 +26,12 @@ const messages: Record<ErrorCodeValue, string> = {
     'Для фискального чека не заполнены обязательные данные.',
   [ErrorCode.FiscalizationNotConfigured]:
     'Для этой кассы не настроен фискальный провайдер.',
+  [ErrorCode.FiscalizationOperationNotSupported]:
+    'Эта операция не поддерживается фискальным провайдером.',
   [ErrorCode.FiscalizationRejected]:
-    'Фискальный провайдер отклонил чек. Проверьте данные и повторите операцию.',
+    'Фискальный провайдер отклонил операцию. Проверьте данные и повторите.',
   [ErrorCode.FiscalizationUnavailable]:
-    'Фискальный провайдер временно недоступен. Оплата не завершена.',
+    'Фискальный провайдер временно недоступен. Повторите операцию позже.',
   [ErrorCode.FiscalShiftExpired]:
     'Фискальная смена превысила 24 часа. Завершите смену кассира и закройте кассовую смену.',
   [ErrorCode.IncorrectOrganization]: 'Выбран неверный контекст организации.',
@@ -46,10 +48,14 @@ const messages: Record<ErrorCodeValue, string> = {
   [ErrorCode.RegisterShiftAlreadyOpen]: 'Смена этой кассы уже открыта.',
   [ErrorCode.RegisterShiftCloseForbidden]:
     'Эту смену может закрыть только открывший её сотрудник.',
+  [ErrorCode.RegisterShiftCloseInProgress]:
+    'Закрытие кассовой смены уже выполняется. Повторите попытку.',
   [ErrorCode.RegisterShiftHasCurrentCashierSession]:
     'Сначала завершите активную смену кассира.',
   [ErrorCode.RegisterShiftNotFound]: 'Кассовая смена не найдена.',
   [ErrorCode.RegisterShiftNotOpen]: 'Кассовая смена уже закрыта.',
+  [ErrorCode.RegisterShiftReportNotAvailable]:
+    'Фискальный отчёт пока недоступен.',
   [ErrorCode.ReceiptNotFound]: 'Чек не найден.',
   [ErrorCode.ReceiptNumberInvalid]: 'Указан некорректный номер чека.',
   [ErrorCode.ReturnIdempotencyConflict]:

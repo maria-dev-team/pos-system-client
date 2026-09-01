@@ -27,6 +27,7 @@ import {
   getAuthContext,
   getCategories,
   getCurrentSale,
+  getMyOrganizations,
   overrideSaleItemPrice,
   removeSaleItem,
   resetSaleDiscount,
@@ -48,6 +49,7 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
     getAuthContext: vi.fn(),
     getCategories: vi.fn(),
     getCurrentSale: vi.fn(),
+    getMyOrganizations: vi.fn(),
     overrideSaleItemPrice: vi.fn(),
     removeSaleItem: vi.fn(),
     resetSaleDiscount: vi.fn(),
@@ -238,6 +240,28 @@ beforeEach(() => {
     ]),
   );
   vi.mocked(getCurrentSale).mockResolvedValue(null);
+  vi.mocked(getMyOrganizations).mockResolvedValue([
+    {
+      membership_id: 'membership-1',
+      organization: {
+        address: 'Алматы',
+        bin_iin: '123456789012',
+        created_at: '2026-01-01T00:00:00.000Z',
+        default_currency: 'KZT',
+        deleted_at: null,
+        id: 'organization-1',
+        language: 'ru',
+        legal_form: 'TOO',
+        legal_name: 'ТОО Maria',
+        name: 'Maria',
+        timezone: 'Asia/Almaty',
+        trade_name: 'Maria Market',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      },
+      position: null,
+      status: 'ACTIVE',
+    },
+  ]);
   vi.mocked(getCategories).mockResolvedValue({
     categories: [categoryFixture()],
     meta: { has_more: false, limit: 100, offset: 0, total: 1 },
@@ -252,6 +276,25 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
+  it('offers X-report printing on checkout with shift-read permission', async () => {
+    renderCheckout();
+
+    await screen.findByLabelText('Сканируйте или найдите товар');
+    expect(
+      screen.queryByRole('button', { name: 'Печать X-отчёта' }),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture(['register_shift.read', 'sales.create']),
+    );
+    renderCheckout();
+
+    expect(
+      await screen.findByRole('button', { name: 'Печать X-отчёта' }),
+    ).toBeInTheDocument();
+  });
+
   it('opens receipts and returns only with the required permission', async () => {
     const user = userEvent.setup();
     const onOpenSalesHistory = vi.fn();

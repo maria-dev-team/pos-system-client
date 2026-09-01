@@ -83,5 +83,18 @@ interface Window {
           ok: false;
         }
     >;
+    printShiftReport: (request: {
+      deviceName: string | null;
+      paperWidthMm: 58 | 80;
+      rasterThreshold: 112 | 136 | 160 | 192 | 216;
+      report: import('../../main/receipt-printer/shift-report-document').PrintableShiftReport;
+    }) => Promise<
+      | { ok: true }
+      | {
+          code: 'NO_PRINTER' | 'PRINTER_NOT_FOUND' | 'PRINT_FAILED';
+          message: string;
+          ok: false;
+        }
+    >;
   };
 }

@@ -103,6 +103,8 @@ const registerShift = {
   deleted_at: null,
   difference: null,
   expected_cash: null,
+  fiscal_closed_at: null,
+  fiscal_shift_number: '2',
   id: 'register-shift-1',
   opened_at: '2026-08-24T08:00:00.000Z',
   opened_by_membership_id: 'membership-1',
@@ -113,6 +115,47 @@ const registerShift = {
   store_id: 'store-1',
   updated_at: '2026-08-24T08:00:00.000Z',
 };
+const fiscalShiftReport = {
+  cash: { balance: '12400.00', deposited: '0.00', withdrawn: '100.00' },
+  cashbox: {
+    identity_number: 'IN-1',
+    registration_number: 'RN-1',
+    serial_number: 'SWK00000001',
+  },
+  cashier: { code: 'membership-1', name: 'Maria Cashier' },
+  change: '50.00',
+  closed_at: null,
+  control_sum: 'control-sum',
+  discount: '80.00',
+  document_count: 3,
+  generated_at: '2026-08-24T10:00:00.000Z',
+  markup: '0.00',
+  ofd: { name: 'ОФД', website: 'https://ofd.example' },
+  offline: false,
+  opened_at: '2026-08-24T08:00:00.000Z',
+  operations: {
+    purchase_returns: { amount: '0.00', count: 0 },
+    purchases: { amount: '0.00', count: 0 },
+    sale_returns: { amount: '100.00', count: 1 },
+    sales: { amount: '900.00', count: 2 },
+  },
+  payments: [
+    { amount: '500.00', provider_type: 0 },
+    { amount: '300.00', provider_type: 1 },
+  ],
+  provider: 'WEBKASSA' as const,
+  report_number: '10',
+  report_type: 'X' as const,
+  shift_number: '2',
+  taken: '850.00',
+  taxpayer: { bin_iin: '123456789012', name: 'Maria LLP' },
+  vat: '96.00',
+};
+const zReport = {
+  ...fiscalShiftReport,
+  closed_at: '2026-08-24T10:00:00.000Z',
+  report_type: 'Z' as const,
+};
 const closedRegisterShift = {
   ...registerShift,
   actual_cash: '12400.00',
@@ -120,6 +163,7 @@ const closedRegisterShift = {
   closed_by_membership_id: 'membership-1',
   difference: '-100.50',
   expected_cash: '12500.50',
+  fiscal_closed_at: '2026-08-24T10:00:00.000Z',
   status: 'CLOSED' as const,
 };
 const cashierSession = {
@@ -324,7 +368,13 @@ describe('API endpoints', () => {
           data: { register_shift: registerShift },
         },
         '/v1/register-shifts/register-shift-1/close': {
-          data: { register_shift: closedRegisterShift },
+          data: { register_shift: closedRegisterShift, z_report: zReport },
+        },
+        '/v1/register-shifts/register-shift-1/x-report': {
+          data: { x_report: fiscalShiftReport },
+        },
+        '/v1/register-shifts/register-shift-1/z-report': {
+          data: { z_report: zReport },
         },
         '/v1/register-shifts/register-shift-1/cashier-sessions': {
           data: { cashier_session: cashierSession },
@@ -338,9 +388,13 @@ describe('API endpoints', () => {
         '/v1/registers': { data: { registers: [register] } },
         '/v1/users/me': { data: { user } },
       };
+      const data =
+        config.method === 'get' && config.url === '/v1/register-shifts'
+          ? { data: { register_shifts: [closedRegisterShift] } }
+          : dataByUrl[config.url!];
       return {
         config,
-        data: dataByUrl[config.url!],
+        data,
         headers: {},
         status: 200,
         statusText: 'OK',
@@ -355,6 +409,9 @@ describe('API endpoints', () => {
       getApiHealth,
       getAuthContext,
       getCurrentRegisterShift,
+      getRegisterShifts,
+      getXReport,
+      getZReport,
       getCurrentCashierSession,
       getCurrentUser,
       getMyOrganizations,
@@ -363,6 +420,8 @@ describe('API endpoints', () => {
       startCashierSession,
       selectContext,
     } = await import('./requests');
+    expect(getXReport).toBeTypeOf('function');
+    if (!getXReport) return;
 
     await expect(
       login({ login: 'cashier@maria.kz', password: 'pass word' }),
@@ -384,9 +443,15 @@ describe('API endpoints', () => {
     await expect(
       openRegisterShift({ openingCash: '12500.50', registerId: 'register-1' }),
     ).resolves.toEqual(registerShift);
+    await expect(getXReport('register-shift-1')).resolves.toEqual(
+      fiscalShiftReport,
+    );
     await expect(
       closeRegisterShift('register-shift-1', { actualCash: '12400.00' }),
-    ).resolves.toEqual(closedRegisterShift);
+    ).resolves.toEqual({
+      register_shift: closedRegisterShift,
+      z_report: zReport,
+    });
     await expect(
       startCashierSession('register-shift-1', { openingCash: '10000.00' }),
     ).resolves.toEqual(cashierSession);
@@ -397,6 +462,10 @@ describe('API endpoints', () => {
       endCashierSession('cashier-session-1', { actualCash: '9900.00' }),
     ).resolves.toEqual(endedCashierSession);
     await expect(getApiHealth()).resolves.toEqual({ status: 'ok' });
+    await expect(getRegisterShifts('register-1')).resolves.toEqual([
+      closedRegisterShift,
+    ]);
+    await expect(getZReport('register-shift-1')).resolves.toEqual(zReport);
 
     expect(calls.map(({ method, url }) => [method, url])).toEqual([
       ['post', '/v1/auth/login'],
@@ -407,11 +476,14 @@ describe('API endpoints', () => {
       ['get', '/v1/registers'],
       ['get', '/v1/register-shifts/current'],
       ['post', '/v1/register-shifts'],
+      ['post', '/v1/register-shifts/register-shift-1/x-report'],
       ['post', '/v1/register-shifts/register-shift-1/close'],
       ['post', '/v1/register-shifts/register-shift-1/cashier-sessions'],
       ['get', '/v1/registers/register-1/cashier-sessions/current'],
       ['post', '/v1/cashier-sessions/cashier-session-1/end'],
       ['get', '/health'],
+      ['get', '/v1/register-shifts'],
+      ['get', '/v1/register-shifts/register-shift-1/z-report'],
     ]);
 
     const selectContextCall = calls.at(1);
@@ -430,16 +502,17 @@ describe('API endpoints', () => {
       opening_cash: '12500.50',
       register_id: 'register-1',
     });
-    expect(JSON.parse(calls.at(8)?.data as string)).toEqual({
+    expect(JSON.parse(calls.at(9)?.data as string)).toEqual({
       actual_cash: '12400.00',
     });
-    expect(JSON.parse(calls.at(9)?.data as string)).toEqual({
+    expect(calls.at(14)?.params).toEqual({ register_id: 'register-1' });
+    expect(JSON.parse(calls.at(10)?.data as string)).toEqual({
       opening_cash: '10000.00',
     });
-    expect(JSON.parse(calls.at(11)?.data as string)).toEqual({
+    expect(JSON.parse(calls.at(12)?.data as string)).toEqual({
       actual_cash: '9900.00',
     });
-    expect(calls.at(12)?.timeout).toBe(3_000);
+    expect(calls.at(13)?.timeout).toBe(3_000);
   });
 
   it('uses the checkout product and sale contracts and unwraps the inner sale', async () => {

@@ -41,11 +41,18 @@ import {
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
 import { authContextQueryOptions, useAuthStore } from '@renderer/features/auth';
+import { organizationsQueryOptions } from '@renderer/features/organizations';
+import {
+  LastZReportPrintButton,
+  ReceiptPrinterSettingsButton,
+  XReportPrintButton,
+} from '@renderer/features/receipt-printing';
 
 import { CloseRegisterShiftAction } from './close-register-shift-action';
 import {
   activeRegistersQueryOptions,
   currentRegisterShiftQueryOptions,
+  registerShiftHistoryQueryOptions,
 } from './register-shift-query-options';
 import { registerShiftOpeningSchema } from './register-shift.schema';
 
@@ -67,12 +74,22 @@ export function RegisterShiftSelectionView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const context = useQuery(authContextQueryOptions());
+  const canReadShift = Boolean(
+    context.data?.isSystemPosition ||
+    context.data?.permissions.includes('register_shift.read'),
+  );
+  const organizations = useQuery(organizationsQueryOptions());
   const registers = useQuery(
     activeRegistersQueryOptions(context.data?.storeId),
   );
   const shiftQueries = useQueries({
     queries: (registers.data ?? []).map(({ id }) =>
       currentRegisterShiftQueryOptions(id),
+    ),
+  });
+  const shiftHistoryQueries = useQueries({
+    queries: (registers.data ?? []).map(({ id }) =>
+      registerShiftHistoryQueryOptions(id, canReadShift),
     ),
   });
   const [selectedRegister, setSelectedRegister] =
@@ -178,6 +195,10 @@ export function RegisterShiftSelectionView() {
   const canOpenShift =
     context.data.isSystemPosition ||
     context.data.permissions.includes('register_shift.open');
+  const timeZone =
+    organizations.data?.find(
+      ({ organization }) => organization?.id === context.data.organizationId,
+    )?.organization?.timezone ?? 'Asia/Almaty';
 
   return (
     <main className="min-h-full bg-workspace px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
@@ -195,17 +216,20 @@ export function RegisterShiftSelectionView() {
               Выберите рабочее место, чтобы начать продажи
             </p>
           </div>
-          <Button
-            className="min-h-11 border-border bg-background px-4"
-            onClick={() =>
-              void navigate({ replace: true, to: '/select-store' })
-            }
-            type="button"
-            variant="ghost"
-          >
-            <Store aria-hidden="true" />
-            Сменить магазин
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <ReceiptPrinterSettingsButton className="min-h-11 border-border bg-background px-4" />
+            <Button
+              className="min-h-11 border-border bg-background px-4"
+              onClick={() =>
+                void navigate({ replace: true, to: '/select-store' })
+              }
+              type="button"
+              variant="ghost"
+            >
+              <Store aria-hidden="true" />
+              Сменить магазин
+            </Button>
+          </div>
         </header>
 
         {registers.data.length === 0 ? (
@@ -227,7 +251,18 @@ export function RegisterShiftSelectionView() {
           <div className="space-y-4">
             {registers.data.map((register, index) => {
               const shiftQuery = shiftQueries[index];
+              const shiftHistoryQuery = shiftHistoryQueries[index];
               const registerShift = shiftQuery?.data;
+              const lastClosedShift = shiftHistoryQuery?.data?.find(
+                ({ status }) => status === 'CLOSED',
+              );
+              const lastZReportAction = lastClosedShift ? (
+                <LastZReportPrintButton
+                  className="h-auto min-h-11 w-full whitespace-normal border-border bg-background px-4 py-3 text-center leading-tight text-muted-foreground"
+                  registerShiftId={lastClosedShift.id}
+                  timeZone={timeZone}
+                />
+              ) : null;
               const canCloseShift =
                 Boolean(registerShift) &&
                 (context.data.isSystemPosition ||
@@ -262,6 +297,14 @@ export function RegisterShiftSelectionView() {
                               className="size-3.5 animate-spin"
                             />
                             Проверяем
+                          </span>
+                        ) : registerShift?.status === 'CLOSING' ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-muted px-2.5 py-1 text-xs font-semibold text-warning">
+                            <CircleAlert
+                              aria-hidden="true"
+                              className="size-3.5"
+                            />
+                            Закрытие не завершено
                           </span>
                         ) : registerShift ? (
                           <span className="inline-flex items-center gap-1.5 rounded-full bg-success-muted px-2.5 py-1 text-xs font-semibold text-success">
@@ -327,49 +370,65 @@ export function RegisterShiftSelectionView() {
                     </Button>
                   ) : registerShift ? (
                     <div className="grid gap-3">
-                      <Button
-                        aria-label={`Начать работу на кассе ${register.name}`}
-                        className="min-h-13 w-full justify-between px-5 text-base"
-                        onClick={() => {
-                          const accessToken =
-                            useAuthStore.getState().accessToken;
-                          if (accessToken) {
-                            syncCameraContext(accessToken, register.id);
-                          }
-                          void navigate({
-                            search: {
-                              registerId: register.id,
-                              registerShiftId: registerShift.id,
-                            },
-                            to: '/cashier-session',
-                          });
-                        }}
-                        type="button"
-                      >
-                        Начать работу
-                        <ArrowRight aria-hidden="true" />
-                      </Button>
+                      {registerShift.status === 'OPEN' ? (
+                        <>
+                          <Button
+                            aria-label={`Начать работу на кассе ${register.name}`}
+                            className="min-h-13 w-full justify-between px-5 text-base"
+                            onClick={() => {
+                              const accessToken =
+                                useAuthStore.getState().accessToken;
+                              if (accessToken) {
+                                syncCameraContext(accessToken, register.id);
+                              }
+                              void navigate({
+                                search: {
+                                  registerId: register.id,
+                                  registerShiftId: registerShift.id,
+                                },
+                                to: '/cashier-session',
+                              });
+                            }}
+                            type="button"
+                          >
+                            Начать работу
+                            <ArrowRight aria-hidden="true" />
+                          </Button>
+                          {canReadShift ? (
+                            <XReportPrintButton
+                              registerShiftId={registerShift.id}
+                              timeZone={timeZone}
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
                       {canCloseShift ? (
                         <CloseRegisterShiftAction
-                          registerShiftId={registerShift.id}
+                          registerShift={registerShift}
+                          timeZone={timeZone}
                         />
                       ) : null}
                     </div>
-                  ) : canOpenShift ? (
-                    <Button
-                      aria-label={`Открыть кассу ${register.name}`}
-                      className="min-h-13 w-full justify-between px-5 text-base"
-                      disabled={shiftQuery?.isPending}
-                      onClick={() => openDialog(register)}
-                      type="button"
-                    >
-                      Открыть кассу
-                      <ArrowRight aria-hidden="true" />
-                    </Button>
                   ) : (
-                    <p className="min-h-13 rounded-lg bg-muted px-4 py-3 text-center text-sm font-medium text-muted-foreground">
-                      Нет права открывать кассу
-                    </p>
+                    <div className="grid gap-3">
+                      {canOpenShift ? (
+                        <Button
+                          aria-label={`Открыть кассу ${register.name}`}
+                          className="min-h-13 w-full justify-between px-5 text-base"
+                          disabled={shiftQuery?.isPending}
+                          onClick={() => openDialog(register)}
+                          type="button"
+                        >
+                          Открыть кассу
+                          <ArrowRight aria-hidden="true" />
+                        </Button>
+                      ) : (
+                        <p className="min-h-13 rounded-lg bg-muted px-4 py-3 text-center text-sm font-medium text-muted-foreground">
+                          Нет права открывать кассу
+                        </p>
+                      )}
+                      {lastZReportAction}
+                    </div>
                   )}
                 </article>
               );

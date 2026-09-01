@@ -67,3 +67,28 @@ it('forwards the selected raster threshold through the safe preload API', async 
     receipt,
   });
 });
+
+it('exposes a dedicated shift report print method without arbitrary IPC access', async () => {
+  const registration = electron.exposeInMainWorld.mock.calls.find(
+    ([name]) => name === 'receiptPrinter',
+  );
+  const api = registration?.[1] as {
+    printShiftReport?: (request: Record<string, unknown>) => Promise<unknown>;
+  };
+  expect(api.printShiftReport).toBeTypeOf('function');
+  if (!api.printShiftReport) return;
+  const request = {
+    deviceName: null,
+    paperWidthMm: 80,
+    rasterThreshold: 192,
+    report: { reportType: 'X' },
+  };
+
+  await api.printShiftReport(request);
+
+  expect(electron.invoke).toHaveBeenCalledWith(
+    'receipt-printer:print-shift-report',
+    request,
+  );
+  expect(api).not.toHaveProperty('invoke');
+});

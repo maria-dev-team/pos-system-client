@@ -55,6 +55,8 @@ export const queryKeys = {
     all: () => ['register-shifts'] as const,
     current: (registerId: string) =>
       ['register-shifts', 'current', registerId] as const,
+    history: (registerId: string) =>
+      ['register-shifts', 'history', registerId] as const,
   },
   sales: {
     all: () => ['sales'] as const,

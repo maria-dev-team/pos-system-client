@@ -226,6 +226,7 @@ describe('receipt printing controls', () => {
           { description: 'USB', displayName: 'XPrinter', name: 'XP-58IIH' },
         ]),
       print: vi.fn().mockResolvedValue({ ok: true }),
+      printShiftReport: vi.fn().mockResolvedValue({ ok: true }),
     };
   });
 
@@ -238,7 +239,9 @@ describe('receipt printing controls', () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    );
     await user.selectOptions(
       await screen.findByLabelText('Принтер'),
       'XP-58IIH',
@@ -264,7 +267,9 @@ describe('receipt printing controls', () => {
     );
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    );
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Сохранённый принтер недоступен.',
@@ -296,7 +301,9 @@ describe('receipt printing controls', () => {
       });
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    );
     await user.click(screen.getByRole('button', { name: 'Сохранить' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -368,7 +375,9 @@ describe('receipt printing controls', () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    );
     await user.selectOptions(
       await screen.findByLabelText('Принтер'),
       'XP-58IIH',
@@ -412,7 +421,9 @@ describe('receipt printing controls', () => {
     const user = userEvent.setup();
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    );
     await user.selectOptions(screen.getByLabelText('Ширина бумаги'), '80');
     await user.click(screen.getByRole('button', { name: 'Тестовая печать' }));
     const preview = await screen.findByRole('dialog', {
@@ -434,7 +445,9 @@ describe('receipt printing controls', () => {
     );
     renderWithClient(<ReceiptPrinterSettingsButton />);
 
-    await user.click(screen.getByRole('button', { name: 'Настроить принтер' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Принтер чеков и отчётов' }),
+    );
     await user.click(screen.getByRole('button', { name: 'Тестовая печать' }));
     const preview = await screen.findByRole('dialog', {
       name: 'Предпросмотр тестового чека',
