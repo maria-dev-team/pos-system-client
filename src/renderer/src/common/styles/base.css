@@ -176,10 +176,16 @@
 }
 
 .maria-virtual-keyboard--text.hg-theme-default .hg-button-clear,
-.maria-virtual-keyboard--text.hg-theme-default .hg-button-close {
+.maria-virtual-keyboard--text.hg-theme-default .hg-button-close,
+.maria-virtual-keyboard--text.hg-theme-default .hg-button-enter,
+.maria-virtual-keyboard--text.hg-theme-default .hg-button-lang {
   flex: 0 0 8rem;
   justify-content: center;
   text-align: center;
+}
+
+body[data-on-screen-keyboard-open='true'] {
+  pointer-events: auto !important;
 }
 
 .maria-virtual-keyboard--text.hg-theme-default .hg-row:nth-child(3) {

@@ -1,6 +1,5 @@
 import type { FormEventHandler } from 'react';
 
-import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
 import {
   Dialog,
@@ -13,7 +12,6 @@ import {
 import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
-import { VirtualKeyboard } from '@renderer/common/components/virtual-keyboard';
 
 import type { WithoutReceiptLine } from '../returns.types';
 
@@ -64,7 +62,6 @@ export function PriceOverrideDialogs({
                 onChange={(event) => onPriceChange(event.target.value)}
                 value={price}
               />
-              <NumericKeypad onValueChange={onPriceChange} value={price} />
             </FormField>
             {error ? (
               <p className="text-sm font-medium text-destructive">{error}</p>
@@ -94,12 +91,6 @@ export function PriceOverrideDialogs({
                 id="return-override-reason"
                 maxLength={500}
                 onChange={(event) => onReasonChange(event.target.value)}
-                value={reason}
-              />
-              <VirtualKeyboard
-                compact
-                maxLength={500}
-                onValueChange={onReasonChange}
                 value={reason}
               />
             </FormField>

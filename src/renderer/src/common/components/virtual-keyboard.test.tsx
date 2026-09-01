@@ -47,9 +47,26 @@ describe('VirtualKeyboard', () => {
       ['ё', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '{bksp}'],
       ['й', 'ц', 'у', 'к', 'е', 'н', 'г', 'ш', 'щ', 'з', 'х', 'ъ'],
       ['ф', 'ы', 'в', 'а', 'п', 'р', 'о', 'л', 'д', 'ж', 'э'],
-      ['я', 'ч', 'с', 'м', 'и', 'т', 'ь', 'б', 'ю'],
-      ['{clear}', '{space}', '{close}'],
+      ['{shift}', 'я', 'ч', 'с', 'м', 'и', 'т', 'ь', 'б', 'ю', '.', ','],
+      ['{lang}', '@', '-', '_', '{space}', '{enter}', '{clear}', '{close}'],
     ]);
+  });
+
+  it('switches between Russian and English layouts', async () => {
+    const user = userEvent.setup();
+    render(<KeyboardHarness />);
+
+    await user.click(
+      screen.getByRole('button', { name: 'Переключить на английский' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'q' }));
+
+    expect(screen.getByRole('status', { name: 'Значение' })).toHaveTextContent(
+      'q',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Переключить на русский' }),
+    ).toBeInTheDocument();
   });
 
   it('appends Russian letters, digits, and spaces without moving input focus', async () => {

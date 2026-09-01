@@ -15,7 +15,7 @@ export function AuthShell({ children, description, title }: AuthShellProps) {
             aria-hidden="true"
             className="mx-auto grid size-12 place-items-center rounded-xl bg-primary text-lg font-extrabold text-primary-foreground shadow-md shadow-primary/20"
           >
-            M
+            D
           </div>
           <h1 className="mt-5 text-2xl font-bold tracking-[-0.03em] text-card-foreground">
             {title}

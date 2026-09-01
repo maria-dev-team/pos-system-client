@@ -1,5 +1,11 @@
 export type StatusBarItem =
-  'context' | 'user' | 'serverStatus' | 'clock' | 'support' | 'logout';
+  | 'context'
+  | 'user'
+  | 'serverStatus'
+  | 'clock'
+  | 'support'
+  | 'settings'
+  | 'logout';
 
 export type StatusBarConfig = {
   healthCheckIntervalMs: number;
@@ -12,5 +18,12 @@ export const statusBarConfig = {
   healthCheckIntervalMs: 30_000,
   healthCheckTimeoutMs: 3_000,
   leftItems: ['context'],
-  rightItems: ['user', 'serverStatus', 'clock', 'support', 'logout'],
+  rightItems: [
+    'user',
+    'serverStatus',
+    'clock',
+    'support',
+    'settings',
+    'logout',
+  ],
 } as const satisfies StatusBarConfig;

@@ -55,7 +55,7 @@ public static class MariaRawPrinter {
     var documentStarted = false;
     var pageStarted = false;
     try {
-      var info = new DOC_INFO_1 { pDocName = "Maria POS receipt", pOutputFile = null, pDatatype = "RAW" };
+      var info = new DOC_INFO_1 { pDocName = "DukenAI POS receipt", pOutputFile = null, pDatatype = "RAW" };
       if (StartDocPrinter(printer, 1, ref info) == 0)
         throw new Win32Exception(Marshal.GetLastWin32Error());
       documentStarted = true;

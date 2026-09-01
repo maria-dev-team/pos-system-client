@@ -7,7 +7,6 @@ import type {
   ReceiptResponse,
   ReturnDisposition,
 } from '@renderer/common/api';
-import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
 import {
   Dialog,
@@ -182,13 +181,6 @@ function QuantityControl({
                 <p className="text-sm font-medium text-destructive">{error}</p>
               ) : null}
             </FormField>
-            <NumericKeypad
-              onValueChange={(next) => {
-                setDraft(next);
-                setError(null);
-              }}
-              value={draft}
-            />
             <DialogFooter>
               <DialogClose asChild>
                 <Button type="button" variant="ghost">

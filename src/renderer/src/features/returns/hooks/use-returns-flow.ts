@@ -83,7 +83,6 @@ export function useReturnsFlow(
   const [preparedWithoutReceiptLines, setPreparedWithoutReceiptLines] =
     useState<WithoutReceiptLine[] | null>(null);
   const [reason, setReasonState] = useState('');
-  const [showReasonKeyboard, setShowReasonKeyboard] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentTotal, setPaymentTotal] = useState('0.00');
@@ -238,7 +237,7 @@ export function useReturnsFlow(
   const addProduct = (product: ProductResponse) => {
     if (!product.nkt?.ntin_code || product.nkt.is_deactivated) {
       setFormError(
-        `Товар «${product.name}» не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+        `Товар «${product.name}» не сопоставлен с НКТ. Откройте его в каталоге DukenAI.`,
       );
       return;
     }
@@ -578,10 +577,8 @@ export function useReturnsFlow(
       isSubmitPending: submission.submit.isPending,
       onOpenPayment: openPayment,
       onReasonChange: setReason,
-      onReasonKeyboardOpenChange: setShowReasonKeyboard,
       previewTotal,
       reason,
-      showReasonKeyboard,
     },
     withoutReceiptPanel: {
       canOverridePrice,

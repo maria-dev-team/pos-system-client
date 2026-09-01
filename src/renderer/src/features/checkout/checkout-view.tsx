@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   CreditCard,
   History,
-  Keyboard,
   LayoutGrid,
   LoaderCircle,
   Minus,
@@ -30,7 +29,6 @@ import {
   searchProducts,
 } from '@renderer/common/api';
 import { FullPageState } from '@renderer/common/components/full-page-state';
-import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
 import {
   Dialog,
@@ -44,7 +42,6 @@ import {
 import { FormField } from '@renderer/common/components/ui/form-field';
 import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
-import { VirtualKeyboardOverlay } from '@renderer/common/components/virtual-keyboard';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import {
@@ -63,10 +60,11 @@ import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import { useProductSearchQuery } from '@renderer/features/products';
 import {
+  LastZReportPrintButton,
   ReceiptPrintButton,
-  ReceiptPrinterSettingsButton,
   XReportPrintButton,
 } from '@renderer/features/receipt-printing';
+import { registerShiftHistoryQueryOptions } from '@renderer/features/register-shifts';
 
 import { CheckoutCategoryPicker } from './checkout-category-picker';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
@@ -205,12 +203,14 @@ function ActiveCheckout({
     ...organizationsQueryOptions(),
     enabled: canReadShift,
   });
+  const shiftHistory = useQuery(
+    registerShiftHistoryQueryOptions(cashierSession.register_id, canReadShift),
+  );
   const currentSale = useQuery(currentSaleQueryOptions(cashierSession.id));
   const transitions = useCheckoutSaleTransitions(cashierSession.id);
   const sale = currentSale.data?.status === 'DRAFT' ? currentSale.data : null;
   const currentKey = queryKeys.sales.current(cashierSession.id);
   const [search, setSearch] = useState('');
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [scanIssue, setScanIssue] = useState<{
     barcode: string;
@@ -225,17 +225,14 @@ function ActiveCheckout({
   const [priceReason, setPriceReason] = useState('');
   const [priceError, setPriceError] = useState<string | null>(null);
   const [priceStep, setPriceStep] = useState<'value' | 'reason'>('value');
-  const [priceKeyboardOpen, setPriceKeyboardOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountPercentage, setDiscountPercentage] = useState('');
   const [discountReason, setDiscountReason] = useState('');
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [discountStep, setDiscountStep] = useState<'value' | 'reason'>('value');
-  const [discountKeyboardOpen, setDiscountKeyboardOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const [cancelKeyboardOpen, setCancelKeyboardOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
   const heldSales = useQuery({
     ...heldSalesQueryOptions(cashierSession.id),
@@ -249,10 +246,6 @@ function ActiveCheckout({
     context.data?.isSystemPosition ||
     context.data?.permissions.includes('product.read'),
   );
-  const timeZone =
-    organizations.data?.find(
-      ({ organization }) => organization?.id === context.data?.organizationId,
-    )?.organization?.timezone ?? 'Asia/Almaty';
   const canBrowseCategories = Boolean(
     context.data &&
     (context.data.isSystemPosition ||
@@ -266,24 +259,27 @@ function ActiveCheckout({
         sale ? 'sales.modify' : 'sales.create',
       )),
   );
+  const timeZone =
+    organizations.data?.find(
+      ({ organization }) => organization?.id === context.data?.organizationId,
+    )?.organization?.timezone ?? 'Asia/Almaty';
+  const lastClosedShift = shiftHistory.data?.find(
+    ({ status }) => status === 'CLOSED',
+  );
 
   const refocus = () => window.setTimeout(() => inputRef.current?.focus());
   const closeDialogs = () => {
     setQuantityItem(null);
     setRemoveItem(null);
     setPriceItem(null);
-    setPriceKeyboardOpen(false);
     setDiscountOpen(false);
-    setDiscountKeyboardOpen(false);
     setCancelOpen(false);
-    setCancelKeyboardOpen(false);
     refocus();
   };
   const openCancel = () => {
     setCancelOpen(true);
     setCancelReason('');
     setCancelError(null);
-    setCancelKeyboardOpen(false);
   };
   const finishCancelled = () => {
     void queryClient.cancelQueries({ exact: true, queryKey: currentKey });
@@ -322,7 +318,8 @@ function ActiveCheckout({
         setScanIssue({
           barcode:
             submitted.type === 'scan' ? submitted.barcode : submitted.productId,
-          message: 'Товар не сопоставлен с НКТ. Откройте его в каталоге Maria.',
+          message:
+            'Товар не сопоставлен с НКТ. Откройте его в каталоге DukenAI.',
         });
         refocus();
         return;
@@ -418,7 +415,7 @@ function ActiveCheckout({
       if (!exact.nkt?.ntin_code || exact.nkt.is_deactivated) {
         setScanIssue({
           barcode: scannedValue,
-          message: `Товар «${exact.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+          message: `Товар «${exact.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге DukenAI.`,
         });
         return;
       }
@@ -691,7 +688,7 @@ function ActiveCheckout({
       setSearch('');
       setScanIssue({
         barcode: product.barcode,
-        message: `Товар «${product.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге Maria.`,
+        message: `Товар «${product.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге DukenAI.`,
       });
       refocus();
       return;
@@ -760,7 +757,6 @@ function ActiveCheckout({
     setPriceReason('');
     setPriceError(null);
     setPriceStep('value');
-    setPriceKeyboardOpen(false);
   };
   const submitPrice = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -800,7 +796,6 @@ function ActiveCheckout({
     setDiscountReason(sale?.discount_reason ?? '');
     setDiscountError(null);
     setDiscountStep('value');
-    setDiscountKeyboardOpen(false);
     setDiscountOpen(true);
   };
   const submitDiscount = (event: FormEvent<HTMLFormElement>) => {
@@ -888,16 +883,6 @@ function ActiveCheckout({
               Товары по категориям
             </Button>
           ) : null}
-          <Button
-            aria-label="Показать виртуальную клавиатуру"
-            className="min-h-15 min-w-15 bg-muted/50"
-            disabled={!canSearch || !canAddProduct || scannerBlocked}
-            onClick={() => setKeyboardOpen((open) => !open)}
-            type="button"
-            variant="ghost"
-          >
-            <Keyboard aria-hidden="true" className="size-6" />
-          </Button>
         </div>
 
         {scanIssue ? (
@@ -920,18 +905,6 @@ function ActiveCheckout({
             </Button>
           </div>
         ) : null}
-
-        <VirtualKeyboardOverlay
-          compact
-          maxLength={512}
-          onOpenChange={(open) => {
-            setKeyboardOpen(open);
-            if (!open) refocus();
-          }}
-          onValueChange={setSearch}
-          open={keyboardOpen}
-          value={search}
-        />
 
         <div className="mt-2 max-h-52 overflow-auto" aria-live="polite">
           {!canSearch ? (
@@ -1288,54 +1261,6 @@ function ActiveCheckout({
                 Оплатить
               </Button>
             ) : null}
-            <section>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                Разделы
-              </p>
-              <div
-                className={`grid auto-rows-fr items-stretch gap-3 ${canOpenReceipts === canReadShift ? 'grid-cols-2' : 'grid-cols-3'}`}
-              >
-                <Button
-                  className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                  disabled={isBusy}
-                  onClick={() => setHeldOpen(true)}
-                  type="button"
-                  variant="ghost"
-                >
-                  <ReceiptText aria-hidden="true" className="size-5" />
-                  <span className="flex min-h-8 items-center justify-center break-words [overflow-wrap:anywhere]">
-                    Отложенные чеки
-                  </span>
-                </Button>
-                {canOpenReceipts ? (
-                  <Button
-                    className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                    disabled={isBusy}
-                    onClick={
-                      canOpenSalesHistory ? onOpenSalesHistory : onOpenReturns
-                    }
-                    type="button"
-                    variant="ghost"
-                  >
-                    <History aria-hidden="true" className="size-5" />
-                    <span className="flex min-h-8 items-center justify-center break-words [overflow-wrap:anywhere]">
-                      Чеки и возвраты
-                    </span>
-                  </Button>
-                ) : null}
-                {canReadShift ? (
-                  <XReportPrintButton
-                    className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                    registerShiftId={cashierSession.register_shift_id}
-                    timeZone={timeZone}
-                  />
-                ) : null}
-                <ReceiptPrinterSettingsButton
-                  className="h-full min-h-20 w-full flex-col gap-2 overflow-hidden whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                  labelClassName="flex min-h-8 items-center justify-center break-words [overflow-wrap:anywhere]"
-                />
-              </div>
-            </section>
             {rows.length > 0 && canHold ? (
               <section className="border-t border-border/70 pt-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
@@ -1377,15 +1302,82 @@ function ActiveCheckout({
                 Отменить чек
               </Button>
             ) : null}
-            {canEndSession ? (
-              <div className="border-t border-border/70 pt-4">
-                <SessionEndAction
-                  cashierSession={cashierSession}
-                  onSessionEndedLocally={onSessionEndedLocally}
-                  onSessionEnded={onSessionEnded}
-                />
+
+            <section className="border-t border-border/70 pt-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                Операции
+              </p>
+              <div
+                className={`grid gap-2 ${canOpenReceipts ? 'grid-cols-2' : ''}`}
+              >
+                <Button
+                  className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                  disabled={isBusy}
+                  onClick={() => setHeldOpen(true)}
+                  type="button"
+                  variant="ghost"
+                >
+                  <ReceiptText aria-hidden="true" className="size-5" />
+                  Отложенные чеки
+                </Button>
+                {canOpenReceipts ? (
+                  <Button
+                    className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                    disabled={isBusy}
+                    onClick={
+                      canOpenSalesHistory ? onOpenSalesHistory : onOpenReturns
+                    }
+                    type="button"
+                    variant="ghost"
+                  >
+                    <History aria-hidden="true" className="size-5" />
+                    Чеки и возвраты
+                  </Button>
+                ) : null}
               </div>
-            ) : null}
+            </section>
+
+            <section className="border-t border-border/70 pt-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                Касса и отчёты
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {canReadShift ? (
+                  <XReportPrintButton
+                    className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                    registerShiftId={cashierSession.register_shift_id}
+                    timeZone={timeZone}
+                  />
+                ) : null}
+                {lastClosedShift ? (
+                  <LastZReportPrintButton
+                    className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
+                    registerShiftId={lastClosedShift.id}
+                    timeZone={timeZone}
+                  />
+                ) : (
+                  <div
+                    aria-label="Z-отчёт пока недоступен"
+                    className="flex min-h-18 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/35 px-2 py-3 text-center text-xs leading-tight text-muted-foreground"
+                  >
+                    <ReceiptText aria-hidden="true" className="size-5" />
+                    Z-отчёт после закрытия
+                  </div>
+                )}
+              </div>
+              {canEndSession ? (
+                <div className="mt-3">
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Завершение работы и сверка наличных
+                  </p>
+                  <SessionEndAction
+                    cashierSession={cashierSession}
+                    onSessionEndedLocally={onSessionEndedLocally}
+                    onSessionEnded={onSessionEnded}
+                  />
+                </div>
+              ) : null}
+            </section>
           </div>
         </aside>
       </div>
@@ -1443,14 +1435,6 @@ function ActiveCheckout({
                 </p>
               ) : null}
             </FormField>
-            <NumericKeypad
-              disabled={command.isPending}
-              onValueChange={(value) => {
-                setQuantity(value);
-                setQuantityError(null);
-              }}
-              value={quantity}
-            />
             <DialogFooter>
               <DialogClose asChild>
                 <Button
@@ -1577,14 +1561,6 @@ function ActiveCheckout({
                     value={discountPercentage}
                   />
                 </FormField>
-                <NumericKeypad
-                  disabled={command.isPending}
-                  onValueChange={(value) => {
-                    setDiscountPercentage(value);
-                    setDiscountError(null);
-                  }}
-                  value={discountPercentage}
-                />
               </>
             ) : (
               <FormField>
@@ -1618,31 +1594,9 @@ function ActiveCheckout({
                     </Button>
                   ))}
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <Button
-                    onClick={() => setDiscountKeyboardOpen(true)}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Keyboard aria-hidden="true" />
-                    Экранная клавиатура
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    {discountReason.length}/500
-                  </span>
-                </div>
-                <VirtualKeyboardOverlay
-                  compact
-                  disabled={command.isPending}
-                  maxLength={500}
-                  onOpenChange={setDiscountKeyboardOpen}
-                  onValueChange={(value) => {
-                    setDiscountReason(value);
-                    setDiscountError(null);
-                  }}
-                  open={discountKeyboardOpen}
-                  value={discountReason}
-                />
+                <span className="block text-right text-xs text-muted-foreground">
+                  {discountReason.length}/500
+                </span>
               </FormField>
             )}
             {discountError ? (
@@ -1667,7 +1621,6 @@ function ActiveCheckout({
                   className="min-h-12"
                   disabled={command.isPending}
                   onClick={() => {
-                    setDiscountKeyboardOpen(false);
                     setDiscountError(null);
                     setDiscountStep('value');
                   }}
@@ -1723,14 +1676,6 @@ function ActiveCheckout({
                     value={unitPrice}
                   />
                 </FormField>
-                <NumericKeypad
-                  disabled={command.isPending}
-                  onValueChange={(value) => {
-                    setUnitPrice(value);
-                    setPriceError(null);
-                  }}
-                  value={unitPrice}
-                />
               </>
             ) : (
               <FormField>
@@ -1764,31 +1709,9 @@ function ActiveCheckout({
                     </Button>
                   ))}
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <Button
-                    onClick={() => setPriceKeyboardOpen(true)}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Keyboard aria-hidden="true" />
-                    Экранная клавиатура
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    {priceReason.length}/500
-                  </span>
-                </div>
-                <VirtualKeyboardOverlay
-                  compact
-                  disabled={command.isPending}
-                  maxLength={500}
-                  onOpenChange={setPriceKeyboardOpen}
-                  onValueChange={(value) => {
-                    setPriceReason(value);
-                    setPriceError(null);
-                  }}
-                  open={priceKeyboardOpen}
-                  value={priceReason}
-                />
+                <span className="block text-right text-xs text-muted-foreground">
+                  {priceReason.length}/500
+                </span>
               </FormField>
             )}
             {priceError ? (
@@ -1813,7 +1736,6 @@ function ActiveCheckout({
                   className="min-h-12"
                   disabled={command.isPending}
                   onClick={() => {
-                    setPriceKeyboardOpen(false);
                     setPriceError(null);
                     setPriceStep('value');
                   }}
@@ -1883,30 +1805,9 @@ function ActiveCheckout({
                   </Button>
                 ))}
               </div>
-              <div className="flex items-center justify-between gap-3">
-                <Button
-                  onClick={() => setCancelKeyboardOpen(true)}
-                  type="button"
-                  variant="ghost"
-                >
-                  <Keyboard aria-hidden="true" />
-                  Экранная клавиатура
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {cancelReason.length}/500
-                </span>
-              </div>
-              <VirtualKeyboardOverlay
-                compact
-                maxLength={500}
-                onOpenChange={setCancelKeyboardOpen}
-                onValueChange={(value) => {
-                  setCancelReason(value);
-                  setCancelError(null);
-                }}
-                open={cancelKeyboardOpen}
-                value={cancelReason}
-              />
+              <span className="block text-right text-xs text-muted-foreground">
+                {cancelReason.length}/500
+              </span>
             </FormField>
             {cancelError ? (
               <p className="text-sm font-medium text-destructive">

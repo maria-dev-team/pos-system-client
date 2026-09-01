@@ -256,7 +256,7 @@ describe('CheckoutPaymentDialog', () => {
     expect(screen.queryByLabelText('Локальная сумма')).not.toBeInTheDocument();
   });
 
-  it('disables closing, modes, input, keypad, and confirmation while pending', () => {
+  it('disables closing, modes, input, and confirmation while pending', () => {
     renderDialog({ pending: true });
 
     expect(
@@ -266,7 +266,6 @@ describe('CheckoutPaymentDialog', () => {
     expect(screen.getByRole('button', { name: 'Безналичные' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Смешанная' })).toBeDisabled();
     expect(screen.getByLabelText('Получено наличными, ₸')).toBeDisabled();
-    expect(screen.getByRole('button', { name: '1' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Отмена' })).toBeDisabled();
     expect(
       screen.getByRole('button', { name: 'Подтвердить оплату' }),

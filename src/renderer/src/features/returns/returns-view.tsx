@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  Keyboard,
   LoaderCircle,
   RotateCcw,
 } from 'lucide-react';
@@ -15,13 +14,9 @@ import { FullPageState } from '@renderer/common/components/full-page-state';
 import { Button } from '@renderer/common/components/ui/button';
 import { FormField } from '@renderer/common/components/ui/form-field';
 import { Label } from '@renderer/common/components/ui/label';
-import { VirtualKeyboardOverlay } from '@renderer/common/components/virtual-keyboard';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
-import {
-  ReceiptPrintButton,
-  ReceiptPrinterSettingsButton,
-} from '@renderer/features/receipt-printing';
+import { ReceiptPrintButton } from '@renderer/features/receipt-printing';
 
 import { PriceOverrideDialogs } from './components/price-override-dialogs';
 import {
@@ -179,15 +174,18 @@ export function ReturnsView({
             </Button>
             <div className="min-w-0">
               <h1 className="text-2xl font-extrabold tracking-tight">
-                Возвраты
+                Чеки и возвраты
               </h1>
               <p className="break-words text-sm text-muted-foreground">
-                Касса работает, текущая корзина продаж сохранена
+                {focusedFlow
+                  ? initialMode === 'withoutReceipt'
+                    ? 'Оформление возврата без чека'
+                    : `Оформление возврата по чеку${initialReceiptNumber ? ` №${initialReceiptNumber}` : ''}`
+                  : 'Найдите чек или оформите возврат без чека'}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <ReceiptPrinterSettingsButton />
             {!focusedFlow ? (
               <div
                 aria-label="Режим возврата"
@@ -265,27 +263,6 @@ export function ReturnsView({
                   returnForm.onReasonChange(event.target.value)
                 }
                 placeholder="Например: товар не подошёл по размеру"
-                value={returnForm.reason}
-              />
-              <Button
-                className="w-full justify-start border-border bg-muted/45 px-4 hover:bg-muted/75"
-                onClick={() =>
-                  returnForm.onReasonKeyboardOpenChange(
-                    !returnForm.showReasonKeyboard,
-                  )
-                }
-                type="button"
-                variant="ghost"
-              >
-                <Keyboard aria-hidden="true" />
-                Экранная клавиатура
-              </Button>
-              <VirtualKeyboardOverlay
-                compact
-                maxLength={500}
-                onOpenChange={returnForm.onReasonKeyboardOpenChange}
-                onValueChange={returnForm.onReasonChange}
-                open={returnForm.showReasonKeyboard}
                 value={returnForm.reason}
               />
             </FormField>

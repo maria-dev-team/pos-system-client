@@ -17,6 +17,7 @@ export function DialogClose(
 export function DialogContent({
   children,
   className,
+  onInteractOutside,
   showCloseButton = true,
   ...props
 }: ComponentProps<typeof DialogPrimitive.Content> & {
@@ -30,6 +31,16 @@ export function DialogContent({
           'fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-border bg-card p-6 shadow-2xl outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className,
         )}
+        onInteractOutside={(event) => {
+          const originalTarget = event.detail.originalEvent.target;
+          if (
+            originalTarget instanceof Element &&
+            originalTarget.closest('[data-on-screen-keyboard]')
+          ) {
+            event.preventDefault();
+          }
+          onInteractOutside?.(event);
+        }}
         {...props}
       >
         {children}

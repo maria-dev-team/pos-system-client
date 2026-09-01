@@ -1,4 +1,4 @@
-import { Delete, Eraser } from 'lucide-react';
+import { Check, Delete, Eraser } from 'lucide-react';
 
 import { Button } from './ui/button';
 
@@ -6,12 +6,14 @@ const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '00', '0', '.'];
 
 type NumericKeypadProps = {
   disabled?: boolean;
+  onEnter?: () => void;
   onValueChange: (value: string) => void;
   value: string;
 };
 
 export function NumericKeypad({
   disabled = false,
+  onEnter,
   onValueChange,
   value,
 }: NumericKeypadProps) {
@@ -41,7 +43,7 @@ export function NumericKeypad({
           </Button>
         ))}
       </div>
-      <div className="grid grid-rows-2 gap-3">
+      <div className={`grid gap-3 ${onEnter ? 'grid-rows-3' : 'grid-rows-2'}`}>
         <Button
           aria-label="Удалить последний символ"
           className="h-full min-h-15 border border-border bg-background text-foreground shadow-sm hover:bg-accent"
@@ -62,6 +64,17 @@ export function NumericKeypad({
         >
           <Eraser aria-hidden="true" className="size-6" />
         </Button>
+        {onEnter ? (
+          <Button
+            aria-label="Готово"
+            className="h-full min-h-15"
+            disabled={disabled}
+            onClick={onEnter}
+            type="button"
+          >
+            <Check aria-hidden="true" className="size-6" />
+          </Button>
+        ) : null}
       </div>
     </div>
   );

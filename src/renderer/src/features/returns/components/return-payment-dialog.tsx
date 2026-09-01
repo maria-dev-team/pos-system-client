@@ -3,7 +3,6 @@ import { Banknote, CreditCard, LoaderCircle, Split } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 
 import type { ReturnPaymentPayload } from '@renderer/common/api';
-import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
 import {
   Dialog,
@@ -221,14 +220,6 @@ export function ReturnPaymentDialog({
                   </span>
                 </div>
               </FormField>
-              <NumericKeypad
-                disabled={pending}
-                onValueChange={(value) => {
-                  setCashAmount(value);
-                  setValidationError(null);
-                }}
-                value={cashAmount}
-              />
             </div>
           ) : null}
 

@@ -1,4 +1,4 @@
-# Архитектура renderer Maria POS
+# Архитектура renderer DukenAI POS
 
 Этот документ описывает правила разработки React-интерфейса в
 `src/renderer/src`. Общие границы Electron main, preload и renderer остаются в

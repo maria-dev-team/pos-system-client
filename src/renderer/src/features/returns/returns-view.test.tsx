@@ -700,25 +700,6 @@ describe('ReturnsView', () => {
     );
   });
 
-  it('opens the screen keyboard over the page without stretching the layout', async () => {
-    const user = userEvent.setup();
-    renderView();
-
-    await user.click(
-      screen.getByRole('button', { name: 'Экранная клавиатура' }),
-    );
-
-    const dialog = screen.getByRole('dialog', {
-      name: 'Экранная клавиатура',
-    });
-    expect(dialog).toHaveClass('bottom-0', 'top-auto', 'max-h-[50svh]');
-    await user.click(screen.getByRole('button', { name: 'а' }));
-    expect(screen.getByLabelText('Причина возврата')).toHaveValue('а');
-
-    await user.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
   it('submits a permitted without-receipt price override after refreshing the product', async () => {
     const user = userEvent.setup();
     const product = {

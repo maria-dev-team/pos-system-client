@@ -101,7 +101,7 @@ export function LoginView() {
   return (
     <AuthShell
       description="Введите данные своей учётной записи"
-      title="Вход в Maria POS"
+      title="Вход в DukenAI POS"
     >
       <form className="space-y-5" noValidate onSubmit={handleSubmit}>
         <FormField>

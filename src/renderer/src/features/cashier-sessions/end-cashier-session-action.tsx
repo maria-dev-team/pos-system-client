@@ -217,6 +217,7 @@ export function EndCashierSessionAction({
                     aria-invalid={Boolean(validationError)}
                     autoFocus
                     className="h-14 text-lg tabular-nums md:text-lg"
+                    data-keyboard-inline
                     disabled={mutation.isPending}
                     id="cashier-actual-cash"
                     inputMode="decimal"
