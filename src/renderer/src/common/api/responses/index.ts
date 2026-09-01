@@ -12,7 +12,11 @@ export type {
   PositionResponse,
 } from './organization.response';
 export type { RegisterResponse } from './register.response';
-export type { RegisterShiftResponse } from './register-shift.response';
+export type {
+  CloseRegisterShiftResponse,
+  FiscalShiftReportResponse,
+  RegisterShiftResponse,
+} from './register-shift.response';
 export type {
   ProductResponse,
   ProductSearchResponse,

@@ -368,7 +368,7 @@ export function ReceiptPrinterSettingsButton({
         variant="ghost"
       >
         <Printer aria-hidden="true" />
-        <span className={labelClassName}>Настроить принтер</span>
+        <span className={labelClassName}>Принтер чеков и отчётов</span>
       </Button>
       {open ? (
         <ReceiptPrinterSettingsDialog onOpenChange={setOpen} open />
