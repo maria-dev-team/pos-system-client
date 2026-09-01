@@ -40,8 +40,8 @@ Actions → Variables**:
 
 - `POS_API_URL` — production API URL embedded into the application.
 
-Commit the trusted Windows x64 executable at `resources/ffmpeg.exe`. The release
-workflow does not download or replace this binary.
+The workflow downloads a pinned Windows x64 LGPL FFmpeg build and verifies its
+SHA-256 checksum. No FFmpeg variables or committed binary are required.
 
 Create the first release from an up-to-date `main` branch (the current package
 version is `1.0.0`):
