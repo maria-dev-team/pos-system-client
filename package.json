@@ -5,6 +5,10 @@
   "main": "./out/main/index.js",
   "author": "Maria Dev Team",
   "homepage": "https://github.com/maria-dev-team/pos-system-client",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maria-dev-team/pos-system-client.git"
+  },
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -17,8 +21,61 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win nsis --x64",
-    "build:mac": "node scripts/verify-ffmpeg.mjs darwin && npm run build && electron-builder --mac"
+    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish never",
+    "release:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish always"
+  },
+  "build": {
+    "appId": "kz.maria.pos",
+    "productName": "Maria POS",
+    "asar": true,
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "!**/.vscode/*",
+      "!**/.idea/**",
+      "!src/*",
+      "!electron.vite.config.{js,ts,mjs,cjs}",
+      "!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,CHANGELOG.md,README.md,ARCHITECTURE.md,TODO.md}",
+      "!{.env,.env.*,.npmrc,pnpm-lock.yaml}",
+      "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+    ],
+    "win": {
+      "executableName": "MariaPOS",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/ffmpeg.exe",
+          "to": "ffmpeg.exe"
+        },
+        {
+          "from": "resources/FFMPEG-LICENSE.txt",
+          "to": "FFMPEG-LICENSE.txt"
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "Maria-POS-Setup.${ext}",
+      "shortcutName": "${productName}",
+      "uninstallDisplayName": "${productName}",
+      "createDesktopShortcut": "always"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "maria-dev-team",
+        "repo": "pos-system-client",
+        "releaseType": "release"
+      }
+    ]
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",

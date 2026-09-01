@@ -25,3 +25,46 @@ $ npm run dev
 ```bash
 $ npm run build:win
 ```
+
+Before packaging, place a trusted Windows x64 FFmpeg executable at
+`resources/ffmpeg.exe`.
+
+## Windows releases
+
+The `Release Windows` GitHub Actions workflow builds and publishes a Windows
+installer when a semantic version tag such as `v1.0.1` is pushed. The tag must
+match the `version` field in `package.json`.
+
+Configure this repository variable in **Settings → Secrets and variables →
+Actions → Variables**:
+
+- `POS_API_URL` — production API URL embedded into the application.
+
+Commit the trusted Windows x64 executable at `resources/ffmpeg.exe`. The release
+workflow does not download or replace this binary.
+
+Create the first release from an up-to-date `main` branch (the current package
+version is `1.0.0`):
+
+```bash
+$ git tag v1.0.0
+$ git push origin v1.0.0
+```
+
+For subsequent patch releases:
+
+```bash
+$ npm version patch
+$ git push origin main --follow-tags
+```
+
+Use `minor` or `major` instead of `patch` when appropriate. The public download
+URL for the latest installer is stable:
+
+```text
+https://github.com/maria-dev-team/pos-system-client/releases/latest/download/Maria-POS-Setup.exe
+```
+
+The repository must be public for unauthenticated downloads from a website. If
+the repository is private, release assets require GitHub authentication and
+cannot be used as a public download URL.
