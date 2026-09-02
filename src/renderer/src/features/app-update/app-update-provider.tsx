@@ -52,7 +52,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 }
 
 function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
-  const [now, setNow] = useState(Date.now);
+  const [, setTick] = useState(0);
+  const now = Date.now();
   const percent = Math.min(
     100,
     Math.max(0, Math.round(state?.downloadPercent ?? 0)),
@@ -64,7 +65,7 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
 
   useEffect(() => {
     if (!state?.restartAt) return;
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    const timer = setInterval(() => setTick((tick) => tick + 1), 1_000);
     return () => clearInterval(timer);
   }, [state?.restartAt]);
 

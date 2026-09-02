@@ -153,6 +153,33 @@ describe('AppUpdateProvider', () => {
     ).toBeInTheDocument();
   });
 
+  it('starts a delayed restarting state at its fresh five-second countdown', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-02T00:00:00.000Z'));
+    const updates = installUpdates(new Promise(() => undefined));
+
+    render(
+      <AppUpdateProvider>
+        <p>router marker</p>
+      </AppUpdateProvider>,
+    );
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+      updates.emit(
+        updateState({
+          restartAt: Date.now() + 5_000,
+          status: 'restarting',
+        }),
+      );
+    });
+
+    expect(
+      screen.getByText(
+        'Обновление готово. Приложение перезапустится через 5 секунд',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('keeps a pushed state when the initial getter resolves later', async () => {
     let resolveInitial: (state: AppUpdateState) => void;
     const updates = installUpdates(
