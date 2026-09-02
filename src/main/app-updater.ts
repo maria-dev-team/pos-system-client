@@ -44,6 +44,8 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let resolveRetry: (() => void) | undefined;
+  let checkInFlight = false;
+  let errorListenerRegistered = false;
   let updaterListenersRegistered = false;
   let state = initialState();
 
@@ -74,6 +76,11 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     if (active) setState({ status: 'downloading', downloadPercent: percent });
   };
   const onError = (): void => undefined;
+  const removeErrorListener = (): void => {
+    if (!errorListenerRegistered) return;
+    autoUpdater.removeListener('error', onError);
+    errorListenerRegistered = false;
+  };
   registeredWindows.add(mainWindow);
   ipcMain.handle(GET_STATE_CHANNEL, async (event) => {
     if (event.sender !== mainWindow.webContents) {
@@ -93,7 +100,8 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     if (updaterListenersRegistered) {
       autoUpdater.removeListener('update-available', onUpdateAvailable);
       autoUpdater.removeListener('download-progress', onDownloadProgress);
-      autoUpdater.removeListener('error', onError);
+      updaterListenersRegistered = false;
+      if (!checkInFlight) removeErrorListener();
     }
     ipcMain.removeHandler(GET_STATE_CHANNEL);
     registeredWindows.delete(mainWindow);
@@ -111,6 +119,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   autoUpdater.on('update-available', onUpdateAvailable);
   autoUpdater.on('download-progress', onDownloadProgress);
   autoUpdater.on('error', onError);
+  errorListenerRegistered = true;
   updaterListenersRegistered = true;
 
   const checkForUpdate = async (): Promise<void> => {
@@ -156,5 +165,10 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     }
   };
 
-  void checkForUpdate();
+  checkInFlight = true;
+  const finishCheck = (): void => {
+    checkInFlight = false;
+    if (!active) removeErrorListener();
+  };
+  void checkForUpdate().then(finishCheck, finishCheck);
 };

@@ -14,8 +14,11 @@ const updater = vi.hoisted(() => {
     autoDownload: false,
     autoInstallOnAppQuit: true,
     checkForUpdates: vi.fn(),
-    emit: (event: string, value?: unknown) =>
-      listeners.get(event)?.forEach((listener) => listener(value)),
+    emit: (event: string, value?: unknown) => {
+      const eventListeners = listeners.get(event);
+      if (event === 'error' && !eventListeners?.size) throw value;
+      eventListeners?.forEach((listener) => listener(value));
+    },
     on: vi.fn((event: string, listener: (value?: unknown) => void) => {
       const eventListeners = listeners.get(event) ?? new Set();
       eventListeners.add(listener);
@@ -127,11 +130,14 @@ describe('registerAppUpdater', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
-  it('succeeds when the third check finds the current version', async () => {
+  it('downloads an available version on the third attempt', async () => {
     updater.checkForUpdates
       .mockRejectedValueOnce(new Error('offline'))
       .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValueOnce({ downloadPromise: null });
+      .mockImplementationOnce(async () => {
+        updater.emit('update-available', { version: '1.1.0' });
+        return { downloadPromise: Promise.resolve() };
+      });
     const window = createWindow();
 
     registerAppUpdater(window as never);
@@ -142,7 +148,8 @@ describe('registerAppUpdater', () => {
     await expect(
       stateHandler()({ sender: window.webContents }),
     ).resolves.toMatchObject({
-      status: 'current',
+      status: 'restarting',
+      availableVersion: '1.1.0',
       attempt: 3,
     });
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(3);
@@ -224,6 +231,30 @@ describe('registerAppUpdater', () => {
 
     await expect(stateHandler()({ sender: {} })).rejects.toThrow(
       'Unauthorized app updater request',
+    );
+  });
+
+  it('keeps the error listener through a late error from a closed window', async () => {
+    let rejectCheck!: (reason?: unknown) => void;
+    updater.checkForUpdates.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectCheck = reject;
+        }),
+    );
+    const window = createWindow();
+
+    registerAppUpdater(window as never);
+    window.close();
+
+    expect(() => updater.emit('error', new Error('late error'))).not.toThrow();
+    rejectCheck(new Error('late rejection'));
+    await flush();
+
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(updater.removeListener).toHaveBeenCalledWith(
+      'error',
+      expect.any(Function),
     );
   });
 });
