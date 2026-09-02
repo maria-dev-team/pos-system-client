@@ -3,9 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerAppUpdater } from './app-updater';
 
 const electron = vi.hoisted(() => ({
-  app: { getVersion: vi.fn(), isPackaged: false },
+  app: { getPath: vi.fn(), getVersion: vi.fn(), isPackaged: false },
   handle: vi.fn(),
   removeHandler: vi.fn(),
+}));
+
+const files = vi.hoisted(() => ({
+  appendFile: vi.fn().mockResolvedValue(undefined),
+  mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
 const updater = vi.hoisted(() => {
@@ -14,6 +19,7 @@ const updater = vi.hoisted(() => {
     autoDownload: false,
     autoInstallOnAppQuit: true,
     checkForUpdates: vi.fn(),
+    downloadUpdate: vi.fn(),
     emit: (event: string, value?: unknown) => {
       const eventListeners = listeners.get(event);
       if (event === 'error' && !eventListeners?.size) throw value;
@@ -37,6 +43,7 @@ const updater = vi.hoisted(() => {
       autoUpdater.autoDownload = false;
       autoUpdater.autoInstallOnAppQuit = true;
       autoUpdater.checkForUpdates.mockReset();
+      autoUpdater.downloadUpdate.mockReset();
       autoUpdater.quitAndInstall.mockReset();
       autoUpdater.on.mockClear();
       autoUpdater.removeListener.mockClear();
@@ -45,6 +52,7 @@ const updater = vi.hoisted(() => {
   return autoUpdater;
 });
 
+vi.mock('node:fs/promises', () => ({ default: files, ...files }));
 vi.mock('electron', () => ({
   app: electron.app,
   ipcMain: { handle: electron.handle, removeHandler: electron.removeHandler },
@@ -56,13 +64,33 @@ type Window = {
   webContents: { send: ReturnType<typeof vi.fn> };
 };
 
-const stateHandler = (): ((event: { sender: unknown }) => unknown) => {
+type UpdateResult = {
+  isUpdateAvailable: boolean;
+  updateInfo: { version: string };
+  versionInfo: { version: string };
+};
+
+const updateResult = (
+  isUpdateAvailable: boolean,
+  version = '1.1.0',
+): UpdateResult => ({
+  isUpdateAvailable,
+  updateInfo: { version },
+  versionInfo: { version },
+});
+
+const ipcHandler = (
+  channel: string,
+): ((event: { sender: unknown }) => unknown) => {
   const registration = electron.handle.mock.calls.find(
-    ([channel]) => channel === 'app-updater:get-state',
+    ([registeredChannel]) => registeredChannel === channel,
   );
-  if (!registration) throw new Error('State handler was not registered');
+  if (!registration) throw new Error(`${channel} handler was not registered`);
   return registration[1] as (event: { sender: unknown }) => unknown;
 };
+
+const stateHandler = (): ReturnType<typeof ipcHandler> =>
+  ipcHandler('app-updater:get-state');
 
 const createWindow = (): Window => {
   let close: () => void = () => undefined;
@@ -85,8 +113,10 @@ describe('registerAppUpdater', () => {
     vi.setSystemTime(new Date('2026-09-02T12:00:00.000Z'));
     vi.clearAllMocks();
     updater.reset();
+    electron.app.getPath.mockReturnValue('/logs');
     electron.app.getVersion.mockReturnValue('1.0.0');
     electron.app.isPackaged = true;
+    updater.downloadUpdate.mockResolvedValue(['/update.exe']);
   });
 
   it('bypasses the updater for unpackaged builds', async () => {
@@ -102,6 +132,8 @@ describe('registerAppUpdater', () => {
       currentVersion: '1.0.0',
       availableVersion: null,
       downloadPercent: null,
+      downloadTransferred: null,
+      downloadTotal: null,
       attempt: 0,
       restartAt: null,
     });
@@ -110,8 +142,8 @@ describe('registerAppUpdater', () => {
     expect(updater.removeListener).not.toHaveBeenCalled();
   });
 
-  it('reports the current version when the first check has no download', async () => {
-    updater.checkForUpdates.mockResolvedValue({ downloadPromise: null });
+  it('reports the current version when the first check finds no update', async () => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(false, '1.0.0'));
     const window = createWindow();
 
     registerAppUpdater(window as never);
@@ -123,21 +155,17 @@ describe('registerAppUpdater', () => {
       status: 'current',
       currentVersion: '1.0.0',
       availableVersion: null,
-      downloadPercent: null,
       attempt: 1,
-      restartAt: null,
     });
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
   });
 
-  it('downloads an available version on the third attempt', async () => {
+  it('retries only metadata checks and downloads once after the third succeeds', async () => {
     updater.checkForUpdates
       .mockRejectedValueOnce(new Error('offline'))
       .mockRejectedValueOnce(new Error('offline'))
-      .mockImplementationOnce(async () => {
-        updater.emit('update-available', { version: '1.1.0' });
-        return { downloadPromise: Promise.resolve() };
-      });
+      .mockResolvedValueOnce(updateResult(true));
     const window = createWindow();
 
     registerAppUpdater(window as never);
@@ -150,12 +178,13 @@ describe('registerAppUpdater', () => {
     ).resolves.toMatchObject({
       status: 'restarting',
       availableVersion: '1.1.0',
-      attempt: 3,
+      attempt: 1,
     });
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(3);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('exposes unchecked after three failed checks', async () => {
+  it('exposes unchecked and logs the failure after three failed checks', async () => {
     updater.checkForUpdates.mockRejectedValue(new Error('offline'));
     const window = createWindow();
 
@@ -169,32 +198,93 @@ describe('registerAppUpdater', () => {
       attempt: 3,
       availableVersion: null,
     });
+    expect(files.appendFile).toHaveBeenCalledWith(
+      '/logs/updater.log',
+      expect.stringContaining('"stage":"check"'),
+      'utf8',
+    );
+    expect(files.appendFile).toHaveBeenCalledWith(
+      '/logs/updater.log',
+      expect.stringContaining('"attempt":3'),
+      'utf8',
+    );
   });
 
-  it('keeps a confirmed version outdated after three failed downloads', async () => {
-    updater.checkForUpdates.mockImplementation(async () => {
-      updater.emit('update-available', { version: '1.1.0' });
-      return { downloadPromise: Promise.reject(new Error('download failed')) };
-    });
+  it('does not automatically retry a failed installer download', async () => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(true));
+    updater.downloadUpdate.mockRejectedValue(new Error('socket closed'));
     const window = createWindow();
 
     registerAppUpdater(window as never);
-    await vi.advanceTimersByTimeAsync(4_000);
+    await flush();
+
+    await expect(
+      stateHandler()({ sender: window.webContents }),
+    ).resolves.toMatchObject({
+      status: 'download-failed',
+      availableVersion: '1.1.0',
+      attempt: 1,
+    });
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(files.appendFile).toHaveBeenCalledWith(
+      '/logs/updater.log',
+      expect.stringContaining('socket closed'),
+      'utf8',
+    );
+  });
+
+  it('retries a failed download only after an authorized renderer request', async () => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(true));
+    updater.downloadUpdate
+      .mockRejectedValueOnce(new Error('socket closed'))
+      .mockResolvedValueOnce(['/update.exe']);
+    const window = createWindow();
+
+    registerAppUpdater(window as never);
+    await flush();
+    await ipcHandler('app-updater:retry-download')({
+      sender: window.webContents,
+    });
+    await flush();
+
+    await expect(
+      stateHandler()({ sender: window.webContents }),
+    ).resolves.toMatchObject({
+      status: 'restarting',
+      availableVersion: '1.1.0',
+      attempt: 2,
+    });
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues with an outdated version after an authorized renderer request', async () => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(true));
+    updater.downloadUpdate.mockRejectedValue(new Error('socket closed'));
+    const window = createWindow();
+
+    registerAppUpdater(window as never);
+    await flush();
+    await ipcHandler('app-updater:continue')({ sender: window.webContents });
 
     await expect(
       stateHandler()({ sender: window.webContents }),
     ).resolves.toMatchObject({
       status: 'outdated',
       availableVersion: '1.1.0',
-      attempt: 3,
     });
   });
 
-  it('broadcasts bounded download progress then restarts after a successful download', async () => {
-    updater.checkForUpdates.mockImplementation(async () => {
-      updater.emit('update-available', { version: '1.1.0' });
-      updater.emit('download-progress', { percent: 100.4 });
-      return { downloadPromise: Promise.resolve() };
+  it('broadcasts bytes and bounded progress then restarts after a successful download', async () => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(true));
+    updater.downloadUpdate.mockImplementation(async () => {
+      updater.emit('download-progress', {
+        percent: 100.4,
+        total: 162 * 1024 * 1024,
+        transferred: 32 * 1024 * 1024,
+      });
+      return ['/update.exe'];
     });
     const window = createWindow();
 
@@ -207,14 +297,14 @@ describe('registerAppUpdater', () => {
         status: 'downloading',
         availableVersion: '1.1.0',
         downloadPercent: 100,
+        downloadTransferred: 32 * 1024 * 1024,
+        downloadTotal: 162 * 1024 * 1024,
       }),
     );
     await expect(
       stateHandler()({ sender: window.webContents }),
     ).resolves.toMatchObject({
       status: 'restarting',
-      availableVersion: '1.1.0',
-      downloadPercent: 100,
       restartAt: Date.now() + 5_000,
     });
     await vi.advanceTimersByTimeAsync(4_999);
@@ -223,18 +313,22 @@ describe('registerAppUpdater', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
   });
 
-  it('rejects state reads from another WebContents', async () => {
-    updater.checkForUpdates.mockResolvedValue({ downloadPromise: null });
+  it.each([
+    'app-updater:get-state',
+    'app-updater:retry-download',
+    'app-updater:continue',
+  ])('rejects %s requests from another WebContents', async (channel) => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(false, '1.0.0'));
     const window = createWindow();
 
     registerAppUpdater(window as never);
 
-    await expect(stateHandler()({ sender: {} })).rejects.toThrow(
+    await expect(ipcHandler(channel)({ sender: {} })).rejects.toThrow(
       'Unauthorized app updater request',
     );
   });
 
-  it('keeps the error listener through a late error from a closed window', async () => {
+  it('keeps the error listener through a late check error after close', async () => {
     let rejectCheck!: (reason?: unknown) => void;
     updater.checkForUpdates.mockImplementation(
       () =>
@@ -258,25 +352,20 @@ describe('registerAppUpdater', () => {
     );
   });
 
-  it('keeps the error listener until a download returned after close rejects', async () => {
-    let resolveCheck!: (value: unknown) => void;
+  it('keeps the error listener until a late download rejection after close', async () => {
     let rejectDownload!: (reason?: unknown) => void;
-    const downloadPromise = new Promise<never>((_, reject) => {
-      rejectDownload = reject;
-    });
-    void downloadPromise.catch(() => undefined);
-    updater.checkForUpdates.mockImplementation(
+    updater.checkForUpdates.mockResolvedValue(updateResult(true));
+    updater.downloadUpdate.mockImplementation(
       () =>
-        new Promise((resolve) => {
-          resolveCheck = resolve;
+        new Promise((_, reject) => {
+          rejectDownload = reject;
         }),
     );
     const window = createWindow();
 
     registerAppUpdater(window as never);
-    window.close();
-    resolveCheck({ downloadPromise });
     await flush();
+    window.close();
 
     expect(updater.removeListener).not.toHaveBeenCalledWith(
       'error',
@@ -294,11 +383,8 @@ describe('registerAppUpdater', () => {
     );
   });
 
-  it('exposes outdated when quitAndInstall emits an error', async () => {
-    updater.checkForUpdates.mockImplementation(async () => {
-      updater.emit('update-available', { version: '1.1.0' });
-      return { downloadPromise: Promise.resolve() };
-    });
+  it('exposes outdated and logs when quitAndInstall emits an error', async () => {
+    updater.checkForUpdates.mockResolvedValue(updateResult(true));
     updater.quitAndInstall.mockImplementation(() => {
       updater.emit('error', new Error('install failed'));
     });
@@ -315,5 +401,10 @@ describe('registerAppUpdater', () => {
       availableVersion: '1.1.0',
       restartAt: null,
     });
+    expect(files.appendFile).toHaveBeenCalledWith(
+      '/logs/updater.log',
+      expect.stringContaining('"stage":"install"'),
+      'utf8',
+    );
   });
 });

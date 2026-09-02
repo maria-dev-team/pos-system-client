@@ -1,5 +1,11 @@
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppUpdateState } from '../../../../main/app-updater';
@@ -12,6 +18,8 @@ const updateState = (
   availableVersion: null,
   currentVersion: '1.0.0',
   downloadPercent: null,
+  downloadTotal: null,
+  downloadTransferred: null,
   restartAt: null,
   status: 'current',
   ...overrides,
@@ -20,15 +28,21 @@ const updateState = (
 const installUpdates = (initial: Promise<AppUpdateState>) => {
   let onStateChange: ((state: AppUpdateState) => void) | undefined;
   const unsubscribe = vi.fn();
+  const continueWithoutUpdate = vi.fn().mockResolvedValue(undefined);
+  const retryDownload = vi.fn().mockResolvedValue(undefined);
   window.appUpdates = {
+    continueWithoutUpdate,
     getState: vi.fn(() => initial),
     onStateChange: vi.fn((callback) => {
       onStateChange = callback;
       return unsubscribe;
     }),
+    retryDownload,
   };
   return {
+    continueWithoutUpdate,
     emit: (state: AppUpdateState) => onStateChange?.(state),
+    retryDownload,
     unsubscribe,
   };
 };
@@ -109,6 +123,8 @@ describe('AppUpdateProvider', () => {
         updateState({
           availableVersion: '2.0.0',
           downloadPercent: 47.6,
+          downloadTotal: 162 * 1024 * 1024,
+          downloadTransferred: 32 * 1024 * 1024,
           status: 'downloading',
         }),
       );
@@ -121,6 +137,44 @@ describe('AppUpdateProvider', () => {
       'aria-valuenow',
       '48',
     );
+    expect(screen.getByText('32 из 162 МБ')).toBeInTheDocument();
+    expect(screen.getByText('Попытка 1')).toBeInTheDocument();
+  });
+
+  it('offers an explicit retry or continue after a failed download', () => {
+    const updates = installUpdates(new Promise(() => undefined));
+
+    render(
+      <AppUpdateProvider>
+        <p>router marker</p>
+      </AppUpdateProvider>,
+    );
+    act(() => {
+      updates.emit(
+        updateState({
+          attempt: 2,
+          availableVersion: '2.0.0',
+          status: 'download-failed' as AppUpdateState['status'],
+        }),
+      );
+    });
+
+    expect(
+      screen.getByText('Не удалось скачать обновление'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Проверьте подключение к интернету и повторите загрузку.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Попытка 2')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Продолжить без обновления' }),
+    );
+    expect(updates.retryDownload).toHaveBeenCalledOnce();
+    expect(updates.continueWithoutUpdate).toHaveBeenCalledOnce();
+    expect(screen.queryByText('router marker')).not.toBeInTheDocument();
   });
 
   it('updates the restarting countdown from restartAt', () => {

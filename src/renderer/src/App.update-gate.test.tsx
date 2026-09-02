@@ -18,8 +18,10 @@ afterEach(() => {
 
 it('places the update gate above the router', () => {
   window.appUpdates = {
+    continueWithoutUpdate: vi.fn(),
     getState: vi.fn(() => new Promise<AppUpdateState>(() => undefined)),
     onStateChange: vi.fn(() => vi.fn()),
+    retryDownload: vi.fn(),
   };
 
   render(<App router={{} as AppRouter} />);

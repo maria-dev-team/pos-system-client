@@ -21,16 +21,20 @@ vi.mock('electron', () => ({
 await import('./index');
 
 const appUpdates = (): {
+  continueWithoutUpdate: () => Promise<unknown>;
   getState: () => Promise<unknown>;
   onStateChange: (callback: (state: unknown) => void) => () => void;
+  retryDownload: () => Promise<unknown>;
 } => {
   const registration = electron.exposeInMainWorld.mock.calls.find(
     ([name]) => name === 'appUpdates',
   );
   if (!registration) throw new Error('App updates API was not exposed');
   return registration[1] as {
+    continueWithoutUpdate: () => Promise<unknown>;
     getState: () => Promise<unknown>;
     onStateChange: (callback: (state: unknown) => void) => () => void;
+    retryDownload: () => Promise<unknown>;
   };
 };
 
@@ -90,10 +94,27 @@ it('unsubscribes the exact listener registered for update state changes', () => 
   );
 });
 
+it('uses only fixed channels for update retry and continue actions', async () => {
+  electron.invoke.mockClear();
+
+  await appUpdates().retryDownload();
+  await appUpdates().continueWithoutUpdate();
+
+  expect(electron.invoke.mock.calls).toEqual([
+    ['app-updater:retry-download'],
+    ['app-updater:continue'],
+  ]);
+});
+
 it('exposes no arbitrary IPC methods through the update API', () => {
   const api = appUpdates() as Record<string, unknown>;
 
-  expect(Object.keys(api).sort()).toEqual(['getState', 'onStateChange']);
+  expect(Object.keys(api).sort()).toEqual([
+    'continueWithoutUpdate',
+    'getState',
+    'onStateChange',
+    'retryDownload',
+  ]);
   expect(api).not.toHaveProperty('invoke');
   expect(api).not.toHaveProperty('on');
   expect(api).not.toHaveProperty('send');

@@ -355,6 +355,8 @@ beforeEach(() => {
     availableVersion: null,
     currentVersion: '1.0.0',
     downloadPercent: null,
+    downloadTotal: null,
+    downloadTransferred: null,
     restartAt: null,
     status: 'current' as const,
   };
@@ -364,11 +366,13 @@ beforeEach(() => {
     printShiftReport: vi.fn().mockResolvedValue({ ok: true }),
   };
   window.appUpdates = {
+    continueWithoutUpdate: vi.fn(),
     getState: vi.fn().mockResolvedValue(appUpdateState),
     onStateChange: vi.fn((callback) => {
       callback(appUpdateState);
       return vi.fn();
     }),
+    retryDownload: vi.fn(),
   };
   useAuthStore.setState({
     accessToken: null,

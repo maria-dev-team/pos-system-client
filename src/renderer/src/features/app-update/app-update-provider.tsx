@@ -8,6 +8,7 @@ import {
 } from 'react';
 
 import type { AppUpdateState } from '../../../../main/app-updater';
+import { Button } from '../../common/components/ui/button';
 
 const AppUpdateContext = createContext<AppUpdateState | undefined>(undefined);
 
@@ -69,6 +70,8 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
     0,
     Math.ceil(((state?.restartAt ?? now) - now) / 1_000),
   );
+  const transferred = formatMegabytes(state?.downloadTransferred);
+  const total = formatMegabytes(state?.downloadTotal);
 
   useEffect(() => {
     if (!state?.restartAt) return;
@@ -86,7 +89,36 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
           </span>
         </div>
         <div aria-atomic="true" aria-live="polite" role="status">
-          {state?.status === 'downloading' ? (
+          {state?.status === 'download-failed' ? (
+            <>
+              <h1 className="text-xl font-bold text-card-foreground">
+                Не удалось скачать обновление
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Проверьте подключение к интернету и повторите загрузку.
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Попытка {state.attempt}
+              </p>
+              <div className="mt-6 grid gap-3">
+                <Button
+                  onClick={() => {
+                    void window.appUpdates?.retryDownload();
+                  }}
+                >
+                  Повторить
+                </Button>
+                <Button
+                  onClick={() => {
+                    void window.appUpdates?.continueWithoutUpdate();
+                  }}
+                  variant="ghost"
+                >
+                  Продолжить без обновления
+                </Button>
+              </div>
+            </>
+          ) : state?.status === 'downloading' ? (
             <>
               <h1 className="text-xl font-bold text-card-foreground">
                 Найдена версия v{state.availableVersion}. Загружаем обновление —{' '}
@@ -105,6 +137,14 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
                   style={{ width: `${percent}%` }}
                 />
               </div>
+              {transferred !== null && total !== null ? (
+                <p className="mt-3 text-sm text-muted-foreground">
+                  {transferred} из {total} МБ
+                </p>
+              ) : null}
+              <p className="mt-2 text-sm text-muted-foreground">
+                Попытка {state.attempt}
+              </p>
             </>
           ) : state?.status === 'restarting' ? (
             <h1 className="text-xl font-bold text-card-foreground">
@@ -125,4 +165,10 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
       </section>
     </main>
   );
+}
+
+function formatMegabytes(bytes: number | null | undefined): number | null {
+  return bytes === null || bytes === undefined
+    ? null
+    : Math.round(bytes / 1024 / 1024);
 }

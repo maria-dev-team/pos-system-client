@@ -12,6 +12,8 @@ const updateState = (
   availableVersion: null,
   currentVersion: '1.2.3',
   downloadPercent: null,
+  downloadTotal: null,
+  downloadTransferred: null,
   restartAt: null,
   status: 'current',
   ...overrides,

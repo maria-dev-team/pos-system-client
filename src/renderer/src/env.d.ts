@@ -12,8 +12,10 @@ interface ImportMeta {
 
 interface Window {
   appUpdates?: {
+    continueWithoutUpdate: () => Promise<void>;
     getState: () => Promise<AppUpdateState>;
     onStateChange: (callback: (state: AppUpdateState) => void) => () => void;
+    retryDownload: () => Promise<void>;
   };
   camera?: {
     setContext: (

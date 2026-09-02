@@ -4,11 +4,14 @@ import {
   type UpdateInfo,
   autoUpdater,
 } from 'electron-updater';
+import { appendFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export type AppUpdateState = Readonly<{
   status:
     | 'checking'
     | 'downloading'
+    | 'download-failed'
     | 'restarting'
     | 'current'
     | 'unchecked'
@@ -16,11 +19,15 @@ export type AppUpdateState = Readonly<{
   currentVersion: string;
   availableVersion: string | null;
   downloadPercent: number | null;
+  downloadTransferred: number | null;
+  downloadTotal: number | null;
   attempt: number;
   restartAt: number | null;
 }>;
 
 const GET_STATE_CHANNEL = 'app-updater:get-state';
+const RETRY_DOWNLOAD_CHANNEL = 'app-updater:retry-download';
+const CONTINUE_CHANNEL = 'app-updater:continue';
 const STATE_CHANGED_CHANNEL = 'app-updater:state-changed';
 const RETRY_DELAY_MS = 2_000;
 const RESTART_DELAY_MS = 5_000;
@@ -33,9 +40,46 @@ const initialState = (): AppUpdateState => ({
   currentVersion: app.getVersion(),
   availableVersion: null,
   downloadPercent: null,
+  downloadTransferred: null,
+  downloadTotal: null,
   attempt: 0,
   restartAt: null,
 });
+
+const logUpdaterError = async (
+  stage: 'check' | 'download' | 'install',
+  attempt: number,
+  state: AppUpdateState,
+  error: unknown,
+): Promise<void> => {
+  const details =
+    error instanceof Error
+      ? {
+          name: error.name,
+          message: error.message,
+          code: (error as NodeJS.ErrnoException).code ?? null,
+        }
+      : { message: String(error), name: 'Error', code: null };
+
+  try {
+    const logsDirectory = app.getPath('logs');
+    await mkdir(logsDirectory, { recursive: true });
+    await appendFile(
+      join(logsDirectory, 'updater.log'),
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        stage,
+        attempt,
+        currentVersion: state.currentVersion,
+        availableVersion: state.availableVersion,
+        error: details,
+      })}\n`,
+      'utf8',
+    );
+  } catch (logError) {
+    console.error('Failed to write updater log', logError);
+  }
+};
 
 export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   if (registeredWindows.has(mainWindow)) return;
@@ -44,7 +88,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let resolveRetry: (() => void) | undefined;
-  let checkInFlight = false;
+  let operationInFlight = false;
   let errorListenerRegistered = false;
   let updaterListenersRegistered = false;
   let state = initialState();
@@ -56,6 +100,11 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   const setState = (next: Partial<AppUpdateState>): void => {
     state = { ...state, ...next };
     publish();
+  };
+  const authorize = (sender: Electron.WebContents): void => {
+    if (sender !== mainWindow.webContents) {
+      throw new Error('Unauthorized app updater request');
+    }
   };
   const waitToRetry = (): Promise<void> =>
     new Promise((resolve) => {
@@ -73,12 +122,23 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     const percent = Number.isFinite(progress.percent)
       ? Math.min(100, Math.max(0, Math.round(progress.percent)))
       : 0;
-    if (active) setState({ status: 'downloading', downloadPercent: percent });
+    if (!active) return;
+    setState({
+      status: 'downloading',
+      downloadPercent: percent,
+      downloadTransferred: Number.isFinite(progress.transferred)
+        ? Math.max(0, progress.transferred)
+        : null,
+      downloadTotal: Number.isFinite(progress.total)
+        ? Math.max(0, progress.total)
+        : null,
+    });
   };
-  const onError = (): void => {
+  const onError = (error: unknown): void => {
     if (!active || state.status !== 'restarting') return;
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = undefined;
+    void logUpdaterError('install', state.attempt, state, error);
     setState({ status: 'outdated', restartAt: null });
   };
   const removeErrorListener = (): void => {
@@ -86,12 +146,64 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     autoUpdater.removeListener('error', onError);
     errorListenerRegistered = false;
   };
+  const finishOperation = (): void => {
+    operationInFlight = false;
+    if (!active) removeErrorListener();
+  };
+  const scheduleRestart = (): void => {
+    const restartAt = Date.now() + RESTART_DELAY_MS;
+    setState({ status: 'restarting', restartAt });
+    restartTimer = setTimeout(() => {
+      if (!active) return;
+      try {
+        autoUpdater.quitAndInstall(true, true);
+      } catch (error) {
+        onError(error);
+      }
+    }, RESTART_DELAY_MS);
+  };
+  const downloadUpdate = async (attempt: number): Promise<void> => {
+    if (!active) return;
+    setState({
+      status: 'downloading',
+      downloadPercent: 0,
+      downloadTransferred: null,
+      downloadTotal: null,
+      attempt,
+      restartAt: null,
+    });
+    try {
+      await autoUpdater.downloadUpdate();
+      if (active) scheduleRestart();
+    } catch (error) {
+      if (!active) return;
+      setState({ status: 'download-failed', restartAt: null });
+      void logUpdaterError('download', attempt, state, error);
+    }
+  };
+
   registeredWindows.add(mainWindow);
   ipcMain.handle(GET_STATE_CHANNEL, async (event) => {
-    if (event.sender !== mainWindow.webContents) {
-      throw new Error('Unauthorized app updater request');
-    }
+    authorize(event.sender);
     return getState();
+  });
+  ipcMain.handle(RETRY_DOWNLOAD_CHANNEL, async (event) => {
+    authorize(event.sender);
+    if (!active || operationInFlight || state.status !== 'download-failed') {
+      return;
+    }
+    operationInFlight = true;
+    try {
+      await downloadUpdate(state.attempt + 1);
+    } finally {
+      finishOperation();
+    }
+  });
+  ipcMain.handle(CONTINUE_CHANNEL, async (event) => {
+    authorize(event.sender);
+    if (active && !operationInFlight && state.status === 'download-failed') {
+      setState({ status: 'outdated' });
+    }
   });
 
   const cleanup = (): void => {
@@ -106,9 +218,11 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
       autoUpdater.removeListener('update-available', onUpdateAvailable);
       autoUpdater.removeListener('download-progress', onDownloadProgress);
       updaterListenersRegistered = false;
-      if (!checkInFlight) removeErrorListener();
+      if (!operationInFlight) removeErrorListener();
     }
     ipcMain.removeHandler(GET_STATE_CHANNEL);
+    ipcMain.removeHandler(RETRY_DOWNLOAD_CHANNEL);
+    ipcMain.removeHandler(CONTINUE_CHANNEL);
     registeredWindows.delete(mainWindow);
   };
 
@@ -119,7 +233,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     return;
   }
 
-  autoUpdater.autoDownload = true;
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on('update-available', onUpdateAvailable);
   autoUpdater.on('download-progress', onDownloadProgress);
@@ -131,38 +245,28 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS && active; attempt += 1) {
       setState({
         status: 'checking',
+        availableVersion: null,
         downloadPercent: null,
+        downloadTransferred: null,
+        downloadTotal: null,
         attempt,
         restartAt: null,
       });
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (!result?.downloadPromise) {
-          if (!active) return;
-          setState({
-            status: 'current',
-            availableVersion: null,
-            downloadPercent: null,
-          });
+        if (!active) return;
+        if (!result?.isUpdateAvailable) {
+          setState({ status: 'current' });
           return;
         }
-        if (active) setState({ status: 'downloading' });
-        await result.downloadPromise;
-        if (!active) return;
-        const restartAt = Date.now() + RESTART_DELAY_MS;
-        setState({ status: 'restarting', restartAt });
-        restartTimer = setTimeout(() => {
-          if (active) autoUpdater.quitAndInstall(true, true);
-        }, RESTART_DELAY_MS);
+        setState({ availableVersion: result.updateInfo.version });
+        await downloadUpdate(1);
         return;
-      } catch {
+      } catch (error) {
         if (!active) return;
+        void logUpdaterError('check', attempt, state, error);
         if (attempt === MAX_ATTEMPTS) {
-          setState({
-            status: state.availableVersion ? 'outdated' : 'unchecked',
-            downloadPercent: null,
-            restartAt: null,
-          });
+          setState({ status: 'unchecked' });
           return;
         }
         await waitToRetry();
@@ -170,10 +274,6 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     }
   };
 
-  checkInFlight = true;
-  const finishCheck = (): void => {
-    checkInFlight = false;
-    if (!active) removeErrorListener();
-  };
-  void checkForUpdate().then(finishCheck, finishCheck);
+  operationInFlight = true;
+  void checkForUpdate().finally(finishOperation);
 };

@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('camera', {
 });
 
 contextBridge.exposeInMainWorld('appUpdates', {
+  continueWithoutUpdate: (): Promise<void> =>
+    ipcRenderer.invoke('app-updater:continue'),
   getState: (): Promise<AppUpdateState> =>
     ipcRenderer.invoke('app-updater:get-state'),
   onStateChange: (callback: (state: AppUpdateState) => void) => {
@@ -83,6 +85,8 @@ contextBridge.exposeInMainWorld('appUpdates', {
       ipcRenderer.removeListener('app-updater:state-changed', listener);
     };
   },
+  retryDownload: (): Promise<void> =>
+    ipcRenderer.invoke('app-updater:retry-download'),
 });
 
 contextBridge.exposeInMainWorld('receiptPrinter', {
