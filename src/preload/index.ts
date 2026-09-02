@@ -77,10 +77,11 @@ contextBridge.exposeInMainWorld('appUpdates', {
     const listener = (
       _event: Electron.IpcRendererEvent,
       state: AppUpdateState,
-    ) => callback(state);
+    ): void => callback(state);
     ipcRenderer.on('app-updater:state-changed', listener);
-    return () =>
+    return (): void => {
       ipcRenderer.removeListener('app-updater:state-changed', listener);
+    };
   },
 });
 
