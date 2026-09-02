@@ -257,4 +257,63 @@ describe('registerAppUpdater', () => {
       expect.any(Function),
     );
   });
+
+  it('keeps the error listener until a download returned after close rejects', async () => {
+    let resolveCheck!: (value: unknown) => void;
+    let rejectDownload!: (reason?: unknown) => void;
+    const downloadPromise = new Promise<never>((_, reject) => {
+      rejectDownload = reject;
+    });
+    void downloadPromise.catch(() => undefined);
+    updater.checkForUpdates.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCheck = resolve;
+        }),
+    );
+    const window = createWindow();
+
+    registerAppUpdater(window as never);
+    window.close();
+    resolveCheck({ downloadPromise });
+    await flush();
+
+    expect(updater.removeListener).not.toHaveBeenCalledWith(
+      'error',
+      expect.any(Function),
+    );
+    expect(() =>
+      updater.emit('error', new Error('late download error')),
+    ).not.toThrow();
+    rejectDownload(new Error('late download rejection'));
+    await flush();
+
+    expect(updater.removeListener).toHaveBeenCalledWith(
+      'error',
+      expect.any(Function),
+    );
+  });
+
+  it('exposes outdated when quitAndInstall emits an error', async () => {
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', { version: '1.1.0' });
+      return { downloadPromise: Promise.resolve() };
+    });
+    updater.quitAndInstall.mockImplementation(() => {
+      updater.emit('error', new Error('install failed'));
+    });
+    const window = createWindow();
+
+    registerAppUpdater(window as never);
+    await flush();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(
+      stateHandler()({ sender: window.webContents }),
+    ).resolves.toMatchObject({
+      status: 'outdated',
+      availableVersion: '1.1.0',
+      restartAt: null,
+    });
+  });
 });

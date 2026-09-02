@@ -75,7 +75,12 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
       : 0;
     if (active) setState({ status: 'downloading', downloadPercent: percent });
   };
-  const onError = (): void => undefined;
+  const onError = (): void => {
+    if (!active || state.status !== 'restarting') return;
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = undefined;
+    setState({ status: 'outdated', restartAt: null });
+  };
   const removeErrorListener = (): void => {
     if (!errorListenerRegistered) return;
     autoUpdater.removeListener('error', onError);
@@ -132,8 +137,8 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
       });
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (!active) return;
         if (!result?.downloadPromise) {
+          if (!active) return;
           setState({
             status: 'current',
             availableVersion: null,
@@ -141,7 +146,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
           });
           return;
         }
-        setState({ status: 'downloading' });
+        if (active) setState({ status: 'downloading' });
         await result.downloadPromise;
         if (!active) return;
         const restartAt = Date.now() + RESTART_DELAY_MS;
