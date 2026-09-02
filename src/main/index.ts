@@ -4,6 +4,7 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 
 import icon from '../../resources/icon.png?asset';
+import { registerAppUpdater } from './app-updater';
 import { registerCameraIpc } from './camera';
 import { registerReceiptPrinterIpc } from './receipt-printer';
 import { resolveRendererFilePath } from './renderer-protocol';
@@ -56,6 +57,7 @@ function createWindow(): void {
 
   registerCameraIpc(mainWindow, apiUrl);
   registerReceiptPrinterIpc(mainWindow);
+  registerAppUpdater(mainWindow);
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
