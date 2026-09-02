@@ -21,8 +21,7 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish never",
-    "release:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish always"
+    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish never"
   },
   "build": {
     "appId": "kz.maria.pos",
