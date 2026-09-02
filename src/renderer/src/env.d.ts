@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+type AppUpdateState = import('../../main/app-updater').AppUpdateState;
+
 interface ImportMetaEnv {
   readonly VITE_API_URL: string;
 }
@@ -9,6 +11,10 @@ interface ImportMeta {
 }
 
 interface Window {
+  appUpdates?: {
+    getState: () => Promise<AppUpdateState>;
+    onStateChange: (callback: (state: AppUpdateState) => void) => () => void;
+  };
   camera?: {
     setContext: (
       context: { accessToken: string; registerId: string | null } | null,

@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+import type { AppUpdateState } from '../main/app-updater';
+
 type CameraContext = {
   accessToken: string;
   registerId: string | null;
@@ -65,6 +67,20 @@ type PrintableShiftReport =
 contextBridge.exposeInMainWorld('camera', {
   setContext: (context: CameraContext | null) => {
     ipcRenderer.send('camera:set-context', context);
+  },
+});
+
+contextBridge.exposeInMainWorld('appUpdates', {
+  getState: (): Promise<AppUpdateState> =>
+    ipcRenderer.invoke('app-updater:get-state'),
+  onStateChange: (callback: (state: AppUpdateState) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: AppUpdateState,
+    ) => callback(state);
+    ipcRenderer.on('app-updater:state-changed', listener);
+    return () =>
+      ipcRenderer.removeListener('app-updater:state-changed', listener);
   },
 });
 
