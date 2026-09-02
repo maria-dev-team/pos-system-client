@@ -87,6 +87,11 @@ describe('AppUpdateProvider', () => {
     expect(
       container.querySelector('.animate-spin.border-primary'),
     ).toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).toHaveClass(
+      'motion-reduce:animate-none',
+    );
+    expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+    expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true');
     expect(screen.getByText('Попытка 2 из 3')).toBeInTheDocument();
   });
 

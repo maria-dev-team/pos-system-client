@@ -80,45 +80,48 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
     <main className="grid min-h-svh place-items-center bg-workspace px-6 py-10">
       <section className="w-full max-w-md rounded-2xl border border-border bg-card p-8 text-center shadow-[var(--shadow-surface)]">
         <div className="relative mx-auto mb-6 grid size-16 place-items-center">
-          <span className="absolute inset-0 animate-spin rounded-full border-4 border-primary border-r-transparent" />
+          <span className="absolute inset-0 animate-spin rounded-full border-4 border-primary border-r-transparent motion-reduce:animate-none" />
           <span className="grid size-10 place-items-center rounded-xl bg-primary font-extrabold text-primary-foreground">
             D
           </span>
         </div>
-        {state?.status === 'downloading' ? (
-          <>
-            <h1 className="text-xl font-bold text-card-foreground">
-              Найдена версия v{state.availableVersion}. Загружаем обновление —{' '}
-              {percent}%
-            </h1>
-            <div
-              aria-label="Загрузка обновления"
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={percent}
-              className="mt-6 h-2 overflow-hidden rounded-full bg-muted"
-              role="progressbar"
-            >
+        <div aria-atomic="true" aria-live="polite" role="status">
+          {state?.status === 'downloading' ? (
+            <>
+              <h1 className="text-xl font-bold text-card-foreground">
+                Найдена версия v{state.availableVersion}. Загружаем обновление —{' '}
+                {percent}%
+              </h1>
               <div
-                className="h-full bg-primary"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-          </>
-        ) : state?.status === 'restarting' ? (
-          <h1 className="text-xl font-bold text-card-foreground">
-            Обновление готово. Приложение перезапустится через {seconds} секунд
-          </h1>
-        ) : (
-          <>
+                aria-label="Загрузка обновления"
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={percent}
+                className="mt-6 h-2 overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+              >
+                <div
+                  className="h-full bg-primary"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+            </>
+          ) : state?.status === 'restarting' ? (
             <h1 className="text-xl font-bold text-card-foreground">
-              Проверяем версию приложения
+              Обновление готово. Приложение перезапустится через {seconds}{' '}
+              секунд
             </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Попытка {Math.max(1, state?.attempt ?? 1)} из 3
-            </p>
-          </>
-        )}
+          ) : (
+            <>
+              <h1 className="text-xl font-bold text-card-foreground">
+                Проверяем версию приложения
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Попытка {Math.max(1, state?.attempt ?? 1)} из 3
+              </p>
+            </>
+          )}
+        </div>
       </section>
     </main>
   );
