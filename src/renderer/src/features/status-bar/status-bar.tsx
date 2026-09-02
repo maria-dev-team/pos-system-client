@@ -8,6 +8,7 @@ import {
   statusBarConfig,
 } from '@renderer/common/config/status-bar.config';
 import { queryKeys } from '@renderer/common/constants';
+import { useAppUpdateState } from '@renderer/features/app-update/app-update-provider';
 import {
   authContextQueryOptions,
   useAuthSession,
@@ -18,6 +19,7 @@ import { SupportAction } from '@renderer/features/support';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
 import { PosSettingsAction } from './pos-settings-action';
+import { StatusBarUpdateBadges } from './status-bar-update-badges';
 import { useMinuteClock } from './use-minute-clock';
 
 const visibleItems: readonly StatusBarItem[] = [
@@ -35,6 +37,7 @@ const timeFormatter = new Intl.DateTimeFormat('ru-RU', {
 
 export function StatusBar() {
   const now = useMinuteClock();
+  const appUpdateState = useAppUpdateState();
   const { isAuthenticated } = useAuthSession();
   const logout = useLogout();
   const needsContext =
@@ -91,6 +94,7 @@ export function StatusBar() {
             <span className="hidden truncate text-sm font-semibold text-foreground sm:inline">
               {contextName}
             </span>
+            <StatusBarUpdateBadges state={appUpdateState} />
           </div>
         );
       case 'user':
