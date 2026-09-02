@@ -1,6 +1,6 @@
 {
   "name": "pos-system-client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DukenAI POS desktop application",
   "main": "./out/main/index.js",
   "author": "Maria Dev Team",
