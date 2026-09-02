@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   type ReactNode,
   createContext,
@@ -46,14 +47,20 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppUpdateContext.Provider value={state}>
-      {isTerminal ? children : <AppUpdateGate state={state} />}
+      {isTerminal ? (
+        children
+      ) : (
+        <AppUpdateGate
+          key={`${state?.status}:${state?.restartAt}`}
+          state={state}
+        />
+      )}
     </AppUpdateContext.Provider>
   );
 }
 
 function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
-  const [, setTick] = useState(0);
-  const now = Date.now();
+  const [now, setNow] = useState(Date.now);
   const percent = Math.min(
     100,
     Math.max(0, Math.round(state?.downloadPercent ?? 0)),
@@ -65,7 +72,7 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
 
   useEffect(() => {
     if (!state?.restartAt) return;
-    const timer = setInterval(() => setTick((tick) => tick + 1), 1_000);
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(timer);
   }, [state?.restartAt]);
 
