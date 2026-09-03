@@ -1,15 +1,14 @@
 name: Release Windows
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +18,7 @@ jobs:
     env:
       VITE_API_URL: ${{ vars.POS_API_URL }}
       MAIN_VITE_API_URL: ${{ vars.POS_API_URL }}
-      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
       FFMPEG_WINDOWS_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-8.1.zip
       FFMPEG_WINDOWS_SHA256: f6274bbd9c247f9e90c1bbed066b03ed4a3907cece2fb91be6dd352393936365
 
@@ -81,73 +80,7 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
-      - name: Build installer
-        run: npm run build:win
-
-      - name: Create or reuse draft release
-        shell: pwsh
-        run: |
-          $releaseJson = & gh release view $env:RELEASE_TAG --json isDraft 2>$null
-          $releaseExists = $LASTEXITCODE -eq 0
-
-          if ($releaseExists) {
-            $release = $releaseJson | ConvertFrom-Json
-            if (-not $release.isDraft) {
-              throw "Release $env:RELEASE_TAG is already published."
-            }
-          } else {
-            gh release create $env:RELEASE_TAG --draft --verify-tag --generate-notes --title $env:RELEASE_TAG
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to create draft release $env:RELEASE_TAG."
-            }
-          }
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Upload and verify release assets
-        shell: pwsh
-        run: |
-          $assets = @(
-            (Join-Path (Get-Location) 'dist/dukenai-pos-setup.exe'),
-            (Join-Path (Get-Location) 'dist/dukenai-pos-setup.exe.blockmap'),
-            (Join-Path (Get-Location) 'dist/latest.yml')
-          )
-
-          foreach ($assetPath in $assets) {
-            $asset = Get-Item $assetPath -ErrorAction Stop
-            if ($asset.Length -le 0) {
-              throw "Release asset $assetPath is empty."
-            }
-            gh release upload $env:RELEASE_TAG $assetPath --clobber
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to upload $assetPath."
-            }
-          }
-
-          $releaseJson = & gh release view $env:RELEASE_TAG --json assets,isDraft
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to inspect draft release $env:RELEASE_TAG."
-          }
-          $release = $releaseJson | ConvertFrom-Json
-          if (-not $release.isDraft) {
-            throw "Release $env:RELEASE_TAG was published before verification."
-          }
-
-          foreach ($expectedName in @('dukenai-pos-setup.exe', 'dukenai-pos-setup.exe.blockmap', 'latest.yml')) {
-            $uploaded = $release.assets | Where-Object { $_.name -eq $expectedName } | Select-Object -First 1
-            if ($null -eq $uploaded -or $uploaded.size -le 0) {
-              throw "Release asset $expectedName is missing or empty."
-            }
-          }
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Publish verified release
-        shell: pwsh
-        run: |
-          gh release edit $env:RELEASE_TAG --draft=false --latest
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to publish release $env:RELEASE_TAG."
-          }
+      - name: Build and publish release
+        run: npm run release:win
         env:
           GH_TOKEN: ${{ github.token }}
