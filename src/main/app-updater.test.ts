@@ -1,6 +1,9 @@
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerAppUpdater } from './app-updater';
+
+const UPDATER_LOG_PATH = join('/logs', 'updater.log');
 
 const electron = vi.hoisted(() => ({
   app: { getPath: vi.fn(), getVersion: vi.fn(), isPackaged: false },
@@ -199,12 +202,12 @@ describe('registerAppUpdater', () => {
       availableVersion: null,
     });
     expect(files.appendFile).toHaveBeenCalledWith(
-      '/logs/updater.log',
+      UPDATER_LOG_PATH,
       expect.stringContaining('"stage":"check"'),
       'utf8',
     );
     expect(files.appendFile).toHaveBeenCalledWith(
-      '/logs/updater.log',
+      UPDATER_LOG_PATH,
       expect.stringContaining('"attempt":3'),
       'utf8',
     );
@@ -228,7 +231,7 @@ describe('registerAppUpdater', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
     expect(files.appendFile).toHaveBeenCalledWith(
-      '/logs/updater.log',
+      UPDATER_LOG_PATH,
       expect.stringContaining('socket closed'),
       'utf8',
     );
@@ -402,7 +405,7 @@ describe('registerAppUpdater', () => {
       restartAt: null,
     });
     expect(files.appendFile).toHaveBeenCalledWith(
-      '/logs/updater.log',
+      UPDATER_LOG_PATH,
       expect.stringContaining('"stage":"install"'),
       'utf8',
     );
