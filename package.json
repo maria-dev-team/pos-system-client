@@ -1,6 +1,6 @@
 {
   "name": "pos-system-client",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DukenAI POS desktop application",
   "main": "./out/main/index.js",
   "author": "Maria Dev Team",
@@ -21,8 +21,7 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
-    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish never",
-    "release:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish always"
+    "build:win": "node scripts/verify-ffmpeg.mjs win32 && npm run build && electron-builder --win --publish never"
   },
   "build": {
     "appId": "kz.maria.pos",
@@ -85,6 +84,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "decimal.js": "^10.6.0",
+    "electron-updater": "^6.8.9",
     "lucide-react": "^1.33.0",
     "next-themes": "^0.4.6",
     "qrcode": "^1.5.4",

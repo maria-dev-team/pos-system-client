@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+import type { AppUpdateState } from '../main/app-updater';
+
 type CameraContext = {
   accessToken: string;
   registerId: string | null;
@@ -66,6 +68,25 @@ contextBridge.exposeInMainWorld('camera', {
   setContext: (context: CameraContext | null) => {
     ipcRenderer.send('camera:set-context', context);
   },
+});
+
+contextBridge.exposeInMainWorld('appUpdates', {
+  continueWithoutUpdate: (): Promise<void> =>
+    ipcRenderer.invoke('app-updater:continue'),
+  getState: (): Promise<AppUpdateState> =>
+    ipcRenderer.invoke('app-updater:get-state'),
+  onStateChange: (callback: (state: AppUpdateState) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      state: AppUpdateState,
+    ): void => callback(state);
+    ipcRenderer.on('app-updater:state-changed', listener);
+    return (): void => {
+      ipcRenderer.removeListener('app-updater:state-changed', listener);
+    };
+  },
+  retryDownload: (): Promise<void> =>
+    ipcRenderer.invoke('app-updater:retry-download'),
 });
 
 contextBridge.exposeInMainWorld('receiptPrinter', {

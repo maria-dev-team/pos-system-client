@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 
 import { syncCameraContext } from '@renderer/common/camera/camera-context';
 import type { AppRouter } from '@renderer/common/router';
+import { AppUpdateProvider } from '@renderer/features/app-update/app-update-provider';
 import { useAuthStore } from '@renderer/features/auth';
 
 type AppProps = {
@@ -16,7 +17,11 @@ function App({ router }: AppProps) {
     syncCameraContext(accessToken);
   }, [accessToken]);
 
-  return <RouterProvider router={router} />;
+  return (
+    <AppUpdateProvider>
+      <RouterProvider router={router} />
+    </AppUpdateProvider>
+  );
 }
 
 export default App;

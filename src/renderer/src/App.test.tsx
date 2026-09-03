@@ -350,10 +350,29 @@ const renderApp = () => {
 beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
+  const appUpdateState = {
+    attempt: 1,
+    availableVersion: null,
+    currentVersion: '1.0.0',
+    downloadPercent: null,
+    downloadTotal: null,
+    downloadTransferred: null,
+    restartAt: null,
+    status: 'current' as const,
+  };
   window.receiptPrinter = {
     getPrinters: vi.fn(),
     print: vi.fn(),
     printShiftReport: vi.fn().mockResolvedValue({ ok: true }),
+  };
+  window.appUpdates = {
+    continueWithoutUpdate: vi.fn(),
+    getState: vi.fn().mockResolvedValue(appUpdateState),
+    onStateChange: vi.fn((callback) => {
+      callback(appUpdateState);
+      return vi.fn();
+    }),
+    retryDownload: vi.fn(),
   };
   useAuthStore.setState({
     accessToken: null,
@@ -391,6 +410,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  delete window.appUpdates;
   delete window.receiptPrinter;
 });
 
