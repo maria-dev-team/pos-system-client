@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld('appUpdates', {
     ipcRenderer.invoke('app-updater:retry-download'),
 });
 
+contextBridge.exposeInMainWorld('windowControls', {
+  minimize: (): void => {
+    ipcRenderer.send('window-controls:minimize');
+  },
+});
+
 contextBridge.exposeInMainWorld('receiptPrinter', {
   getPrinters: () => ipcRenderer.invoke('receipt-printer:get-printers'),
   print: ({

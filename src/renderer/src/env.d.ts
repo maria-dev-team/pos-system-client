@@ -11,6 +11,9 @@ interface ImportMeta {
 }
 
 interface Window {
+  windowControls?: {
+    minimize: () => void;
+  };
   appUpdates?: {
     continueWithoutUpdate: () => Promise<void>;
     getState: () => Promise<AppUpdateState>;

@@ -374,6 +374,9 @@ beforeEach(() => {
     }),
     retryDownload: vi.fn(),
   };
+  window.windowControls = {
+    minimize: vi.fn(),
+  };
   useAuthStore.setState({
     accessToken: null,
     isInitialized: false,
@@ -412,6 +415,7 @@ afterEach(() => {
   cleanup();
   delete window.appUpdates;
   delete window.receiptPrinter;
+  delete window.windowControls;
 });
 
 describe('DukenAI POS authorization flow', () => {
@@ -695,6 +699,17 @@ describe('DukenAI POS authorization flow', () => {
     expect(
       screen.queryByRole('button', { name: 'Выйти' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('lets a guest minimize the application from the status bar', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Свернуть приложение' }),
+    );
+
+    expect(window.windowControls?.minimize).toHaveBeenCalledOnce();
   });
 
   it('requires explicit organization, store and register shift selection before checkout', async () => {
