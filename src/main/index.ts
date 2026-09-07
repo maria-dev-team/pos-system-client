@@ -8,6 +8,7 @@ import { registerAppUpdater } from './app-updater';
 import { registerCameraIpc } from './camera';
 import { registerReceiptPrinterIpc } from './receipt-printer';
 import { resolveRendererFilePath } from './renderer-protocol';
+import { registerWindowControlsIpc } from './window-controls';
 
 const apiUrl = (
   import.meta.env.MAIN_VITE_API_URL ?? 'http://localhost:4004'
@@ -58,6 +59,7 @@ function createWindow(): void {
   registerCameraIpc(mainWindow, apiUrl);
   registerReceiptPrinterIpc(mainWindow);
   registerAppUpdater(mainWindow);
+  registerWindowControlsIpc(mainWindow);
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();

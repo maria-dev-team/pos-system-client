@@ -38,6 +38,14 @@ const appUpdates = (): {
   };
 };
 
+const windowControls = (): { minimize: () => void } => {
+  const registration = electron.exposeInMainWorld.mock.calls.find(
+    ([name]) => name === 'windowControls',
+  );
+  if (!registration) throw new Error('Window controls API was not exposed');
+  return registration[1] as { minimize: () => void };
+};
+
 it('gets update state through only the fixed getter channel', async () => {
   const state = {
     status: 'current',
@@ -118,6 +126,16 @@ it('exposes no arbitrary IPC methods through the update API', () => {
   expect(api).not.toHaveProperty('invoke');
   expect(api).not.toHaveProperty('on');
   expect(api).not.toHaveProperty('send');
+});
+
+it('exposes a dedicated minimize action through a fixed IPC channel', () => {
+  electron.send.mockClear();
+
+  windowControls().minimize();
+
+  expect(electron.send).toHaveBeenCalledOnce();
+  expect(electron.send).toHaveBeenCalledWith('window-controls:minimize');
+  expect(Object.keys(windowControls())).toEqual(['minimize']);
 });
 
 it('forwards the selected raster threshold through the safe preload API', async () => {

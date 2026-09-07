@@ -1,5 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Clock, LoaderCircle, LogOut, Wifi, WifiOff } from 'lucide-react';
+import {
+  Clock,
+  LoaderCircle,
+  LogOut,
+  Minus,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
 
 import { getApiHealth } from '@renderer/common/api';
 import { Button } from '@renderer/common/components/ui/button';
@@ -195,6 +202,21 @@ export function StatusBar() {
               <LogOut aria-hidden="true" />
             )}
             <span className="sr-only">Выйти</span>
+          </Button>
+        );
+      case 'minimize':
+        return (
+          <Button
+            aria-label="Свернуть приложение"
+            className="min-h-12 min-w-12 px-3"
+            key={item}
+            onClick={() => window.windowControls?.minimize()}
+            title="Свернуть"
+            type="button"
+            variant="ghost"
+          >
+            <Minus aria-hidden="true" />
+            <span className="sr-only">Свернуть приложение</span>
           </Button>
         );
     }
