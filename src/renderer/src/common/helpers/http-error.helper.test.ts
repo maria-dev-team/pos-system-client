@@ -12,6 +12,25 @@ const responseError = (status: number, errorCode?: string): AxiosError =>
   } as AxiosResponse);
 
 describe('getHttpErrorMessage', () => {
+  it('shows reconciliation guidance instead of suggesting a blind fiscal retry', () => {
+    const error = responseError(409, 'SALE_NOT_EDITABLE');
+    error.response!.data = {
+      error_code: 'SALE_NOT_EDITABLE',
+      reconciliation_required: true,
+    };
+    expect(getHttpErrorMessage(error)).toContain('Проверить оплату');
+    expect(getHttpErrorMessage(error)).toContain(
+      'Не пробивайте этот чек повторно',
+    );
+  });
+  it('preserves the actionable reason supplied by the KKM', () => {
+    const error = responseError(422, 'FISCALIZATION_REJECTED');
+    error.response!.data = {
+      error_code: 'FISCALIZATION_REJECTED',
+      provider_errors: [{ code: 11, text: 'Смена превышает 24 часа' }],
+    };
+    expect(getHttpErrorMessage(error)).toBe('ККМ: Смена превышает 24 часа');
+  });
   it('returns a backend error code for recoverable feature flows', () => {
     expect(
       getHttpErrorCode(responseError(409, 'REGISTER_SHIFT_ALREADY_OPEN')),

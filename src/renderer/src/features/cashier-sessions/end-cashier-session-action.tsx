@@ -32,6 +32,11 @@ import {
   getHttpErrorCode,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
+import {
+  callLocalPos,
+  disconnectLocalPos,
+  localPosActive,
+} from '@renderer/common/lib/local-pos';
 
 import { cashierSessionClosingSchema } from './cashier-session.schema';
 
@@ -68,8 +73,14 @@ export function EndCashierSessionAction({
   const [endedSession, setEndedSession] =
     useState<CashierSessionResponse | null>(null);
   const mutation = useMutation({
-    mutationFn: (cash: string) =>
-      endCashierSession(cashierSession.id, { actualCash: cash }),
+    mutationFn: async (cash: string) => {
+      if (localPosActive()) await callLocalPos({ type: 'flush' });
+      const session = await endCashierSession(cashierSession.id, {
+        actualCash: cash,
+      });
+      await disconnectLocalPos();
+      return session;
+    },
     onError: (error) => {
       if (getHttpErrorCode(error) === ErrorCode.CashierSessionHasOpenSales) {
         setBlockingSales(getBlockingSales(error));

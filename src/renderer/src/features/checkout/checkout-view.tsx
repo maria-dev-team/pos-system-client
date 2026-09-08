@@ -50,6 +50,7 @@ import {
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
 import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
+import { localPosActive } from '@renderer/common/lib/local-pos';
 import {
   adjustQuantityByOne,
   formatQuantity,
@@ -78,6 +79,11 @@ import {
   currentSaleQueryOptions,
   heldSalesQueryOptions,
 } from './checkout-query-options';
+import { LocalPosStatus } from './local-pos-status';
+import {
+  focusCheckoutWorkspace,
+  useCheckoutBarcodeScanner,
+} from './use-checkout-barcode-scanner';
 import { useCheckoutSaleTransitions } from './use-checkout-sale-transitions';
 import {
   type SaleCommand,
@@ -193,6 +199,7 @@ function ActiveCheckout({
 }: CheckoutViewProps) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
   const context = useQuery(authContextQueryOptions());
   const canReadShift = Boolean(
     context.data &&
@@ -267,7 +274,8 @@ function ActiveCheckout({
     ({ status }) => status === 'CLOSED',
   );
 
-  const refocus = () => window.setTimeout(() => inputRef.current?.focus());
+  const refocus = () =>
+    window.setTimeout(() => focusCheckoutWorkspace(workspaceRef.current));
   const closeDialogs = () => {
     setQuantityItem(null);
     setRemoveItem(null);
@@ -379,6 +387,12 @@ function ActiveCheckout({
 
   const scanFirstProduct = async (scannedValue: string) => {
     setScanIssue(null);
+    if (localPosActive()) {
+      await command
+        .mutateAsync({ type: 'scan', barcode: scannedValue })
+        .catch(() => undefined);
+      return;
+    }
     const dataMatrix = parseGs1DataMatrix(scannedValue);
     const searchValue = dataMatrix?.gtin ?? scannedValue;
     try {
@@ -456,7 +470,7 @@ function ActiveCheckout({
     search,
     canSearch &&
       canAddProduct &&
-      !command.isPending &&
+      (!command.isPending || localPosActive()) &&
       !transitions.cancel.isPending &&
       !transitions.checkout.isPending &&
       !transitions.hold.isPending &&
@@ -465,11 +479,46 @@ function ActiveCheckout({
     context.data?.storeId,
   );
 
+  const transitionPending =
+    transitions.cancel.isPending ||
+    transitions.checkout.isPending ||
+    transitions.hold.isPending ||
+    transitions.resume.isPending;
+  const scannerBlocked =
+    (!localPosActive() && command.isPending) || transitionPending;
+  useCheckoutBarcodeScanner({
+    workspaceRef,
+    enabled:
+      canSearch &&
+      canAddProduct &&
+      !scannerBlocked &&
+      !context.isPending &&
+      !context.isError &&
+      !currentSale.isPending &&
+      !currentSale.isError &&
+      !completedSale &&
+      !paymentSale &&
+      !heldOpen &&
+      !cancelOpen &&
+      !discountOpen &&
+      !categoryPickerOpen &&
+      !quantityItem &&
+      !removeItem &&
+      !priceItem,
+    onScan: (barcode) => {
+      void scanFirstProduct(barcode);
+    },
+  });
+
   useEffect(() => {
     if (!context.isPending && !currentSale.isPending) refocus();
   }, [context.isPending, currentSale.isPending, sale?.id]);
 
-  if (context.isPending || currentSale.isPending || currentSale.isFetching) {
+  if (
+    context.isPending ||
+    currentSale.isPending ||
+    (currentSale.isFetching && currentSale.data === undefined)
+  ) {
     return <FullPageState isLoading title="Открываем чек" />;
   }
   if (context.isError || currentSale.isError) {
@@ -514,13 +563,7 @@ function ActiveCheckout({
   );
   const canOpenReceipts = canOpenSalesHistory || canOpenReturns;
   const rows: CheckoutRow[] = sale?.items.map((item) => ({ item })) ?? [];
-  const transitionPending =
-    transitions.cancel.isPending ||
-    transitions.checkout.isPending ||
-    transitions.hold.isPending ||
-    transitions.resume.isPending;
   const isBusy = command.isPending || transitionPending;
-  const scannerBlocked = command.isPending || transitionPending;
   const canResume = hasPermission('sales.hold') && !sale && !transitionPending;
   const canEndSession = !sale && !isBusy;
 
@@ -842,7 +885,13 @@ function ActiveCheckout({
   };
 
   return (
-    <main className="flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden bg-workspace p-4 sm:p-5">
+    <main
+      ref={workspaceRef}
+      tabIndex={-1}
+      aria-label="Рабочая зона продаж"
+      className="flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden bg-workspace p-4 outline-none sm:p-5"
+    >
+      <LocalPosStatus sessionId={cashierSession.id} />
       <section className="shrink-0 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
@@ -852,7 +901,6 @@ function ActiveCheckout({
             />
             <Input
               aria-describedby={scanIssue ? 'scan-issue' : undefined}
-              autoFocus
               className="h-15 border-border bg-muted/35 pl-13 pr-4 text-lg shadow-none md:text-lg"
               disabled={!canSearch || !canAddProduct || scannerBlocked}
               id="checkout-search"
@@ -896,7 +944,7 @@ function ActiveCheckout({
               className="min-h-12 shrink-0"
               onClick={() => {
                 setSearch(scanIssue.barcode);
-                refocus();
+                inputRef.current?.focus();
               }}
               type="button"
               variant="ghost"

@@ -11,6 +11,7 @@ interface ImportMeta {
 }
 
 interface Window {
+  localPos?: import('../../shared/pos/contracts').LocalPosBridge;
   windowControls?: {
     minimize: () => void;
   };

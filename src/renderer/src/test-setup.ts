@@ -1,8 +1,11 @@
 import { vi } from 'vitest';
 
-window.scrollTo = vi.fn();
+if (typeof window !== 'undefined') window.scrollTo = vi.fn();
 
-if (typeof window.localStorage.setItem !== 'function') {
+if (
+  typeof window !== 'undefined' &&
+  typeof window.localStorage.setItem !== 'function'
+) {
   const data = new Map<string, string>();
   Object.defineProperty(window, 'localStorage', {
     configurable: true,

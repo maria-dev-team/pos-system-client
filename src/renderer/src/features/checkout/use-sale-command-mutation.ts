@@ -17,26 +17,14 @@ import {
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
+import {
+  executeLocalSale,
+  localPosActive,
+} from '@renderer/common/lib/local-pos';
 
-export type SaleCommand =
-  | { barcode: string; type: 'scan' }
-  | {
-      markingCode?: string;
-      productId: string;
-      quantity?: string;
-      type: 'add';
-    }
-  | { itemId: string; quantity: string; type: 'setQuantity' }
-  | { itemId: string; type: 'remove' }
-  | {
-      itemId: string;
-      reason: string;
-      type: 'overridePrice';
-      unitPrice: string;
-    }
-  | { itemId: string; type: 'resetPrice' }
-  | { percentage: string; reason: string; type: 'applyDiscount' }
-  | { type: 'resetDiscount' };
+import type { SaleCommand } from '../../../../shared/pos/contracts';
+
+export type { SaleCommand } from '../../../../shared/pos/contracts';
 
 type SaleCommandMutationOptions = {
   onError?: (
@@ -70,19 +58,23 @@ export function useSaleCommandMutation(
 
   const reconcileCurrent = (updatedSale: SaleResponse) => {
     queryClient.setQueryData<SaleResponse | null>(saleKey, (currentSale) =>
-      updatedSale.status === 'DRAFT'
-        ? currentSale === null || currentSale?.id === updatedSale.id
-          ? updatedSale
-          : currentSale
-        : currentSale?.id === updatedSale.id
-          ? null
-          : currentSale,
+      currentSale?.id === updatedSale.id &&
+      (currentSale.local_revision ?? 0) > (updatedSale.local_revision ?? 0)
+        ? currentSale
+        : updatedSale.status === 'DRAFT'
+          ? currentSale === null || currentSale?.id === updatedSale.id
+            ? updatedSale
+            : currentSale
+          : currentSale?.id === updatedSale.id
+            ? null
+            : currentSale,
     );
     return queryClient.getQueryData<SaleResponse | null>(saleKey);
   };
 
   return useMutation({
     mutationFn: async (command: SaleCommand) => {
+      if (localPosActive()) return executeLocalSale(command);
       const currentSale = queryClient.getQueryData<SaleResponse | null>(
         saleKey,
       );

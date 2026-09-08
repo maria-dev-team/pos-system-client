@@ -1,3 +1,4 @@
+import { callLocalPos, localPosActive } from '../../../lib/local-pos';
 import { request } from '../../request';
 import type {
   HeldSaleResponse,
@@ -25,15 +26,21 @@ export async function createSale(
 }
 
 export const getCurrentSale = async (): Promise<SaleResponse | null> =>
-  unwrapSale(await request.get('/v1/sales/current'));
+  localPosActive()
+    ? callLocalPos<SaleResponse | null>({ type: 'current' })
+    : unwrapSale(await request.get('/v1/sales/current'));
 
 export const getHeldSales = async (): Promise<HeldSaleResponse[]> => {
+  if (localPosActive())
+    return callLocalPos<HeldSaleResponse[]>({ type: 'held' });
   const response = await request.get('/v1/sales/held');
   return response.data.data.sales as HeldSaleResponse[];
 };
 
 export const getSale = async (saleId: string): Promise<SaleResponse> =>
-  unwrapSale(await request.get(`/v1/sales/${saleId}`));
+  localPosActive()
+    ? callLocalPos<SaleResponse>({ type: 'sale', saleId })
+    : unwrapSale(await request.get(`/v1/sales/${saleId}`));
 
 export const scanSaleItem = async (
   saleId: string,
