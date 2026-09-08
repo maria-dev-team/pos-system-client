@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import type { AppUpdateState } from '../main/app-updater';
+import type { LocalPosBridge } from '../shared/pos/contracts';
+
+const localPos: LocalPosBridge = {
+  request: (request) => ipcRenderer.invoke('pos:request', request),
+  onChange: (callback) => {
+    const listener = (): void => callback();
+    ipcRenderer.on('pos:changed', listener);
+    return () => ipcRenderer.removeListener('pos:changed', listener);
+  },
+};
+contextBridge.exposeInMainWorld('localPos', localPos);
 
 type CameraContext = {
   accessToken: string;

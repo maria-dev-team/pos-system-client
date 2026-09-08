@@ -1,6 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { Toaster } from 'sonner';
@@ -28,6 +35,7 @@ import {
   searchProducts,
   triggerAntiFraudEvent,
 } from '@renderer/common/api';
+import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
 
 import { CheckoutView } from './index';
 
@@ -201,6 +209,7 @@ const saleFixture = (overrides: Partial<SaleResponse> = {}): SaleResponse => ({
 
 const renderCheckout = (
   props: Partial<ComponentProps<typeof CheckoutView>> = {},
+  withKeyboard = false,
 ) => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -208,13 +217,20 @@ const renderCheckout = (
       queries: { retry: false },
     },
   });
+  const view = (
+    <CheckoutView
+      cashierSession={cashierSession}
+      onSessionEnded={vi.fn()}
+      {...props}
+    />
+  );
   render(
     <QueryClientProvider client={queryClient}>
-      <CheckoutView
-        cashierSession={cashierSession}
-        onSessionEnded={vi.fn()}
-        {...props}
-      />
+      {withKeyboard ? (
+        <OnScreenKeyboardProvider>{view}</OnScreenKeyboardProvider>
+      ) : (
+        view
+      )}
       <Toaster />
     </QueryClientProvider>,
   );
@@ -353,7 +369,7 @@ describe('server-authoritative checkout', () => {
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Закрыть' }));
-    await waitFor(() => expect(search).toHaveFocus());
+    await waitFor(() => expect(search).not.toHaveFocus());
   });
 
   it('creates a server DRAFT immediately when the first catalog product is selected', async () => {
@@ -416,6 +432,60 @@ describe('server-authoritative checkout', () => {
         items: [{ productId: 'product-1', quantity: '1' }],
       }),
     );
+  });
+
+  it('starts without an open keyboard and scans a barcode while search is unfocused', async () => {
+    vi.mocked(createSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], total: '650.00' }),
+    );
+    renderCheckout({}, true);
+    const search = await screen.findByLabelText('Сканируйте или найдите товар');
+    const workspace = screen.getByRole('main', { name: 'Рабочая зона продаж' });
+    await waitFor(() => expect(workspace).toHaveFocus());
+    expect(
+      screen.queryByRole('dialog', { name: 'Экранная клавиатура' }),
+    ).not.toBeInTheDocument();
+    let time = 1000;
+    for (const key of [...'001234', 'Enter']) {
+      const event = createEvent.keyDown(workspace, {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, 'timeStamp', { value: (time += 8) });
+      fireEvent(workspace, event);
+    }
+    await waitFor(() =>
+      expect(createSale).toHaveBeenCalledWith({
+        items: [{ productId: 'product-1', quantity: '1' }],
+      }),
+    );
+    expect(createSale).toHaveBeenCalledTimes(1);
+    expect(search).toHaveValue('');
+    expect(search).not.toHaveFocus();
+    expect(
+      screen.queryByRole('dialog', { name: 'Экранная клавиатура' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('still opens the keyboard for intentional manual search and does not reopen it after closing', async () => {
+    const user = userEvent.setup();
+    renderCheckout({}, true);
+    const search = await screen.findByLabelText('Сканируйте или найдите товар');
+    await user.click(search);
+    expect(
+      await screen.findByRole('dialog', { name: 'Экранная клавиатура' }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', { name: 'Закрыть экранную клавиатуру' }),
+    );
+    expect(
+      screen.queryByRole('dialog', { name: 'Экранная клавиатура' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('main', { name: 'Рабочая зона продаж' }));
+    expect(
+      screen.queryByRole('dialog', { name: 'Экранная клавиатура' }),
+    ).not.toBeInTheDocument();
   });
 
   it('resolves a marked product by GTIN and sends its full Data Matrix', async () => {

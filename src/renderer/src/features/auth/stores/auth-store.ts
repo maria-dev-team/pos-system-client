@@ -5,6 +5,7 @@ import {
   logout as logoutRequest,
   refreshTokens,
 } from '@renderer/common/api';
+import { disconnectLocalPos } from '@renderer/common/lib/local-pos';
 
 import {
   readStoredAccessToken,
@@ -54,6 +55,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   logout: async () => {
     set({ isLoggingOut: true });
     try {
+      await disconnectLocalPos();
       await logoutRequest();
       removeStoredAccessToken();
       set({ accessToken: null });

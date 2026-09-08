@@ -15,6 +15,10 @@ import { useEffect, useState } from 'react';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import {
+  connectLocalPos,
+  restoreLocalPos,
+} from '@renderer/common/lib/local-pos';
 import { receiptNumberSchema } from '@renderer/common/schemas/receipt-number.schema';
 import {
   LoginView,
@@ -91,6 +95,16 @@ const indexRoute = createRoute({
   beforeLoad: async ({ context: { queryClient } }) => {
     await useAuthStore.getState().initialize();
     if (!useAuthStore.getState().accessToken) throw redirect({ to: '/login' });
+
+    const local = await restoreLocalPos(queryClient).catch(() => null);
+    if (local)
+      throw redirect({
+        to: '/checkout',
+        search: {
+          registerId: local.session.register_id,
+          registerShiftId: local.session.register_shift_id,
+        },
+      });
 
     const [context] = await Promise.all([
       queryClient.ensureQueryData(authContextQueryOptions()),
@@ -327,6 +341,10 @@ const checkoutRoute = createRoute({
     const cashierSession = await queryClient.ensureQueryData(
       currentCashierSessionQueryOptions(search.registerId),
     );
+    // Starting a session seeds React Query directly, bypassing its queryFn.
+    // Desktop checkout must activate local storage even when the session is cached.
+    if (window.localPos && cashierSession?.status === 'ACTIVE')
+      await connectLocalPos(search.registerId);
     if (
       !cashierSession ||
       !['ACTIVE', 'LOCKED'].includes(cashierSession.status) ||

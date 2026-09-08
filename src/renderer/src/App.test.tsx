@@ -755,7 +755,14 @@ describe('DukenAI POS authorization flow', () => {
     expect(
       await screen.findByRole('heading', { name: 'Оформление продажи' }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Сканируйте или найдите товар')).toHaveFocus();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('main', { name: 'Рабочая зона продаж' }),
+      ).toHaveFocus(),
+    );
+    expect(
+      screen.getByLabelText('Сканируйте или найдите товар'),
+    ).not.toHaveFocus();
     expect(api.selectContext).toHaveBeenNthCalledWith(1, 'membership-1');
     expect(api.selectContext).toHaveBeenNthCalledWith(
       2,

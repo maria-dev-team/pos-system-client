@@ -55,7 +55,7 @@ const shouldAttemptRefresh = (
     errorCode === ErrorCode.InvalidSession ||
     !errorCode);
 
-const refreshAccessToken = (): Promise<string> => {
+export const refreshAccessToken = (): Promise<string> => {
   if (!refreshPromise) {
     refreshPromise = refreshClient
       .post<{ data: { auth: { access_token: string } } }>(

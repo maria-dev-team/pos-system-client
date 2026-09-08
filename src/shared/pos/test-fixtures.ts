@@ -1,0 +1,98 @@
+import type { PosProfile, ProductResponse } from './contracts';
+
+export const ids = {
+  organization: '11111111-1111-4111-8111-111111111111',
+  store: '22222222-2222-4222-8222-222222222222',
+  register: '33333333-3333-4333-8333-333333333333',
+  session: '44444444-4444-4444-8444-444444444444',
+  shift: '55555555-5555-4555-8555-555555555555',
+  membership: '66666666-6666-4666-8666-666666666666',
+  product: '77777777-7777-4777-8777-777777777777',
+};
+export function profileFixture(): PosProfile {
+  const now = new Date().toISOString();
+  return {
+    tokenHash: '',
+    verifiedAt: Date.now(),
+    expiresAt: Date.now() + 3600000,
+    context: {
+      isSystemPosition: true,
+      organizationId: ids.organization,
+      userOrganizationId: ids.membership,
+      storeId: ids.store,
+      permissions: [],
+      storeScope: {
+        canAccessAll: true,
+        primaryStoreId: ids.store,
+        storeIds: [ids.store],
+        stores: [],
+      },
+    },
+    session: {
+      id: ids.session,
+      organization_id: ids.organization,
+      store_id: ids.store,
+      register_id: ids.register,
+      register_shift_id: ids.shift,
+      membership_id: ids.membership,
+      status: 'ACTIVE',
+      started_at: now,
+      created_at: now,
+      updated_at: now,
+      opening_cash: '0.00',
+      actual_cash: null,
+      expected_cash: null,
+      difference: null,
+      ended_at: null,
+      end_reason: null,
+      locked_at: null,
+    },
+    shift: {
+      id: ids.shift,
+      organization_id: ids.organization,
+      store_id: ids.store,
+      register_id: ids.register,
+      status: 'OPEN',
+      opened_at: now,
+      opened_by_membership_id: ids.membership,
+      opening_cash: '0.00',
+      created_at: now,
+      updated_at: now,
+      actual_cash: null,
+      expected_cash: null,
+      difference: null,
+      closed_at: null,
+      closed_by_membership_id: null,
+      deleted_at: null,
+      fiscal_closed_at: null,
+      fiscal_shift_number: '1',
+    },
+  };
+}
+export function productFixture(): ProductResponse {
+  return {
+    id: ids.product,
+    organization_id: ids.organization,
+    category_id: null,
+    name: 'Молоко цельное',
+    barcode: '4870000000012',
+    sku: null,
+    retail_price: '650.00',
+    vat_rate: '16',
+    unit: 'pcs',
+    is_active: true,
+    deleted_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    nkt_product_id: null,
+    nkt: {
+      ntin_code: '12345678901234567',
+      gtin: '04870000000012',
+      name_ru: 'Молоко',
+      name_kk: null,
+      is_marked: false,
+      is_social: false,
+      is_deactivated: false,
+    },
+  };
+}

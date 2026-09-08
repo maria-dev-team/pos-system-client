@@ -81,6 +81,8 @@ export type HeldSaleResponse = {
 };
 
 export type SaleResponse = {
+  checkout_deferred_at?: string | null;
+  local_revision?: number;
   cancelled_at: string | null;
   cancelled_by_membership_id: string | null;
   cancellation_reason: string | null;

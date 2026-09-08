@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { toast } from 'sonner';
 
+import { PosError } from '../../../../shared/pos/contracts';
+import { fiscalErrorMessage } from '../../../../shared/pos/fiscal-error';
 import {
   ErrorCode,
   type ErrorCode as ErrorCodeValue,
@@ -122,6 +124,7 @@ const messages: Record<ErrorCodeValue, string> = {
 export const getHttpErrorCode = (
   error: unknown,
 ): ErrorCodeValue | undefined => {
+  if (error instanceof PosError) return error.code as ErrorCodeValue;
   if (!axios.isAxiosError(error)) return undefined;
   return error.response?.data?.error_code as ErrorCodeValue | undefined;
 };
@@ -130,6 +133,11 @@ export const getHttpErrorMessage = (
   error: unknown,
   fallback?: string,
 ): string => {
+  if (error instanceof PosError) return error.message;
+  if (axios.isAxiosError(error) && error.response?.data) {
+    const message = fiscalErrorMessage(error.response.data);
+    if (message) return message;
+  }
   const errorCode = getHttpErrorCode(error);
   if (errorCode && messages[errorCode]) return messages[errorCode];
   if (!axios.isAxiosError(error)) return fallback ?? 'Произошла ошибка.';
