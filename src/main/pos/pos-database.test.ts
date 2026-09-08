@@ -6,7 +6,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { productFixture } from '../../shared/pos/test-fixtures';
+import type { LocalSale } from '../../shared/pos/contracts';
+import { newSale } from '../../shared/pos/sale';
+import {
+  ids,
+  productFixture,
+  profileFixture,
+} from '../../shared/pos/test-fixtures';
 import { PosDatabase } from './pos-database';
 
 const databases: PosDatabase[] = [];
@@ -20,7 +26,59 @@ const open = (path = ':memory:', key = randomBytes(32)): PosDatabase => {
   databases.push(db);
   return db;
 };
+const receipt = (): LocalSale => ({
+  sale: newSale(profileFixture(), ids.product, new Date().toISOString()),
+  sequence: 1,
+  revision: 1,
+  syncedRevision: 0,
+  serverVersion: 0,
+  inFlight: null,
+  payment: null,
+  error: null,
+});
 describe('durable local database', () => {
+  it('commits the receipt and clock together and never rolls the clock back', () => {
+    const db = open();
+    const record = receipt();
+    db.saveSaleWithClock(record, 200);
+    db.saveSaleWithClock({ ...record, sequence: 2 }, 100);
+    expect(db.get('clock')).toBe(200);
+    expect(db.sale(ids.session, record.sale.id)?.sequence).toBe(2);
+  });
+  it('rolls back the clock and preserves the previous receipt when a write fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-atomic-sale-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const db = open(path);
+    const record = receipt();
+    db.saveSaleWithClock(record, 100);
+    const connection = new DatabaseSync(path);
+    try {
+      connection.exec(
+        "CREATE TRIGGER fail_sale_write BEFORE UPDATE ON local_sales BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END",
+      );
+    } finally {
+      connection.close();
+    }
+    expect(() => db.saveSaleWithClock({ ...record, sequence: 2 }, 200)).toThrow(
+      'simulated storage failure',
+    );
+    expect(db.get('clock')).toBe(100);
+    expect(db.sale(ids.session, record.sale.id)?.sequence).toBe(1);
+  });
+  it('cannot overwrite and corrupt a receipt belonging to another cashier session', () => {
+    const db = open();
+    const record = receipt();
+    db.save(record);
+    expect(() =>
+      db.save({
+        ...record,
+        sale: { ...record.sale, cashier_session_id: ids.shift },
+      }),
+    ).toThrow('другой смене');
+    expect(db.sale(ids.session, record.sale.id)).toEqual(record);
+    expect(db.sale(ids.shift, record.sale.id)).toBeNull();
+  });
   it('isolates store catalogs, indexes barcode and supports Cyrillic prefix search', async () => {
     const db = open();
     await db.replaceCatalog('store-a', [productFixture()]);

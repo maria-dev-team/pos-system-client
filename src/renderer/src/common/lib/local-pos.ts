@@ -13,7 +13,27 @@ import { refreshAccessToken } from '../api/request';
 import { queryKeys } from '../constants/query-keys';
 
 let profile: PosProfile | null = null;
+const profileListeners = new Set<() => void>();
+export const subscribeLocalPosProfile = (
+  listener: () => void,
+): (() => void) => {
+  profileListeners.add(listener);
+  return () => {
+    profileListeners.delete(listener);
+  };
+};
+const publishProfile = (value: PosProfile | null): void => {
+  profile = value;
+  profileListeners.forEach((listener) => listener());
+};
 let token: string | null = null;
+let lifecycle = 0;
+let disconnecting: Promise<void> | null = null;
+const contextChanged = (): PosError =>
+  new PosError(
+    'LOCAL_CONTEXT_CHANGED',
+    'Контекст кассы изменился. Повторите вход в смену.',
+  );
 let connecting: {
   accessToken: string;
   registerId: string;
@@ -40,6 +60,8 @@ export async function connectLocalPos(
   registerId: string,
   force = false,
 ): Promise<PosProfile> {
+  if (disconnecting) await disconnecting;
+  const epoch = lifecycle;
   const accessToken = getAccessToken();
   if (!accessToken) throw new PosError('INVALID_SESSION', 'Войдите в систему.');
   if (
@@ -57,6 +79,7 @@ export async function connectLocalPos(
     )
       return connecting.promise;
     await connecting.promise.catch(() => undefined);
+    if (epoch !== lifecycle) throw contextChanged();
     return connectLocalPos(registerId, force);
   }
   const promise = (async (): Promise<PosProfile> => {
@@ -70,6 +93,7 @@ export async function connectLocalPos(
         ...(force ? { forceOnline: true } : {}),
       });
     } catch (error) {
+      if (epoch !== lifecycle) throw contextChanged();
       if (!needsTokenRefresh(error)) throw error;
       // Only authentication is retried here, never a payment or sale command.
       // Use the same single-flight refresh as ordinary HTTP requests.
@@ -77,6 +101,7 @@ export async function connectLocalPos(
       if (!latest) throw error;
       verifiedToken =
         latest !== accessToken ? latest : await refreshAccessToken();
+      if (epoch !== lifecycle) throw contextChanged();
       connected = await callLocalPos<PosProfile>({
         type: 'connect',
         accessToken: verifiedToken,
@@ -84,13 +109,13 @@ export async function connectLocalPos(
         forceOnline: true,
       });
     }
-    if (getAccessToken() !== verifiedToken)
+    if (epoch !== lifecycle || getAccessToken() !== verifiedToken)
       throw new PosError(
         'LOCAL_CONTEXT_CHANGED',
         'Авторизация изменилась во время проверки кассы. Повторите вход в смену.',
       );
-    profile = connected;
     token = verifiedToken;
+    publishProfile(connected);
     return connected;
   })();
   const job = { accessToken, registerId, force, promise };
@@ -105,6 +130,8 @@ export async function connectLocalPos(
 export async function restoreLocalPos(
   queryClient: QueryClient,
 ): Promise<PosProfile | null> {
+  if (disconnecting) await disconnecting;
+  const epoch = lifecycle;
   const accessToken = getAccessToken();
   if (!window.localPos || !accessToken) return null;
   let restored: PosProfile | null;
@@ -114,6 +141,7 @@ export async function restoreLocalPos(
       accessToken,
     });
   } catch (error) {
+    if (epoch !== lifecycle) throw contextChanged();
     if (!needsTokenRefresh(error)) throw error;
     if (getAccessToken() === accessToken) await refreshAccessToken();
     // The new token is not trusted against the old offline grant. The router
@@ -121,13 +149,13 @@ export async function restoreLocalPos(
     return null;
   }
   if (!restored) return null;
-  if (getAccessToken() !== accessToken)
+  if (epoch !== lifecycle || getAccessToken() !== accessToken)
     throw new PosError(
       'LOCAL_CONTEXT_CHANGED',
       'Авторизация изменилась во время восстановления кассы.',
     );
-  profile = restored;
   token = accessToken;
+  publishProfile(restored);
   queryClient.setQueryData(queryKeys.auth.context(), restored.context);
   queryClient.setQueryData(
     queryKeys.cashierSessions.current(restored.session.register_id),
@@ -141,9 +169,20 @@ export async function restoreLocalPos(
 }
 
 export async function disconnectLocalPos(): Promise<void> {
-  if (localPosActive()) await callLocalPos({ type: 'disconnect' });
-  profile = null;
-  token = null;
+  if (disconnecting) return disconnecting;
+  lifecycle++;
+  const job = (async () => {
+    // Also invalidate a worker connection whose profile has not reached the renderer yet.
+    if (window.localPos) await callLocalPos({ type: 'disconnect' });
+    token = null;
+    publishProfile(null);
+  })();
+  disconnecting = job;
+  try {
+    await job;
+  } finally {
+    if (disconnecting === job) disconnecting = null;
+  }
 }
 export async function executeLocalSale(
   command: SaleCommand,

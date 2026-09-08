@@ -15,7 +15,7 @@ import {
   statusBarConfig,
 } from '@renderer/common/config/status-bar.config';
 import { queryKeys } from '@renderer/common/constants';
-import { useAppUpdateState } from '@renderer/features/app-update/app-update-provider';
+import { useAppUpdateState } from '@renderer/features/app-update';
 import {
   authContextQueryOptions,
   useAuthSession,

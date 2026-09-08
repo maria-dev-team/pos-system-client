@@ -15,7 +15,7 @@ import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
 import { callLocalPos, localPosActive } from '@renderer/common/lib/local-pos';
 
-import { reportCancellation } from './report-cancellation';
+import { reportSaleAntiFraud } from '../anti-fraud';
 
 type TerminalCommand =
   | {
@@ -70,10 +70,10 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
 
   const finishCommand = (sale: SaleResponse, command: TerminalCommand) => {
     if (hasExpectedStatus(sale, command)) {
-      if (command.type === 'cancel' && !localPosActive()) {
-        reportCancellation(sale, command.reason);
-      }
       finishTerminal(sale);
+      if (command.type === 'cancel') {
+        void reportSaleAntiFraud(sale, command.reason);
+      }
     } else {
       adoptDraft(sale);
     }

@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -7,25 +7,22 @@ import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper'
 import {
   callLocalPos,
   connectLocalPos,
-  localPosActive,
   localPosProfile,
 } from '@renderer/common/lib/local-pos';
+import {
+  localPosStatusKey,
+  useLocalPosSync,
+} from '@renderer/features/local-pos';
 
-import type { PosStatus, SaleResponse } from '../../../../shared/pos/contracts';
+import type { SaleResponse } from '../../../../shared/pos/contracts';
 
 export function useLocalPosStatus(sessionId: string) {
   const client = useQueryClient();
   const [busy, setBusy] = useState<string[]>([]);
   const jobs = useRef(new Set<string>());
-  const catalogVersion = useRef<string | null>(null);
   const lastAuthAttempt = useRef(0);
-  const status = useQuery({
-    queryKey: ['local-pos', sessionId],
-    queryFn: () => callLocalPos<PosStatus>({ type: 'status' }),
-    enabled: localPosActive(),
-    networkMode: 'always',
-    refetchInterval: 15000,
-  });
+  const snapshot = useLocalPosSync();
+  const status = { data: snapshot.state, dataUpdatedAt: snapshot.updatedAt };
   const reload = useCallback(async () => {
     const sale = await callLocalPos<SaleResponse | null>({ type: 'current' });
     await client.cancelQueries({
@@ -33,7 +30,7 @@ export function useLocalPosStatus(sessionId: string) {
       exact: true,
     });
     client.setQueryData(queryKeys.sales.current(sessionId), sale);
-    await client.invalidateQueries({ queryKey: ['local-pos', sessionId] });
+    await client.invalidateQueries({ queryKey: localPosStatusKey });
   }, [client, sessionId]);
   const authorize = useCallback(async () => {
     const registerId = localPosProfile()?.session.register_id;
@@ -59,38 +56,6 @@ export function useLocalPosStatus(sessionId: string) {
     },
     [reload],
   );
-  useEffect(() => {
-    const updated = status.data?.catalogUpdatedAt;
-    if (updated && updated !== catalogVersion.current) {
-      catalogVersion.current = updated;
-      void client.invalidateQueries({ queryKey: queryKeys.products.all() });
-    }
-  }, [client, status.data?.catalogUpdatedAt]);
-  useEffect(() => {
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsubscribe = window.localPos?.onChange(() => {
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        void client.invalidateQueries({ queryKey: ['local-pos', sessionId] });
-        void callLocalPos<SaleResponse | null>({ type: 'current' })
-          .then((sale) => {
-            if (!disposed)
-              client.setQueryData(queryKeys.sales.current(sessionId), sale);
-          })
-          .catch(() => undefined);
-        void client.invalidateQueries({
-          queryKey: queryKeys.sales.held(sessionId),
-        });
-      }, 40);
-    });
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-      unsubscribe?.();
-    };
-  }, [client, sessionId]);
   useEffect(() => {
     if (
       !status.data?.tokenRefreshRequired ||
@@ -130,6 +95,11 @@ export function useLocalPosStatus(sessionId: string) {
     busy,
     refresh,
     review,
-    active: localPosActive(),
+    retrySale: (saleId: string) =>
+      run(saleId, async () => {
+        if (status.data?.authorizationRequired) await authorize();
+        await callLocalPos({ type: 'retrySale', saleId });
+      }),
+    active: snapshot.active,
   };
 }

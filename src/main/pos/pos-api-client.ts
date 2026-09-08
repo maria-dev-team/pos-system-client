@@ -3,12 +3,14 @@ import {
   type FiscalErrorDetails,
   fiscalErrorMessage,
 } from '../../shared/pos/fiscal-error';
+import { readPosResponseJson } from './pos-response-body';
 
 export class PosApiError extends PosError {
   constructor(
     code: string,
     readonly status: number,
     readonly details: FiscalErrorDetails = {},
+    readonly retryAfterMs = 0,
   ) {
     super(
       code,
@@ -61,8 +63,24 @@ export async function requestPosApi<T>(
   if (response.status === 204) return undefined as T;
   let parsed: unknown;
   try {
-    parsed = await response.json();
-  } catch {
+    parsed = await readPosResponseJson(response);
+  } catch (error) {
+    if (!response.ok)
+      throw new PosApiError(
+        'POS_API_ERROR',
+        response.status,
+        {},
+        retryAfter(response),
+      );
+    if (error instanceof PosError) throw error;
+    if (
+      error instanceof Error &&
+      ['TimeoutError', 'AbortError'].includes(error.name)
+    )
+      throw new PosConnectionError(
+        'POS_API_TIMEOUT',
+        'Сервер не закончил передачу ответа вовремя. Повторите проверку соединения.',
+      );
     throw new PosError(
       'POS_API_INVALID_RESPONSE',
       `Сервер вернул не JSON (HTTP ${response.status}, ${path.split('?')[0]}). Проверьте адрес API и конфигурацию backend.`,
@@ -78,6 +96,10 @@ export async function requestPosApi<T>(
         (response.status === 401 ? 'INVALID_TOKEN' : 'POS_API_ERROR'),
       response.status,
       error,
+      retryAfter(
+        response,
+        (error as { retry_after_seconds?: unknown }).retry_after_seconds,
+      ),
     );
   }
   if (
@@ -92,4 +114,22 @@ export async function requestPosApi<T>(
       `Некорректный ответ сервера (${path.split('?')[0]}): отсутствует data. Проверьте совместимость backend и POS.`,
     );
   return parsed.data as T;
+}
+
+function retryAfter(response: Response, seconds?: unknown): number {
+  const header = response.headers.get('retry-after');
+  const headerMs = header
+    ? /^\d+(?:\.\d+)?$/.test(header)
+      ? Number(header) * 1000
+      : Date.parse(header) - Date.now()
+    : 0;
+  const bodyMs =
+    typeof seconds === 'number' && Number.isFinite(seconds)
+      ? seconds * 1000
+      : 0;
+  // Bound untrusted server metadata, including dates far in the future.
+  return Math.min(
+    24 * 60 * 60_000,
+    Math.max(0, Number.isFinite(headerMs) ? headerMs : 0, bodyMs),
+  );
 }

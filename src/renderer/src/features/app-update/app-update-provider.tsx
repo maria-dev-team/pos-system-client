@@ -7,7 +7,7 @@ import {
   useState,
 } from 'react';
 
-import type { AppUpdateState } from '../../../../main/app-updater';
+import type { AppUpdateState } from '../../../../shared/desktop-contracts';
 import { Button } from '../../common/components/ui/button';
 
 const AppUpdateContext = createContext<AppUpdateState | undefined>(undefined);

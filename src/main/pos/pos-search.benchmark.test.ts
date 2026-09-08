@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { expect, it } from 'vitest';
 
+import type { ProductResponse } from '../../shared/pos/contracts';
 import { productFixture } from '../../shared/pos/test-fixtures';
 import { PosDatabase } from './pos-database';
 
@@ -17,14 +18,28 @@ it.skipIf(process.env.POS_BENCHMARK !== '1')(
     const db = new PosDatabase(join(directory, 'pos.sqlite'), randomBytes(32));
     try {
       const product = productFixture();
-      const products = Array.from({ length: 100000 }, (_, i) => ({
+      const count = 100000;
+      const makeProduct = (i: number): ProductResponse => ({
         ...product,
         id: `product-${i}`,
         barcode: String(4870000000000 + i),
         name: `Молоко группа${i % 100} товар${i}`,
-      }));
+      });
       const started = performance.now();
-      await db.replaceCatalog('store', products);
+      const foregroundMs: number[] = [];
+      for (let offset = 0; offset < count; offset += 250) {
+        // Same bounded writes as production; do not hold a 100k JSON snapshot in memory.
+        await db.cacheProducts(
+          'store',
+          Array.from({ length: Math.min(250, count - offset) }, (_, i) =>
+            makeProduct(offset + i),
+          ),
+        );
+        const probe = performance.now();
+        expect(db.barcode('store', makeProduct(offset).barcode)).toBeDefined();
+        db.set('foreground-write-probe', offset);
+        foregroundMs.push(performance.now() - probe);
+      }
       const seedMs = performance.now() - started;
       const measure = (
         count: number,
@@ -45,7 +60,7 @@ it.skipIf(process.env.POS_BENCHMARK !== '1')(
       };
       const barcode = measure(1000, (i) =>
         expect(
-          db.barcode('store', products[(i * 7919) % products.length].barcode),
+          db.barcode('store', makeProduct((i * 7919) % count).barcode),
         ).toBeDefined(),
       );
       const text = measure(100, (i) =>
@@ -61,7 +76,11 @@ it.skipIf(process.env.POS_BENCHMARK !== '1')(
       console.log(
         JSON.stringify(
           {
-            products: products.length,
+            products: count,
+            maximumPageSize: 250,
+            foregroundProbeP95Ms: foregroundMs.sort((a, b) => a - b)[
+              Math.floor(foregroundMs.length * 0.95)
+            ],
             seedMs,
             barcodeMs: barcode,
             textMs: text,

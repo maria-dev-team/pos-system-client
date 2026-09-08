@@ -183,6 +183,7 @@ export function useSaleCommandMutation(
       reconcileCurrent(updatedSale);
       options.onSuccess?.(updatedSale, command);
     },
-    scope: { id: cashierSessionId },
+    // Local commands are serialized at their durable write, not behind a remote cache miss.
+    scope: localPosActive() ? undefined : { id: cashierSessionId },
   });
 }

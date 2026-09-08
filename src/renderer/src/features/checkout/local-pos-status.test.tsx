@@ -10,17 +10,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PosRequest, PosStatus } from '../../../../shared/pos/contracts';
 import { profileFixture } from '../../../../shared/pos/test-fixtures';
+import { LocalPosSyncProvider } from '../local-pos/local-pos-sync-provider';
 import { LocalPosStatus } from './local-pos-status';
 
 const mocks = vi.hoisted(() => ({ call: vi.fn(), connect: vi.fn() }));
+const currentProfile = profileFixture();
 vi.mock('@renderer/common/lib/local-pos', () => ({
   callLocalPos: mocks.call,
   connectLocalPos: mocks.connect,
   localPosActive: () => true,
-  localPosProfile: () => profileFixture(),
+  localPosProfile: () => currentProfile,
+  subscribeLocalPosProfile: () => () => {},
 }));
 vi.mock('./local-conflict-dialog', () => ({ LocalConflictDialog: () => null }));
 const makeStatus = (): PosStatus => ({
+  sessionId: profileFixture().session.id,
   connected: true,
   catalogReady: true,
   catalogUpdatedAt: null,
@@ -52,18 +56,60 @@ function mount(state: PosStatus): QueryClient {
   });
   render(
     <QueryClientProvider client={client}>
-      <LocalPosStatus sessionId="cashier" />
+      <LocalPosSyncProvider enabled>
+        <LocalPosStatus sessionId="cashier" />
+      </LocalPosSyncProvider>
     </QueryClientProvider>,
   );
   return client;
 }
 beforeEach(() => {
+  window.localPos = { request: vi.fn(), onChange: () => () => {} };
   mocks.call.mockReset();
   mocks.connect.mockReset();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  delete window.localPos;
+});
 
 describe('checkout warnings and recovery actions', () => {
+  it('shows an outbox rejection separately from payment review and retries only the selected receipt', async () => {
+    const state = makeStatus();
+    const saleId = '77777777-7777-4777-8777-777777777777';
+    state.pending = 1;
+    state.outbox = [
+      {
+        saleId,
+        total: '650.00',
+        stage: 'draft',
+        code: 'PRODUCT_NOT_ACTIVE',
+        message: 'Товар недоступен.',
+        attempts: 1,
+        nextAttemptAt: null,
+        retryable: true,
+      },
+    ];
+    mount(state);
+    await screen.findByText('Очередь отправки: 1');
+    expect(
+      screen.getByText('PRODUCT_NOT_ACTIVE: Товар недоступен.'),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Повторить отправку чека',
+        hidden: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.call).toHaveBeenCalledWith({ type: 'retrySale', saleId }),
+    );
+    expect(
+      mocks.call.mock.calls.some(([request]) =>
+        ['checkout', 'retry', 'reconcilePayment'].includes(request.type),
+      ),
+    ).toBe(false);
+  });
   it('keeps next-receipt and retry actions available alongside independent warning paragraphs', async () => {
     mount(makeStatus());
     const button = await screen.findByRole('button', { name: 'Новый чек' });

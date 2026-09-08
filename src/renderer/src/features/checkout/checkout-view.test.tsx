@@ -582,7 +582,18 @@ describe('server-authoritative checkout', () => {
         reason: 'Покупатель передумал',
       }),
     );
-    await waitFor(() => expect(triggerAntiFraudEvent).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(triggerAntiFraudEvent).toHaveBeenCalledExactlyOnceWith({
+        externalEventId: 'sale-cancel:sale-1',
+        occurredAt: cancelled.cancelled_at,
+        postBufferSeconds: 15,
+        preBufferSeconds: 15,
+        reason: 'Покупатель передумал',
+        registerId: 'register-1',
+        saleId: 'sale-1',
+        type: 'cancel',
+      }),
+    );
   });
 
   it('keeps all quantity actions in one aligned row', async () => {

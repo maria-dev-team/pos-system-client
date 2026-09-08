@@ -1,6 +1,6 @@
 import type { FiscalShiftReportResponse } from '@renderer/common/api';
 
-import type { PrintableShiftReport } from '../../../../main/receipt-printer/shift-report-document';
+import type { PrintableShiftReport } from '../../../../shared/printing/shift-report-document';
 
 export const buildPrintableShiftReport = (
   report: FiscalShiftReportResponse,

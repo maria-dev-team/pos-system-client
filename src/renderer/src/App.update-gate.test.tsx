@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import type { AppRouter } from '@renderer/common/router';
 
-import type { AppUpdateState } from '../../main/app-updater';
+import type { AppUpdateState } from '../../shared/desktop-contracts';
 import App from './App';
 
 vi.mock('@tanstack/react-router', () => ({

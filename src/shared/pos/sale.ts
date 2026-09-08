@@ -6,6 +6,7 @@ import type {
 } from './contracts';
 import { PosError } from './contracts';
 import { D, money, priceSale } from './pricing';
+import { assertProductSellable } from './product-policy';
 
 export function requirePermission(
   profile: PosProfile,
@@ -97,28 +98,7 @@ export function applyCommand(
     throw new Error('Resolve a scan before applying it');
   if (command.type === 'add') {
     requirePermission(profile, 'product.read');
-    if (!product || !product.is_active || product.deleted_at)
-      throw new PosError('PRODUCT_NOT_FOUND', 'Товар не найден или неактивен.');
-    if (product.retail_price === null)
-      throw new PosError(
-        'PRODUCT_SALE_PRICE_REQUIRED',
-        'У товара не указана цена.',
-      );
-    if (!product.nkt?.ntin_code || product.nkt.is_deactivated)
-      throw new PosError(
-        'PRODUCT_NKT_REQUIRED',
-        'Товар не сопоставлен с НКТ. Откройте его в каталоге DukenAI.',
-      );
-    if (product.nkt.is_marked && !command.markingCode)
-      throw new PosError(
-        'PRODUCT_MARKING_CODE_REQUIRED',
-        'Отсканируйте Data Matrix с упаковки.',
-      );
-    if (!product.nkt.is_marked && command.markingCode)
-      throw new PosError(
-        'PRODUCT_MARKING_CODE_NOT_ALLOWED',
-        'Товар не отмечен как маркированный.',
-      );
+    assertProductSellable(product, command.markingCode);
     const q = quantity(command.quantity ?? '1', product.unit);
     if (product.nkt.is_marked && q !== '1.000')
       throw new PosError(

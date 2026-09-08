@@ -55,6 +55,68 @@ afterEach(() => {
 });
 
 describe('request refresh flow', () => {
+  it('does not overwrite a newer login with a late refresh response', async () => {
+    let finish!: () => void;
+    const { refreshAccessToken, token } = await loadRequest(async (config) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return response(config, 200, {
+        data: { auth: { access_token: 'stale-refresh-token' } },
+      });
+    });
+    const refreshing = refreshAccessToken();
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    token.value = 'new-login-token';
+    finish();
+    await expect(refreshing).rejects.toMatchObject({
+      code: 'AUTH_CONTEXT_CHANGED',
+    });
+    expect(token.value).toBe('new-login-token');
+  });
+
+  it('does not log out a newer login after an old refresh is rejected', async () => {
+    let finish!: () => void;
+    const { refreshAccessToken, token } = await loadRequest(async (config) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      throw unauthorized(config);
+    });
+    const refreshing = refreshAccessToken();
+    const result = refreshing.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    token.value = 'new-login-token';
+    finish();
+    await result;
+    expect(token.value).toBe('new-login-token');
+  });
+
+  it('reuses the rotated token for a late 401 instead of rotating the session again', async () => {
+    let finish!: () => void;
+    let refreshCalls = 0;
+    const { request } = await loadRequest(async (config) => {
+      if (config.url === '/v1/auth/refresh') {
+        refreshCalls++;
+        return response(config, 200, {
+          data: { auth: { access_token: 'new-token' } },
+        });
+      }
+      if (config.headers.get('Authorization') === 'Bearer new-token')
+        return response(config, 200, {});
+      if (config.url === '/slow')
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      throw unauthorized(config);
+    });
+    const slow = request.get('/slow');
+    await request.get('/fast');
+    finish();
+    await slow;
+    expect(refreshCalls).toBe(1);
+  });
+
   it('uses one refresh for parallel 401 responses and retries both requests with the new token', async () => {
     let refreshCalls = 0;
     const adapter = vi.fn(async (rawConfig: InternalAxiosRequestConfig) => {
