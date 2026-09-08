@@ -4,7 +4,11 @@ import { mkdir, open, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 
-import { type PosReply, posRequestSchema } from '../../shared/pos/contracts';
+import {
+  POS_STATUS_TIMEOUT_MS,
+  type PosReply,
+  posRequestSchema,
+} from '../../shared/pos/contracts';
 
 export function isPosSenderTrusted(
   window: BrowserWindow,
@@ -76,18 +80,29 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
       'Локальное хранилище кассы недоступно. Перезапустите приложение; не удаляйте данные кассы.',
   };
   let failed = false;
+  let closed = false;
+  let activeWorker: Worker | undefined;
+  const fail = (): void => {
+    failed = true;
+    for (const resolve of pending.values()) resolve(unavailable);
+    pending.clear();
+  };
+  // Subscribe before the first await: a window can close during key/storage initialization.
+  window.once('closed', () => {
+    closed = true;
+    fail();
+    if (activeWorker) void activeWorker.terminate();
+    ipcMain.removeHandler('pos:request');
+  });
   const workerReady = (async () => {
     const directory = join(app.getPath('userData'), 'pos');
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const key = await deviceKey(directory);
+    if (closed) throw new Error('POS window closed during startup');
     const worker = new Worker(join(__dirname, 'pos-worker.js'), {
       workerData: { databasePath: join(directory, 'pos.sqlite'), key, apiUrl },
     });
-    const fail = (): void => {
-      failed = true;
-      for (const resolve of pending.values()) resolve(unavailable);
-      pending.clear();
-    };
+    activeWorker = worker;
     worker.on('error', fail);
     worker.on('exit', fail);
     worker.on(
@@ -101,15 +116,9 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
         }
       },
     );
-    window.once('closed', () => {
-      fail();
-      void worker.terminate();
-    });
     return worker;
   })();
-  void workerReady.catch(() => {
-    failed = true;
-  });
+  void workerReady.catch(fail);
   ipcMain.handle(
     'pos:request',
     async (event, input: unknown): Promise<PosReply> => {
@@ -127,17 +136,48 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
           message: 'Некорректные параметры операции.',
         };
       try {
-        const worker = await workerReady;
-        if (failed || pending.size >= 512) return unavailable;
+        // Reserve capacity before awaiting startup, not only after it finishes.
+        if (failed || closed || pending.size >= 512) return unavailable;
         return await new Promise<PosReply>((resolve) => {
           const id = ++nextId;
-          pending.set(id, resolve);
-          worker.postMessage({ id, request: parsed.data });
+          let settled = false;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const finish = (reply: PosReply): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            pending.delete(id);
+            resolve(reply);
+          };
+          pending.set(id, finish);
+          // Only read-only status requests time out. Never treat an elapsed UI
+          // deadline as a failed sale/payment, cancel one, or send it again.
+          if (parsed.data.type === 'status')
+            timer = setTimeout(
+              () =>
+                finish({
+                  ok: false,
+                  code: 'LOCAL_POS_STATUS_TIMEOUT',
+                  message:
+                    'Локальный процесс не ответил за 5 секунд. Статус синхронизации неизвестен. Повторите проверку; если ошибка сохраняется, полностью перезапустите POS.',
+                }),
+              POS_STATUS_TIMEOUT_MS,
+            );
+          void workerReady
+            .then((worker) => {
+              // A probe that expired during worker startup must not be sent later.
+              if (settled) return;
+              if (failed || closed) {
+                finish(unavailable);
+                return;
+              }
+              worker.postMessage({ id, request: parsed.data });
+            })
+            .catch(() => finish(unavailable));
         });
       } catch {
         return unavailable;
       }
     },
   );
-  window.once('closed', () => ipcMain.removeHandler('pos:request'));
 }

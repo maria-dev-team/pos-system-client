@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { AxiosError } from 'axios';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,8 +14,14 @@ import {
   triggerAntiFraudEvent,
 } from '@renderer/common/api';
 import { queryKeys } from '@renderer/common/constants';
+import { callLocalPos, localPosActive } from '@renderer/common/lib/local-pos';
 
 import { useCheckoutSaleTransitions } from './use-checkout-sale-transitions';
+
+vi.mock('@renderer/common/lib/local-pos', () => ({
+  callLocalPos: vi.fn(),
+  localPosActive: vi.fn(),
+}));
 
 vi.mock('@renderer/common/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@renderer/common/api')>();
@@ -110,6 +116,7 @@ const wrapper = (queryClient: QueryClient) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(localPosActive).mockReturnValue(false);
   vi.mocked(triggerAntiFraudEvent).mockResolvedValue(undefined);
 });
 
@@ -193,7 +200,7 @@ describe('checkout terminal transitions', () => {
     ).toEqual(refreshed);
   });
 
-  it('cancels with a mandatory reason and emits anti-fraud once', async () => {
+  it('cancels with a mandatory reason and reports optional video independently', async () => {
     const queryClient = client();
     const draft = saleFixture();
     const cancelled = saleFixture({
@@ -215,10 +222,123 @@ describe('checkout terminal transitions', () => {
       expectedVersion: 5,
       reason: 'Ошибка кассира',
     });
-    await waitFor(() => expect(triggerAntiFraudEvent).toHaveBeenCalledOnce());
+    expect(triggerAntiFraudEvent).toHaveBeenCalledExactlyOnceWith({
+      externalEventId: 'sale-cancel:sale-1',
+      occurredAt: cancelled.cancelled_at,
+      postBufferSeconds: 15,
+      preBufferSeconds: 15,
+      reason: 'Ошибка кассира',
+      registerId: 'register-1',
+      saleId: 'sale-1',
+      type: 'cancel',
+    });
     expect(
       queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),
     ).toBeNull();
+  });
+
+  it.each([
+    [false, 'rejected'],
+    [false, 'pending'],
+    [true, 'rejected'],
+    [true, 'pending'],
+  ] as const)(
+    'finishes cancellation with local=%s and video=%s',
+    async (local, video) => {
+      const queryClient = client();
+      const cancelled = saleFixture({
+        status: 'CANCELLED',
+        cancelled_at: new Date().toISOString(),
+        version: 6,
+      });
+      queryClient.setQueryData(
+        queryKeys.sales.current(cashierSessionId),
+        saleFixture(),
+      );
+      vi.mocked(localPosActive).mockReturnValue(local);
+      vi.mocked(cancelSale).mockResolvedValue(cancelled);
+      vi.mocked(callLocalPos).mockResolvedValue(cancelled);
+      if (video === 'rejected') {
+        vi.mocked(triggerAntiFraudEvent).mockRejectedValue(
+          new Error('Camera unavailable'),
+        );
+      } else {
+        vi.mocked(triggerAntiFraudEvent).mockReturnValue(
+          new Promise(() => undefined),
+        );
+      }
+      const { result, unmount } = renderHook(
+        () => useCheckoutSaleTransitions(cashierSessionId),
+        { wrapper: wrapper(queryClient) },
+      );
+      await expect(
+        act(() => result.current.cancel.mutateAsync('Customer cancelled')),
+      ).resolves.toEqual(cancelled);
+      expect(triggerAntiFraudEvent).toHaveBeenCalledOnce();
+      expect(
+        queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),
+      ).toBeNull();
+      if (local) {
+        expect(cancelSale).not.toHaveBeenCalled();
+        expect(callLocalPos).toHaveBeenCalledExactlyOnceWith({
+          type: 'transition',
+          saleId: 'sale-1',
+          action: 'cancel',
+          reason: 'Customer cancelled',
+        });
+      }
+      unmount();
+      queryClient.clear();
+    },
+  );
+
+  it('reports a reconciled cancellation using its original time and stable event id', async () => {
+    const queryClient = client();
+    const cancelled = saleFixture({
+      status: 'CANCELLED',
+      cancelled_at: new Date().toISOString(),
+    });
+    queryClient.setQueryData(
+      queryKeys.sales.current(cashierSessionId),
+      saleFixture(),
+    );
+    vi.mocked(cancelSale).mockRejectedValue(
+      new AxiosError('Network Error', 'ERR_NETWORK'),
+    );
+    vi.mocked(getSale).mockResolvedValue(cancelled);
+    const { result } = renderHook(
+      () => useCheckoutSaleTransitions(cashierSessionId),
+      {
+        wrapper: wrapper(queryClient),
+      },
+    );
+    await act(() => result.current.cancel.mutateAsync('Customer cancelled'));
+    expect(triggerAntiFraudEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalEventId: 'sale-cancel:sale-1',
+        occurredAt: cancelled.cancelled_at,
+      }),
+    );
+    expect(cancelSale).toHaveBeenCalledOnce();
+  });
+
+  it('does not report an unsuccessful cancellation', async () => {
+    const queryClient = client();
+    queryClient.setQueryData(
+      queryKeys.sales.current(cashierSessionId),
+      saleFixture(),
+    );
+    vi.mocked(cancelSale).mockRejectedValue(new Error('Sale is not editable'));
+    const { result } = renderHook(
+      () => useCheckoutSaleTransitions(cashierSessionId),
+      {
+        wrapper: wrapper(queryClient),
+      },
+    );
+    await expect(
+      act(() => result.current.cancel.mutateAsync('Customer cancelled')),
+    ).rejects.toThrow('Sale is not editable');
+    expect(triggerAntiFraudEvent).not.toHaveBeenCalled();
   });
 
   it('holds the current draft and invalidates held sales', async () => {

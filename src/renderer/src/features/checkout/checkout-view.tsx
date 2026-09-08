@@ -26,7 +26,6 @@ import {
   type SaleItemResponse,
   type SalePaymentPayload,
   type SaleResponse,
-  searchProducts,
 } from '@renderer/common/api';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { Button } from '@renderer/common/components/ui/button';
@@ -49,7 +48,6 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
-import { parseGs1DataMatrix } from '@renderer/common/lib/gs1-data-matrix';
 import { localPosActive } from '@renderer/common/lib/local-pos';
 import {
   adjustQuantityByOne,
@@ -58,6 +56,7 @@ import {
 } from '@renderer/common/lib/quantity';
 import { authContextQueryOptions } from '@renderer/features/auth';
 import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
+import { ProductLookupStatus } from '@renderer/features/local-pos';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import { useProductSearchQuery } from '@renderer/features/products';
 import {
@@ -67,6 +66,7 @@ import {
 } from '@renderer/features/receipt-printing';
 import { registerShiftHistoryQueryOptions } from '@renderer/features/register-shifts';
 
+import { assertProductSellable } from '../../../../shared/pos/product-policy';
 import { CheckoutCategoryPicker } from './checkout-category-picker';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
 import {
@@ -84,6 +84,7 @@ import {
   focusCheckoutWorkspace,
   useCheckoutBarcodeScanner,
 } from './use-checkout-barcode-scanner';
+import { useCheckoutProductScan } from './use-checkout-product-scan';
 import { useCheckoutSaleTransitions } from './use-checkout-sale-transitions';
 import {
   type SaleCommand,
@@ -297,7 +298,7 @@ function ActiveCheckout({
     toast.success('Чек отменён');
   };
 
-  const command = useSaleCommandMutation(cashierSession.id, sale, {
+  const commandState = useSaleCommandMutation(cashierSession.id, sale, {
     onError: (error, submitted) => {
       if (
         submitted.type === 'remove' &&
@@ -385,87 +386,26 @@ function ActiveCheckout({
     },
   });
 
-  const scanFirstProduct = async (scannedValue: string) => {
-    setScanIssue(null);
-    if (localPosActive()) {
-      await command
-        .mutateAsync({ type: 'scan', barcode: scannedValue })
-        .catch(() => undefined);
-      return;
-    }
-    const dataMatrix = parseGs1DataMatrix(scannedValue);
-    const searchValue = dataMatrix?.gtin ?? scannedValue;
-    try {
-      const result = await searchProducts({
-        limit: 20,
-        offset: 0,
-        search: searchValue,
-      });
-      const exact = result.products.find(
-        (product) =>
-          product.barcode === searchValue || product.nkt?.gtin === searchValue,
-      );
-      if (!exact) {
-        setScanIssue({
-          barcode: scannedValue,
-          message: `Товар с кодом ${searchValue} не найден`,
-        });
-        return;
-      }
-      if (!exact.is_active) {
-        setScanIssue({
-          barcode: scannedValue,
-          message: `Товар с кодом ${searchValue} неактивен`,
-        });
-        return;
-      }
-      if (exact.retail_price === null) {
-        setScanIssue({
-          barcode: scannedValue,
-          message: `У товара с кодом ${searchValue} нет цены`,
-        });
-        return;
-      }
-      if (!exact.nkt?.ntin_code || exact.nkt.is_deactivated) {
-        setScanIssue({
-          barcode: scannedValue,
-          message: `Товар «${exact.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге DukenAI.`,
-        });
-        return;
-      }
-      if (exact.nkt?.is_marked && !dataMatrix) {
-        setScanIssue({
-          barcode: scannedValue,
-          message: `Товар «${exact.name}» маркирован. Отсканируйте Data Matrix с упаковки.`,
-        });
-        return;
-      }
-      if (!exact.nkt?.is_marked && dataMatrix) {
-        setScanIssue({
-          barcode: scannedValue,
-          message: `Товар с GTIN ${dataMatrix.gtin} не отмечен как маркированный.`,
-        });
-        return;
-      }
-      await command.mutateAsync({
-        ...(dataMatrix ? { markingCode: dataMatrix.markingCode } : {}),
-        productId: exact.id,
-        type: 'add',
-      });
-      setScanIssue(null);
-      setSearch((value) => (value.trim() === scannedValue ? '' : value));
-    } catch (error) {
-      setScanIssue({
-        barcode: scannedValue,
-        message: getHttpErrorMessage(
-          error,
-          `Не удалось добавить товар с кодом ${searchValue}`,
-        ),
-      });
-    } finally {
-      refocus();
-    }
+  // A local cache miss must not disable the cart's buttons or unrelated edit dialogs.
+  const command = {
+    ...commandState,
+    isPending:
+      commandState.isPending &&
+      !(
+        localPosActive() &&
+        ['scan', 'add'].includes(commandState.variables?.type ?? '')
+      ),
   };
+
+  const scanFirstProduct = useCheckoutProductScan({
+    cashierSessionId: cashierSession.id,
+    organizationId: cashierSession.organization_id,
+    execute: command.mutateAsync,
+    onIssue: setScanIssue,
+    onResolved: (barcode) =>
+      setSearch((value) => (value.trim() === barcode ? '' : value)),
+    refocus,
+  });
   const products = useProductSearchQuery(
     search,
     canSearch &&
@@ -727,20 +667,13 @@ function ActiveCheckout({
   };
   const selectProduct = (product: ProductResponse) => {
     if (!canAddProduct) return;
-    if (!product.nkt?.ntin_code || product.nkt.is_deactivated) {
+    try {
+      assertProductSellable(product);
+    } catch (error) {
       setSearch('');
       setScanIssue({
         barcode: product.barcode,
-        message: `Товар «${product.name}» ещё не сопоставлен с НКТ. Откройте его в каталоге DukenAI.`,
-      });
-      refocus();
-      return;
-    }
-    if (product.nkt?.is_marked) {
-      setSearch('');
-      setScanIssue({
-        barcode: product.id,
-        message: `Товар «${product.name}» маркирован. Отсканируйте Data Matrix с упаковки.`,
+        message: getHttpErrorMessage(error, 'Не удалось добавить товар.'),
       });
       refocus();
       return;
@@ -954,6 +887,21 @@ function ActiveCheckout({
           </div>
         ) : null}
 
+        <ProductLookupStatus />
+        {search.trim().length >= 2 &&
+        products.isFetching &&
+        !products.isPending ? (
+          <p
+            role="status"
+            className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"
+          >
+            <LoaderCircle
+              aria-hidden="true"
+              className="size-4 animate-spin motion-reduce:animate-none"
+            />
+            Обновляем результаты поиска…
+          </p>
+        ) : null}
         <div className="mt-2 max-h-52 overflow-auto" aria-live="polite">
           {!canSearch ? (
             <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">

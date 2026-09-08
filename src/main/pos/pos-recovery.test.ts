@@ -77,8 +77,21 @@ async function fixture(): Promise<{
       return response({ cashier_session: profile.session });
     if (path === '/v1/register-shifts/current')
       return response({ register_shift: profile.shift });
-    if (path === '/v1/pos/catalog')
-      return response({ products: [productFixture()] });
+    if (path === '/v1/pos/catalog/page')
+      return response({
+        products: [{ ...productFixture(), store_id: profile.session.store_id }],
+        next_cursor: null,
+      });
+    if (path === '/v1/pos/catalog/sync-start')
+      return response({ cursor: 'baseline' });
+    if (path === '/v1/pos/catalog/changes')
+      return response({
+        products: [],
+        deleted_ids: [],
+        categories_changed: false,
+        cursor: 'next',
+        has_more: false,
+      });
     if (path === '/v1/categories')
       return response({ categories: [], meta: { has_more: false } });
     if (path === '/v1/sales/deferred-checkouts')

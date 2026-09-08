@@ -44,6 +44,9 @@ async function main() {
     [`/v1/register-shifts/current?register_id=${register}`]: {
       register_shift: {
         id: shift,
+        register_id: register,
+        organization_id: organization,
+        store_id: store,
         status: 'OPEN',
         opened_at: new Date(
           Date.now() - Number(process.env.POS_SMOKE_SHIFT_HOURS || 0) * 3600000,
@@ -52,7 +55,15 @@ async function main() {
     },
     '/v1/sales/current': { sale: null },
     '/v1/sales/held': { sales: [] },
-    '/v1/pos/catalog': { products: [] },
+    '/v1/pos/catalog/page?limit=250': { products: [], next_cursor: null },
+    '/v1/pos/catalog/sync-start': { cursor: 'baseline' },
+    '/v1/pos/catalog/changes?cursor=baseline&limit=250': {
+      products: [],
+      deleted_ids: [],
+      categories_changed: false,
+      cursor: 'next',
+      has_more: false,
+    },
     '/v1/categories?limit=100&offset=0': {
       categories: [],
       meta: { has_more: false },

@@ -1,17 +1,17 @@
 import { z } from 'zod';
 
-import type { AuthContextResponse } from '../../renderer/src/common/api/responses/auth-context.response';
-import type { CashierSessionResponse } from '../../renderer/src/common/api/responses/cashier-session.response';
-import type { CategorySearchResponse } from '../../renderer/src/common/api/responses/category.response';
+import type { AuthContextResponse } from '../api/responses/auth-context.response';
+import type { CashierSessionResponse } from '../api/responses/cashier-session.response';
+import type { CategorySearchResponse } from '../api/responses/category.response';
 import type {
   ProductResponse,
   ProductSearchResponse,
-} from '../../renderer/src/common/api/responses/product.response';
-import type { RegisterShiftResponse } from '../../renderer/src/common/api/responses/register-shift.response';
+} from '../api/responses/product.response';
+import type { RegisterShiftResponse } from '../api/responses/register-shift.response';
 import type {
   HeldSaleResponse,
   SaleResponse,
-} from '../../renderer/src/common/api/responses/sale.response';
+} from '../api/responses/sale.response';
 
 export type { ProductResponse, SaleResponse };
 
@@ -61,6 +61,7 @@ export const saleCommandSchema = z.discriminatedUnion('type', [
 
 export type SaleCommand = z.infer<typeof saleCommandSchema>;
 export const posRequestSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('retrySale'), saleId: id }).strict(),
   z.object({ type: z.literal('deferPayment'), saleId: id }).strict(),
   z.object({ type: z.literal('resumePayment'), saleId: id }).strict(),
   z.object({ type: z.literal('reconcilePayment'), saleId: id }).strict(),
@@ -147,6 +148,8 @@ export const posRequestSchema = z.discriminatedUnion('type', [
 ]);
 
 export type PosRequest = z.infer<typeof posRequestSchema>;
+/** A status probe is read-only; financial commands must not use this deadline. */
+export const POS_STATUS_TIMEOUT_MS = 5000;
 export type PosProfile = {
   context: AuthContextResponse;
   session: CashierSessionResponse;
@@ -156,11 +159,35 @@ export type PosProfile = {
   verifiedAt: number;
 };
 export type PosStatus = {
+  outbox?: Array<{
+    saleId: string;
+    total: string;
+    stage: SyncStage;
+    code: string | null;
+    message: string | null;
+    attempts: number;
+    nextAttemptAt: number | null;
+    retryable: boolean;
+  }>;
+  sessionId?: string | null;
+  syncing?: boolean;
+  productLookups?: number;
+  categoriesSyncing?: boolean;
+  categoriesRevision?: string | null;
   conflicts: { saleId: string; total: string }[];
   connected: boolean;
   pending: number;
   catalogReady: boolean;
   catalogUpdatedAt: string | null;
+  catalogSyncing?: boolean;
+  catalogLoaded?: number;
+  catalogError?: string | null;
+  catalogRevision?: string | null;
+  catalogPhase?: 'downloading' | 'saving' | 'finalizing' | null;
+  catalogMode?: 'bootstrap' | 'delta';
+  catalogWaiting?: boolean;
+  catalogPending?: boolean;
+  catalogRetryAt?: string | null;
   error: string | null;
   paymentPending: boolean;
   paymentReviews: {
@@ -194,6 +221,7 @@ export type LocalPosBridge = {
 
 /** Durable local aggregate and its last server version; these revisions are independent. */
 export type LocalSale = {
+  syncFailures?: Partial<Record<SyncStage, SyncFailure>>;
   sale: SaleResponse;
   revision: number;
   syncedRevision: number;
@@ -212,7 +240,16 @@ export type LocalSale = {
   deferredPayment?: boolean;
   deferSynced?: boolean;
   error: string | null;
-  cancellationEvent?: { occurredAt: string; reason: string } | null;
+};
+
+export type SyncStage = 'draft' | 'defer';
+export type SyncFailure = {
+  code: string;
+  message: string;
+  attempts: number;
+  nextAttemptAt: number | null;
+  temporary: boolean;
+  authorization?: boolean;
 };
 
 export class PosError extends Error {

@@ -766,6 +766,13 @@ describe('API endpoints', () => {
     vi.resetModules();
     vi.stubEnv('VITE_API_URL', 'http://localhost:4004');
     const api = (await import('./requests')) as unknown as AntiFraudApi;
+    const { configureAccessTokenProvider } =
+      await import('./access-token.provider');
+    configureAccessTokenProvider({
+      getAccessToken: () => 'cashier-token',
+      setAccessToken: vi.fn(),
+      clearAccessToken: vi.fn(),
+    });
 
     await expect(
       api.triggerAntiFraudEvent({

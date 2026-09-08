@@ -32,6 +32,8 @@ import {
   currentCashierSessionQueryOptions,
 } from '@renderer/features/cashier-sessions';
 import { CheckoutView } from '@renderer/features/checkout';
+import { LocalPosSyncBar } from '@renderer/features/local-pos';
+import { LocalPosSyncProvider } from '@renderer/features/local-pos';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import {
   RegisterShiftSelectionView,
@@ -74,15 +76,19 @@ function SessionRedirect(): null {
 }
 
 function RootLayout() {
+  const accessToken = useAuthStore((state) => state.accessToken);
   return (
     <OnScreenKeyboardProvider>
-      <div className="flex h-svh flex-col overflow-hidden">
-        <StatusBar />
-        <div className="min-h-0 flex-1 overflow-auto">
-          <SessionRedirect />
-          <Outlet />
+      <LocalPosSyncProvider enabled={Boolean(accessToken)}>
+        <div className="flex h-svh flex-col overflow-hidden">
+          <StatusBar />
+          <LocalPosSyncBar />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <SessionRedirect />
+            <Outlet />
+          </div>
         </div>
-      </div>
+      </LocalPosSyncProvider>
     </OnScreenKeyboardProvider>
   );
 }

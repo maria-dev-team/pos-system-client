@@ -6,11 +6,11 @@ import {
   type CreateWithoutReceiptReturnPayload,
   createReceiptReturn,
   createWithoutReceiptReturn,
-  triggerAntiFraudEvent,
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
 
+import { reportSaleAntiFraud } from '../../anti-fraud';
 import {
   type PendingReturnCommand,
   useReturnsPendingStore,
@@ -28,34 +28,14 @@ type ReturnDraft =
     };
 
 const isAmbiguousReturnError = (error: unknown) =>
-  axios.isAxiosError(error) &&
-  (!error.response ||
-    error.code === 'ECONNABORTED' ||
-    error.code === 'ETIMEDOUT' ||
-    error.response.status >= 500);
-
-const reportReturn = (
-  completedReturn: Awaited<ReturnType<typeof createReceiptReturn>>,
-  reason: string,
-): void => {
-  if (
-    completedReturn.transaction_type !== 'RETURN' ||
-    completedReturn.status !== 'COMPLETED'
-  ) {
-    return;
-  }
-
-  void triggerAntiFraudEvent({
-    externalEventId: `sale-refund:${completedReturn.id}`,
-    occurredAt: completedReturn.completed_at ?? new Date().toISOString(),
-    postBufferSeconds: 15,
-    preBufferSeconds: 15,
-    reason,
-    registerId: completedReturn.register_id,
-    saleId: completedReturn.id,
-    type: 'refund',
-  }).catch(() => undefined);
-};
+  !axios.isAxiosError(error) ||
+  !error.response ||
+  error.code === 'ECONNABORTED' ||
+  error.code === 'ETIMEDOUT' ||
+  error.response.data?.reconciliation_required === true ||
+  [401, 403, 408, 425, 429].includes(error.response.status) ||
+  error.response.data?.error_code === ErrorCode.SaleNotEditable ||
+  error.response.status >= 500;
 
 export function useReturnSubmission(
   cashierSessionId: string,
@@ -69,7 +49,6 @@ export function useReturnSubmission(
   const store = () => useReturnsPendingStore.getState();
 
   const finish = async (command: PendingReturnCommand) => {
-    store().clearPending(cashierSessionId);
     await queryClient.invalidateQueries({
       queryKey: queryKeys.sales.receiptPages(),
     });
@@ -105,8 +84,11 @@ export function useReturnSubmission(
               command.idempotencyKey,
               command.payload,
             );
-      reportReturn(result, command.payload.reason);
-      await finish(command);
+      void reportSaleAntiFraud(result, command.payload.reason);
+      store().clearPending(cashierSessionId, command.idempotencyKey);
+      // Cache refresh is not part of the fiscal transaction and cannot turn a
+      // confirmed refund into an error or hold its completion UI indefinitely.
+      void finish(command).catch(() => undefined);
       return result;
     } catch (error) {
       if (isAmbiguousReturnError(error)) throw error;
@@ -114,7 +96,7 @@ export function useReturnSubmission(
       const errorCode = getHttpErrorCode(error);
       if (errorCode === ErrorCode.ReturnIdempotencyConflict) throw error;
 
-      store().clearPending(cashierSessionId);
+      store().clearPending(cashierSessionId, command.idempotencyKey);
       if (
         errorCode === ErrorCode.ReturnQuantityExceeded &&
         command.type === 'receipt'

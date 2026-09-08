@@ -26,7 +26,7 @@ import { currentUserQueryOptions } from '@renderer/features/user';
 import {
   receiptPaperProfiles,
   renderReceiptDocument,
-} from '../../../../main/receipt-printer/receipt-document';
+} from '../../../../shared/printing/receipt-document';
 import {
   readReceiptPrinterSettings,
   writeReceiptPrinterSettings,

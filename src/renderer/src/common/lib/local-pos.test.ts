@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { profileFixture } from '../../../../shared/pos/test-fixtures';
@@ -34,6 +35,61 @@ afterEach(() => {
 });
 
 describe('local cashier session authorization', () => {
+  it.each(['connect', 'restore'] as const)(
+    'does not reinstall a late %s profile after disconnect with the same token',
+    async (kind) => {
+      const f = await fixture();
+      let respond!: (value: unknown) => void;
+      f.request.mockImplementation((request) =>
+        request.type === 'disconnect'
+          ? Promise.resolve({ ok: true, value: null })
+          : new Promise((resolve) => {
+              respond = resolve;
+            }),
+      );
+      const pending =
+        kind === 'connect'
+          ? f.connectLocalPos(f.profile.session.register_id)
+          : f.restoreLocalPos(new QueryClient());
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: 'LOCAL_CONTEXT_CHANGED',
+      });
+      await f.disconnectLocalPos();
+      respond({ ok: true, value: f.profile });
+      await rejected;
+      expect(f.localPosProfile()).toBeNull();
+      expect(f.request).toHaveBeenCalledWith({ type: 'disconnect' });
+    },
+  );
+  it('publishes a stable profile snapshot after connect, restore and disconnect', async () => {
+    const {
+      subscribeLocalPosProfile,
+      localPosProfile,
+      connectLocalPos,
+      restoreLocalPos,
+      disconnectLocalPos,
+      request,
+      profile,
+    } = await fixture();
+    const changed = vi.fn();
+    const unsubscribe = subscribeLocalPosProfile(changed);
+    expect(localPosProfile()).toBeNull();
+    request.mockResolvedValue({ ok: true, value: profile });
+    await connectLocalPos(profile.session.register_id);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(localPosProfile()).toBe(profile);
+    expect(localPosProfile()).toBe(localPosProfile());
+    await connectLocalPos(profile.session.register_id);
+    expect(changed).toHaveBeenCalledTimes(1);
+    await restoreLocalPos(new QueryClient());
+    expect(changed).toHaveBeenCalledTimes(2);
+    await disconnectLocalPos();
+    expect(localPosProfile()).toBeNull();
+    expect(changed).toHaveBeenCalledTimes(3);
+    unsubscribe();
+    await connectLocalPos(profile.session.register_id);
+    expect(changed).toHaveBeenCalledTimes(3);
+  });
   it('refreshes an expired token once and verifies the active session again', async () => {
     const { connectLocalPos, request, profile } = await fixture();
     request

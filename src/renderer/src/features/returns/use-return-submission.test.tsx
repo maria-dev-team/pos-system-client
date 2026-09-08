@@ -106,6 +106,149 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('return submission recovery', () => {
+  it.each([
+    new Error('Authorization changed while retrying'),
+    responseError('INVALID_TOKEN', 401),
+    responseError('TOO_MANY_REQUESTS', 429),
+    responseError('SALE_NOT_EDITABLE'),
+    new AxiosError('Reconciliation required', undefined, undefined, undefined, {
+      status: 409,
+      data: { error_code: 'CONFLICT', reconciliation_required: true },
+    } as AxiosResponse),
+  ])(
+    'preserves the original command when rejection does not prove the refund failed: %s',
+    async (error) => {
+      vi.mocked(createReceiptReturn).mockRejectedValue(error);
+      const { result } = renderHook(
+        () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+        { wrapper: wrapperFor(queryClient()) },
+      );
+      await expect(
+        act(() =>
+          result.current.submit.mutateAsync({
+            payload,
+            receiptNumber: '42',
+            type: 'receipt',
+          }),
+        ),
+      ).rejects.toThrow();
+      expect(
+        useReturnsPendingStore.getState().pendingBySession[cashierSessionId]
+          ?.idempotencyKey,
+      ).toBe(idempotencyKey);
+    },
+  );
+  it('finishes a confirmed refund without waiting for a stalled history refresh', async () => {
+    const client = queryClient();
+    vi.spyOn(client, 'invalidateQueries').mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    vi.mocked(createReceiptReturn).mockResolvedValue(completedReturn);
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(client) },
+    );
+    await expect(
+      act(() =>
+        result.current.submit.mutateAsync({
+          payload,
+          receiptNumber: '42',
+          type: 'receipt',
+        }),
+      ),
+    ).resolves.toEqual(completedReturn);
+    expect(
+      useReturnsPendingStore.getState().pendingBySession[cashierSessionId],
+    ).toBeUndefined();
+  });
+  it('does not erase a newer pending refund when an older retry returns late', async () => {
+    const resolvers: Array<(sale: SaleResponse) => void> = [];
+    vi.mocked(createReceiptReturn).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(queryClient()) },
+    );
+    let first!: Promise<SaleResponse>;
+    let retry!: Promise<SaleResponse>;
+    await act(async () => {
+      first = result.current.submit.mutateAsync({
+        payload,
+        receiptNumber: '42',
+        type: 'receipt',
+      });
+    });
+    await act(async () => {
+      retry = result.current.retry.mutateAsync();
+    });
+    await act(async () => {
+      resolvers[0]!(completedReturn);
+      await first;
+    });
+    const next = {
+      endpoint: '/v1/returns/receipts/42' as const,
+      idempotencyKey: 'new-command',
+      payload,
+      receiptNumber: '42',
+      type: 'receipt' as const,
+    };
+    act(() => {
+      useReturnsPendingStore.getState().setPending(cashierSessionId, next);
+    });
+    await act(async () => {
+      resolvers[1]!(completedReturn);
+      await retry;
+    });
+    expect(
+      useReturnsPendingStore.getState().pendingBySession[cashierSessionId],
+    ).toEqual(next);
+  });
+  it.each(['receipt', 'withoutReceipt'] as const)(
+    'finishes %s return while video is still pending',
+    async (type) => {
+      const client = queryClient();
+      vi.mocked(createReceiptReturn).mockResolvedValue(completedReturn);
+      vi.mocked(createWithoutReceiptReturn).mockResolvedValue(completedReturn);
+      vi.mocked(triggerAntiFraudEvent).mockReturnValue(
+        new Promise(() => undefined),
+      );
+      const { result, unmount } = renderHook(
+        () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+        { wrapper: wrapperFor(client) },
+      );
+      const draft =
+        type === 'receipt'
+          ? { type, payload, receiptNumber: '42' }
+          : {
+              type,
+              payload: {
+                items: [
+                  {
+                    productId: 'product-1',
+                    quantity: '1',
+                    returnDisposition: 'RESTOCK' as const,
+                  },
+                ],
+                payments: payload.payments,
+                reason: payload.reason,
+              },
+            };
+      await expect(
+        act(() => result.current.submit.mutateAsync(draft)),
+      ).resolves.toEqual(completedReturn);
+      expect(triggerAntiFraudEvent).toHaveBeenCalledOnce();
+      expect(
+        useReturnsPendingStore.getState().pendingBySession[cashierSessionId],
+      ).toBeUndefined();
+      unmount();
+      client.clear();
+    },
+  );
+
   it('refreshes only the current store receipt cache', async () => {
     const client = queryClient();
     const currentStoreFetch = vi.fn().mockResolvedValue({ store_id: storeId });
@@ -184,14 +327,14 @@ describe('return submission recovery', () => {
       payload,
     );
     expect(globalThis.crypto.randomUUID).toHaveBeenCalledOnce();
-    expect(triggerAntiFraudEvent).toHaveBeenCalledWith({
+    expect(triggerAntiFraudEvent).toHaveBeenCalledExactlyOnceWith({
       externalEventId: 'sale-refund:return-1',
-      occurredAt: '2026-08-27T10:00:00.000Z',
+      occurredAt: completedReturn.completed_at,
       postBufferSeconds: 15,
       preBufferSeconds: 15,
-      reason: 'Товар не подошёл',
-      registerId: 'register-1',
-      saleId: 'return-1',
+      reason: payload.reason,
+      registerId: completedReturn.register_id,
+      saleId: completedReturn.id,
       type: 'refund',
     });
     expect(
@@ -225,6 +368,7 @@ describe('return submission recovery', () => {
     ).rejects.toThrow();
 
     expect(result.current.pendingCommand).toBeUndefined();
+    expect(triggerAntiFraudEvent).not.toHaveBeenCalled();
     expect(client.getQueryState(receiptKey)?.isInvalidated).toBe(true);
   });
 

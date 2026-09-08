@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,7 @@ import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PosStatus, SaleResponse } from '../../shared/pos/contracts';
 import {
+  fiscalReceiptFixture,
   ids,
   productFixture,
   profileFixture,
@@ -17,6 +18,7 @@ import { PosService } from './pos-service';
 const services: PosService[] = [];
 const directories: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   services.splice(0).forEach((s) => s.close());
   directories.splice(0).forEach((path) => rmSync(path, { recursive: true }));
 });
@@ -44,8 +46,21 @@ async function fixture(
   const fetcher = vi.fn(
     async (input: string | URL | Request, init?: RequestInit) => {
       const path = String(input).replace('https://api.test', '');
-      if (path === '/v1/pos/catalog')
-        return response({ products: [productFixture()] });
+      if (path === '/v1/pos/catalog/sync-start')
+        return response({ cursor: 'baseline' });
+      if (path.startsWith('/v1/pos/catalog/changes?'))
+        return response({
+          products: [],
+          deleted_ids: [],
+          categories_changed: false,
+          cursor: 'next',
+          has_more: false,
+        });
+      if (path.startsWith('/v1/pos/catalog/page'))
+        return response({
+          products: [{ ...productFixture(), store_id: ids.store }],
+          next_cursor: null,
+        });
       if (path.startsWith('/v1/categories'))
         return response({ categories: [], meta: { has_more: false } });
       if (path === '/v1/sales/deferred-checkouts')
@@ -68,6 +83,296 @@ async function fixture(
 }
 
 describe('local POS application service', () => {
+  it.each(['foreign', 'invalid-flag', 'empty-continuation', 'repeated-page'])(
+    'keeps the old category snapshot on %s and stops pagination',
+    async (mode) => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        const { service, db, fetcher } = await fixture();
+        const scope = `${ids.organization}:${ids.store}`;
+        const previous = [
+          { id: 'old', name: 'Previous category', children: [] },
+        ];
+        db.set(`categories:${scope}`, previous);
+        db.set(`categories-dirty:${scope}`, randomUUID());
+        let requests = 0;
+        const original = fetcher.getMockImplementation()!;
+        fetcher.mockImplementation(async (url, init) => {
+          if (!String(url).includes('/v1/categories?'))
+            return original(url, init);
+          requests++;
+          return response({
+            categories:
+              mode === 'empty-continuation'
+                ? []
+                : [
+                    {
+                      id: ids.product,
+                      organization_id:
+                        mode === 'foreign' ? ids.store : ids.organization,
+                      children: [],
+                    },
+                  ],
+            meta: {
+              has_more: mode === 'invalid-flag' ? 'false' : mode !== 'foreign',
+            },
+          });
+        });
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(db.get(`categories:${scope}`)).toEqual(previous);
+        expect(requests).toBe(mode === 'repeated-page' ? 2 : 1);
+        service.close();
+        services.splice(services.indexOf(service), 1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+  it('does not crash the worker when optional category metadata cannot be read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const { service, db } = await fixture();
+      const get = db.get.bind(db);
+      vi.spyOn(db, 'get').mockImplementation((key) => {
+        if (key.startsWith('categories-updated:'))
+          throw new Error('simulated I/O failure');
+        return get(key);
+      });
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        error: expect.stringContaining('категории'),
+      });
+      await expect(
+        service.handle({ type: 'search', search: 'мол' }),
+      ).resolves.toMatchObject({
+        products: [expect.objectContaining({ id: ids.product })],
+      });
+      service.close();
+      services.splice(services.indexOf(service), 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('synchronizes cancellation only as sale state, without anti-fraud requests', async () => {
+    const { service, db, fetcher } = await fixture(async (path, body) => {
+      if (path === '/v1/sales/local-draft')
+        return response({
+          sale: {
+            ...db.sale(ids.session, String(body.sale_id))!.sale,
+            version: Number(body.expected_version) + 1,
+          },
+        });
+      const profile = profileFixture();
+      if (path === '/v1/auth/context')
+        return response({ context: profile.context });
+      if (path.includes('/cashier-sessions/current'))
+        return response({ cashier_session: profile.session });
+      if (path.includes('/register-shifts/current'))
+        return response({ register_shift: profile.shift });
+      throw new TypeError('offline');
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.syncedRevision).toBe(1),
+    );
+    await service.handle({
+      type: 'transition',
+      action: 'cancel',
+      saleId: sale.id,
+      reason: 'Customer cancellation',
+    });
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.syncedRevision).toBe(2),
+    );
+    const saved = db.sale(ids.session, sale.id)!;
+    expect(saved.sale).toMatchObject({
+      status: 'CANCELLED',
+      cancellation_reason: 'Customer cancellation',
+    });
+    expect(saved).not.toHaveProperty('cancellationEvent');
+    // Opaque legacy metadata is retained on disk, but no longer represents work.
+    const legacy = Object.assign({}, saved, {
+      cancellationEvent: {
+        occurredAt: saved.sale.cancelled_at!,
+        reason: 'Customer cancellation',
+      },
+      syncFailures: {
+        cancellation: {
+          code: 'ANTI_FRAUD_CAMERA_UNAVAILABLE',
+          message: 'No camera',
+          temporary: false,
+          attempts: 1,
+          nextAttemptAt: null,
+        },
+      },
+    });
+    db.save(legacy);
+    await service.connect('token', ids.register, true);
+    await service.handle({ type: 'retry' });
+    await service.handle({ type: 'retrySale', saleId: sale.id });
+    expect(await service.handle({ type: 'status' })).toMatchObject({
+      pending: 0,
+      outbox: [],
+    });
+    expect(db.sale(ids.session, sale.id)).toMatchObject({
+      cancellationEvent: legacy.cancellationEvent,
+    });
+    await expect(service.handle({ type: 'flush' })).resolves.toBeNull();
+    await expect(service.handle({ type: 'disconnect' })).resolves.toBeNull();
+    expect(
+      fetcher.mock.calls.some(([url]) => String(url).includes('/anti-fraud/')),
+    ).toBe(false);
+  });
+
+  it('does not acknowledge a response belonging to another sale or a non-confirming version', async () => {
+    const { service, db } = await fixture(async (path, body) => {
+      if (path !== '/v1/sales/local-draft') throw new TypeError('offline');
+      const sent = db.sale(ids.session, String(body.sale_id))!;
+      return response({ sale: { ...sent.sale, id: randomUUID(), version: 1 } });
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.syncFailures?.draft?.code).toBe(
+        'POS_API_INVALID_RESPONSE',
+      ),
+    );
+    expect(db.sale(ids.session, sale.id)?.syncedRevision).toBe(0);
+    expect(db.sale(ids.session, sale.id)?.inFlight).not.toBeNull();
+  });
+  it('keeps a 429 command immutable and durable, honors Retry-After and does not retry on every local edit', async () => {
+    const payloads: Record<string, unknown>[] = [];
+    const { service, db } = await fixture(async (path, body) => {
+      if (path !== '/v1/sales/local-draft') throw new TypeError('offline');
+      payloads.push(body);
+      return new Response(JSON.stringify({ error_code: 'TOO_MANY_REQUESTS' }), {
+        status: 429,
+        headers: { 'Retry-After': '120' },
+      });
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.syncFailures?.draft).toBeDefined(),
+    );
+    const record = db.sale(ids.session, sale.id)!;
+    expect(record.error).toBeNull();
+    expect(record.inFlight).not.toBeNull();
+    expect(
+      record.syncFailures!.draft!.nextAttemptAt! - Date.now(),
+    ).toBeGreaterThan(119000);
+    await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    });
+    await service.handle({ type: 'retrySale', saleId: sale.id });
+    expect(payloads).toHaveLength(1);
+    expect(await service.handle({ type: 'status' })).toMatchObject({
+      pending: 1,
+      outbox: [{ saleId: sale.id, code: 'TOO_MANY_REQUESTS', attempts: 1 }],
+    });
+    vi.spyOn(Date, 'now').mockReturnValue(
+      record.syncFailures!.draft!.nextAttemptAt! + 1,
+    );
+    await service.handle({ type: 'retrySale', saleId: sale.id });
+    expect(payloads).toHaveLength(2);
+    expect(payloads[1]).toEqual(payloads[0]);
+    expect(db.sale(ids.session, sale.id)?.revision).toBe(2);
+  });
+
+  it('isolates a validation rejection, keeps its reason and allows retrying only that receipt', async () => {
+    let rejectedId: string | undefined;
+    let fail = true;
+    const sent: string[] = [];
+    const { service, db } = await fixture(async (path, body) => {
+      if (path !== '/v1/sales/local-draft') throw new TypeError('offline');
+      const id = String(body.sale_id);
+      rejectedId ??= id;
+      sent.push(id);
+      if (id === rejectedId && fail)
+        return new Response(
+          JSON.stringify({ error_code: 'PRODUCT_NOT_ACTIVE' }),
+          { status: 422 },
+        );
+      return response({
+        sale: { ...db.sale(ids.session, id)!.sale, version: 1 },
+      });
+    });
+    const first = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, first.id)?.error).toBe('PRODUCT_NOT_ACTIVE'),
+    );
+    await service.handle({
+      type: 'transition',
+      action: 'hold',
+      saleId: first.id,
+    });
+    const second = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, second.id)?.syncedRevision).toBe(1),
+    );
+    expect(db.sale(ids.session, first.id)?.error).toBe('PRODUCT_NOT_ACTIVE');
+    const count = sent.length;
+    await service.handle({ type: 'retry' });
+    expect(sent).toHaveLength(count); // generic status/payment check cannot clear every failed receipt
+    fail = false;
+    await service.handle({ type: 'retrySale', saleId: first.id });
+    expect(db.sale(ids.session, first.id)?.syncedRevision).toBe(2);
+    expect(db.sale(ids.session, first.id)?.error).toBeNull();
+  });
+  it.each([false, true])(
+    'reports active outbox work separately from its durable queue (failure=%s)',
+    async (fails) => {
+      let finish!: (response: Response) => void;
+      const { service, db } = await fixture(async (path) => {
+        if (path === '/v1/sales/local-draft')
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        throw new TypeError('offline');
+      });
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        sessionId: ids.session,
+        syncing: false,
+        pending: 0,
+      });
+      const sale = (await service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      })) as SaleResponse;
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        syncing: true,
+        pending: 1,
+      });
+      finish(
+        fails
+          ? new Response('{}', { status: 503 })
+          : response({
+              sale: { ...db.sale(ids.session, sale.id)!.sale, version: 1 },
+            }),
+      );
+      await vi.waitFor(async () =>
+        expect(await service.handle({ type: 'status' })).toMatchObject({
+          syncing: false,
+          pending: fails ? 1 : 0,
+        }),
+      );
+    },
+  );
   it.each([0, 25])(
     'initializes an existing active server session with a %s-hour register shift without a pre-seeded local grant',
     async (hours) => {
@@ -86,7 +391,8 @@ describe('local POS application service', () => {
           return response({ register_shift: profile.shift });
         if (url.endsWith('/v1/sales/current')) return response({ sale: null });
         if (url.endsWith('/v1/sales/held')) return response({ sales: [] });
-        if (url.endsWith('/v1/pos/catalog')) return response({ products: [] });
+        if (url.includes('/v1/pos/catalog/page?'))
+          return response({ products: [], next_cursor: null });
         return response({ categories: [], meta: { has_more: false } });
       });
       const service = new PosService(db, 'https://api.test', vi.fn(), fetcher);
@@ -390,7 +696,8 @@ describe('local POS application service', () => {
           sale: {
             ...database.sales(ids.session)[0]!.sale,
             status: completed ? 'COMPLETED' : 'DRAFT',
-            fiscal_receipt: completed ? { status: 'FISCALIZED' } : null,
+            version: completed ? 2 : 1,
+            fiscal_receipt: completed ? fiscalReceiptFixture() : null,
           },
           retry_safe: false,
           replay_ready: false,
@@ -505,7 +812,7 @@ describe('local POS application service', () => {
             ...draft,
             status: 'COMPLETED',
             version: 2,
-            fiscal_receipt: { id: 'receipt' },
+            fiscal_receipt: fiscalReceiptFixture(),
           }
         : draft;
       if (path === '/v1/sales/local-draft')
@@ -528,7 +835,7 @@ describe('local POS application service', () => {
             ...draft,
             status: 'COMPLETED',
             version: 2,
-            fiscal_receipt: { id: 'receipt' },
+            fiscal_receipt: fiscalReceiptFixture(),
           },
           retry_safe: false,
           replay_ready: false,
@@ -572,13 +879,37 @@ describe('local POS application service', () => {
     fetcher.mockImplementation(() => new Promise<Response>(() => undefined));
     await expect(
       service.handle({ type: 'search', search: 'мол' }),
-    ).rejects.toMatchObject({ code: 'CATALOG_LOADING' });
+    ).resolves.toMatchObject({
+      products: [expect.objectContaining({ id: productFixture().id })],
+    });
     await expect(
       service.handle({
         type: 'execute',
         command: { type: 'scan', barcode: productFixture().barcode },
       }),
-    ).rejects.toMatchObject({ code: 'CATALOG_LOADING' });
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ product_id: productFixture().id })],
+    });
+  });
+
+  it('keeps the existing offline catalog usable when forced reauthorization loses the network', async () => {
+    const { service } = await fixture();
+    await expect(
+      service.connect('token', ids.register, true),
+    ).rejects.toMatchObject({ code: 'LOCAL_SESSION_UNAVAILABLE' });
+    await expect(
+      service.handle({ type: 'search', search: 'мол' }),
+    ).resolves.toMatchObject({
+      products: [expect.objectContaining({ id: ids.product })],
+    });
+    await expect(
+      service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      }),
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ product_id: ids.product })],
+    });
   });
 
   it('cannot edit or renew an expired offline authorization without the backend', async () => {
@@ -590,6 +921,74 @@ describe('local POS application service', () => {
         command: { type: 'scan', barcode: productFixture().barcode },
       }),
     ).rejects.toMatchObject({ code: 'LOCAL_SESSION_EXPIRED' });
+  });
+  it('continues cached scans while a missing barcode is being fetched', async () => {
+    const remote = {
+      ...productFixture(),
+      id: randomUUID(),
+      barcode: 'remote',
+      nkt: { ...productFixture().nkt!, gtin: null },
+      store_id: ids.store,
+    };
+    let finish!: (response: Response) => void;
+    const { service } = await fixture(async (path) => {
+      if (path.includes('/catalog/lookup?'))
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      throw new TypeError('offline');
+    });
+    const pending = service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: 'remote' },
+    });
+    await expect(
+      service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      }),
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ quantity: '1.000' })],
+    });
+    finish(response({ products: [remote] }));
+    const sale = (await pending) as SaleResponse;
+    expect(sale.items).toHaveLength(2);
+  });
+  it('does not add a late lookup result to a different checkout workspace', async () => {
+    const remote = {
+      ...productFixture(),
+      id: randomUUID(),
+      barcode: 'remote',
+      nkt: { ...productFixture().nkt!, gtin: null },
+      store_id: ids.store,
+    };
+    let finish!: (response: Response) => void;
+    const { service } = await fixture(async (path) => {
+      if (path.includes('/catalog/lookup?'))
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      throw new TypeError('offline');
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    const pending = service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: 'remote' },
+    });
+    const rejected = expect(pending).rejects.toMatchObject({
+      code: 'LOCAL_CONTEXT_CHANGED',
+    });
+    await service.handle({
+      type: 'transition',
+      action: 'hold',
+      saleId: sale.id,
+    });
+    finish(response({ products: [remote] }));
+    await rejected;
+    expect(await service.handle({ type: 'current' })).toBeNull();
   });
   it('accepts 100 ordered scans while the backend never replies', async () => {
     const { service, db } = await fixture(
@@ -638,6 +1037,11 @@ describe('local POS application service', () => {
     const record = db.sale(ids.session, first.id)!;
     expect(record.syncedRevision).toBe(1);
     expect(record.serverVersion).toBe(1);
+    await service.handle({ type: 'retry' });
+    expect(payloads).toHaveLength(2);
+    vi.spyOn(Date, 'now').mockReturnValue(
+      record.syncFailures!.draft!.nextAttemptAt! + 1,
+    );
     await service.handle({ type: 'retry' });
     expect(payloads[2]).toEqual(payloads[1]);
   });

@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { AppUpdateState } from '../../../../main/app-updater';
+import type { AppUpdateState } from '../../../../shared/desktop-contracts';
 import { StatusBarUpdateBadges } from './status-bar-update-badges';
 
 const updateState = (

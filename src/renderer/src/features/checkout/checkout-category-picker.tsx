@@ -18,6 +18,7 @@ import {
 } from '@renderer/common/components/ui/dialog';
 import { queryKeys } from '@renderer/common/constants';
 import { formatCash } from '@renderer/common/helpers/format-cash';
+import { LocalPosSyncBar } from '@renderer/features/local-pos';
 
 const PAGE_SIZE = 100;
 
@@ -123,6 +124,7 @@ export function CheckoutCategoryPicker({
             чек.
           </DialogDescription>
         </DialogHeader>
+        <LocalPosSyncBar />
 
         <nav
           aria-label="Путь категории"

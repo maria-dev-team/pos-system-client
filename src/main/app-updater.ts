@@ -7,23 +7,9 @@ import {
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type AppUpdateState = Readonly<{
-  status:
-    | 'checking'
-    | 'downloading'
-    | 'download-failed'
-    | 'restarting'
-    | 'current'
-    | 'unchecked'
-    | 'outdated';
-  currentVersion: string;
-  availableVersion: string | null;
-  downloadPercent: number | null;
-  downloadTransferred: number | null;
-  downloadTotal: number | null;
-  attempt: number;
-  restartAt: number | null;
-}>;
+import type { AppUpdateState } from '../shared/desktop-contracts';
+
+export type { AppUpdateState } from '../shared/desktop-contracts';
 
 const GET_STATE_CHANNEL = 'app-updater:get-state';
 const RETRY_DOWNLOAD_CHANNEL = 'app-updater:retry-download';

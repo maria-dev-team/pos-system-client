@@ -1,4 +1,31 @@
+import type { FiscalReceiptResponse } from '../api/responses/sale.response';
 import type { PosProfile, ProductResponse } from './contracts';
+
+export function fiscalReceiptFixture(total = '650.00'): FiscalReceiptResponse {
+  return {
+    address: 'Test store',
+    buyer_bin_iin: null,
+    cashbox_unique_number: 'test-cashbox',
+    currency: 'KZT',
+    fiscal_sign: 'test-sign',
+    fiscalized_at: new Date().toISOString(),
+    offline: false,
+    ofd_name: 'Test OFD',
+    ofd_website: '',
+    operation_type: 'SALE',
+    print_url: null,
+    provider: 'WEBKASSA',
+    qr_url: '',
+    receipt_number: '1',
+    registration_number: 'test-registration',
+    shift_number: '1',
+    status: 'FISCALIZED',
+    taxpayer_bin_iin: '000000000000',
+    taxpayer_name: 'Test merchant',
+    total,
+    vat_total: '0.00',
+  };
+}
 
 export const ids = {
   organization: '11111111-1111-4111-8111-111111111111',
