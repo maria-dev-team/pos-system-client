@@ -42,6 +42,7 @@ const spawn = dependencies.spawn;
 const unlink = dependencies.unlink;
 const writeFile = dependencies.writeFile;
 const receiptJobPath = join('/tmp', 'maria-receipt-job.bin');
+const WINDOWS_COMPILE_TIMEOUT_MS = 30_000;
 
 const nextChild = (
   exitCode: number | null,
@@ -306,7 +307,7 @@ describe('sendRawReceipt', () => {
 
   it.skipIf(process.platform !== 'win32')(
     'compiles the exact production Winspool helper without submitting a job',
-    async () => {
+    async ({ onTestFinished }) => {
       const { execFile } =
         await vi.importActual<typeof import('node:child_process')>(
           'node:child_process',
@@ -320,7 +321,7 @@ describe('sendRawReceipt', () => {
       );
 
       await new Promise<void>((resolve, reject) => {
-        execFile(
+        const child = execFile(
           powershell,
           [
             '-NoProfile',
@@ -337,11 +338,30 @@ describe('sendRawReceipt', () => {
               MARIA_RECEIPT_PATH: '',
               MARIA_RECEIPT_PRINTER: '',
             },
+            // Cold PowerShell/.NET compilation can exceed Vitest's 5s default
+            // on Windows CI. Stop a stuck process before the test deadline.
+            timeout: WINDOWS_COMPILE_TIMEOUT_MS,
+            killSignal: 'SIGKILL',
             windowsHide: true,
           },
-          (error) => (error ? reject(error) : resolve()),
+          (error, _stdout, stderr) => {
+            if (error)
+              reject(
+                new Error(
+                  `Winspool helper compilation failed: ${stderr.trim() || error.message}`,
+                  { cause: error },
+                ),
+              );
+            else resolve();
+          },
         );
+        onTestFinished(() => {
+          if (child.exitCode === null && child.signalCode === null)
+            child.kill('SIGKILL');
+        });
+        child.stdin?.end();
       });
     },
+    WINDOWS_COMPILE_TIMEOUT_MS + 10_000,
   );
 });
