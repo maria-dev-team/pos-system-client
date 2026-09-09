@@ -1,6 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AxiosError, type AxiosResponse } from 'axios';
 import { Toaster } from 'sonner';
@@ -416,6 +416,7 @@ afterEach(() => {
   delete window.appUpdates;
   delete window.receiptPrinter;
   delete window.windowControls;
+  delete window.camera;
 });
 
 describe('DukenAI POS authorization flow', () => {
@@ -769,6 +770,128 @@ describe('DukenAI POS authorization flow', () => {
       'membership-1',
       'store-1',
     );
+  });
+
+  it('keeps camera disabled during organization selection and stops it when changing organization', async () => {
+    const user = userEvent.setup();
+    const setContext = vi.fn();
+    window.camera = { setContext };
+    api.refreshTokens.mockResolvedValue({ access_token: 'organization-token' });
+    api.getAuthContext.mockResolvedValue({ ...contextResponse, storeId: null });
+    const { router } = renderApp();
+
+    await screen.findByRole('heading', { name: 'Выберите магазин' });
+    expect(setContext.mock.calls.every(([context]) => context === null)).toBe(
+      true,
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Выбрать другую организацию' }),
+    );
+    await screen.findByRole('heading', { name: 'Выберите организацию' });
+    expect(setContext).toHaveBeenLastCalledWith(null);
+
+    api.selectContext.mockResolvedValue({ access_token: 'store-token' });
+    api.getAuthContext.mockResolvedValue(contextResponse);
+    await user.click(screen.getByRole('button', { name: /Maria/ }));
+    await user.click(await screen.findByRole('button', { name: /Main store/ }));
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'store-token',
+        registerId: null,
+      }),
+    );
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    );
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    expect(setContext).toHaveBeenLastCalledWith({
+      accessToken: 'store-token',
+      registerId: 'register-1',
+    });
+    await router.navigate({ to: '/select-organization' });
+    await screen.findByRole('heading', { name: 'Выберите организацию' });
+    await waitFor(() => expect(setContext).toHaveBeenLastCalledWith(null));
+    await user.click(screen.getByRole('button', { name: /Maria/ }));
+    await user.click(await screen.findByRole('button', { name: /Main store/ }));
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'store-token',
+        registerId: null,
+      }),
+    );
+  });
+
+  it('syncs the camera register from navigation and clears it when leaving the register', async () => {
+    const user = userEvent.setup();
+    const setContext = vi.fn();
+    window.camera = { setContext };
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    const { router } = renderApp();
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+    await router.navigate({
+      to: '/checkout',
+      search: { registerId: 'register-1', registerShiftId: 'register-shift-1' },
+    });
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'restored-token',
+        registerId: 'register-1',
+      }),
+    );
+
+    act(() => useAuthStore.getState().setAccessToken('rotated-token'));
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'rotated-token',
+        registerId: 'register-1',
+      }),
+    );
+    api.getCurrentRegisterShift.mockResolvedValue({
+      ...registerShiftResponse,
+      register_id: 'register-2',
+    });
+    api.getCurrentCashierSession.mockResolvedValue({
+      ...cashierSessionResponse,
+      register_id: 'register-2',
+    });
+    await router.navigate({
+      to: '/checkout',
+      search: { registerId: 'register-2', registerShiftId: 'register-shift-1' },
+    });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'rotated-token',
+        registerId: 'register-2',
+      }),
+    );
+    await router.navigate({ to: '/select-register-shift' });
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'rotated-token',
+        registerId: null,
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Сменить магазин' }));
+    await screen.findByRole('heading', { name: 'Выберите магазин' });
+    await waitFor(() => expect(setContext).toHaveBeenLastCalledWith(null));
+    setContext.mockClear();
+    act(() => useAuthStore.getState().setAccessToken('another-token'));
+    await waitFor(() => expect(setContext).toHaveBeenCalledWith(null));
+    expect(setContext.mock.calls.every(([context]) => context === null)).toBe(
+      true,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Выйти' }));
+    await screen.findByRole('heading', { name: 'Вход в DukenAI POS' });
+    expect(setContext).toHaveBeenLastCalledWith(null);
   });
 
   it('restores a complete backend context without auto-selecting one shift', async () => {

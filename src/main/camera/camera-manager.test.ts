@@ -24,6 +24,38 @@ type CameraManagerInternals = {
 };
 
 describe('CameraManager', () => {
+  it.each(['logout', 'shutdown'] as const)(
+    'does not apply a late config or restart polling after %s',
+    async (action) => {
+      vi.useFakeTimers();
+      let resolveConfig!: (value: CameraConfig) => void;
+      const getConfig = vi.fn(
+        () =>
+          new Promise<CameraConfig>((resolve) => {
+            resolveConfig = resolve;
+          }),
+      );
+      const manager = new CameraManager({
+        getConfig,
+      } as unknown as CameraApiClient);
+      const replaceCamera = vi
+        .spyOn(manager as unknown as CameraManagerInternals, 'replaceCamera')
+        .mockResolvedValue(undefined);
+      try {
+        manager.setContext({ accessToken: 'token', registerId: 'register-1' });
+        if (action === 'logout') manager.setContext(null);
+        else await manager.shutdown();
+        resolveConfig(camera);
+        await vi.advanceTimersByTimeAsync(20 * 60_000);
+        expect(replaceCamera).not.toHaveBeenCalledWith(camera);
+        expect(getConfig).toHaveBeenCalledOnce();
+      } finally {
+        await manager.shutdown();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('retries exactly after backoff when a request fails between minute ticks', async () => {
     vi.useFakeTimers();
     const getConfig = vi
@@ -160,32 +192,39 @@ describe('CameraManager', () => {
     }
   });
 
-  it('backs off failed config requests and restores normal refresh after recovery', async () => {
-    vi.useFakeTimers();
-    const getConfig = vi
-      .fn()
-      .mockRejectedValue(new Error('Camera config request failed: 429'));
-    const manager = new CameraManager({
-      getConfig,
-    } as unknown as CameraApiClient);
-    try {
-      manager.setContext({ accessToken: 'token', registerId: null });
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(getConfig).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(getConfig).toHaveBeenCalledTimes(2);
-      await vi.advanceTimersByTimeAsync(180_000);
-      expect(getConfig).toHaveBeenCalledTimes(2);
-      getConfig.mockResolvedValue(null);
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(getConfig).toHaveBeenCalledTimes(3);
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(getConfig).toHaveBeenCalledTimes(4);
-    } finally {
-      await manager.shutdown();
-      vi.useRealTimers();
-    }
-  });
+  it.each([401, 403, 429, 500])(
+    'backs off HTTP %s and restores normal refresh after recovery',
+    async (status) => {
+      vi.useFakeTimers();
+      const getConfig = vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status }));
+      vi.stubGlobal('fetch', getConfig);
+      const manager = new CameraManager(
+        new CameraApiClient('https://api.example.test'),
+      );
+      try {
+        manager.setContext({ accessToken: 'token', registerId: null });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(getConfig).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(getConfig).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(getConfig).toHaveBeenCalledTimes(2);
+        getConfig.mockImplementation(
+          async () => new Response(JSON.stringify({ data: { camera: null } })),
+        );
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(getConfig).toHaveBeenCalledTimes(3);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(getConfig).toHaveBeenCalledTimes(4);
+      } finally {
+        await manager.shutdown();
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('serializes concurrent camera teardown and stops the buffer once', async () => {
     let releaseStop: () => void = () => undefined;
