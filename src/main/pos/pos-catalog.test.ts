@@ -163,6 +163,7 @@ it('backs off after a rejected page and preserves both the previous cache and th
   expect(Date.parse(catalog.status().catalogRetryAt!)).toBeGreaterThan(
     Date.now(),
   );
+  expect(catalog.status().catalogNextRefreshAt).toBeNull();
 });
 
 it.each(['store', 'barcode', 'oversized'] as const)(
@@ -305,6 +306,9 @@ it('publishes bootstrap progress then only polls changes, even after five minute
     catalogPhase: null,
     catalogRetryAt: null,
   });
+  expect(Date.parse(catalog.status().catalogNextRefreshAt!)).toBeGreaterThan(
+    Date.now(),
+  );
   expect(db.get(`catalog:${scope}`)).toBeTruthy();
   states.length = 0;
   await catalog.refresh(true);

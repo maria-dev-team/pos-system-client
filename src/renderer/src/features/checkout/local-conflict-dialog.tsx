@@ -68,7 +68,7 @@ export function LocalConflictDialog({ saleId }: { saleId: string }) {
           <DialogHeader>
             <DialogTitle>Чек изменён на другой кассе</DialogTitle>
             <DialogDescription>
-              Сравните товары и суммы перед выбором версии. Локальная версия
+              Сравните товары и суммы перед выбором версии. Версия на кассе
               сохраняется в резервной копии.
             </DialogDescription>
           </DialogHeader>
@@ -82,7 +82,7 @@ export function LocalConflictDialog({ saleId }: { saleId: string }) {
               <div className="grid gap-4 sm:grid-cols-2">
                 {[
                   ['На этой кассе', comparison.local],
-                  ['На сервере', comparison.remote],
+                  ['В системе', comparison.remote],
                 ].map(([label, value]) => {
                   const sale = typeof value === 'object' ? value : null;
                   return (
@@ -115,8 +115,8 @@ export function LocalConflictDialog({ saleId }: { saleId: string }) {
               {comparison.remote &&
               comparison.remote.id !== comparison.local.id ? (
                 <p>
-                  При сохранении локальной версии она будет отложена, а
-                  серверный чек — открыт для работы.
+                  При сохранении версии с этой кассы она будет отложена, а
+                  выбранный чек — открыт для работы.
                 </p>
               ) : null}
               <div className="flex gap-3">
@@ -128,14 +128,14 @@ export function LocalConflictDialog({ saleId }: { saleId: string }) {
                   }
                   onClick={() => void resolve('local')}
                 >
-                  Сохранить локальную версию
+                  Сохранить версию с этой кассы
                 </Button>
                 <Button
                   variant="ghost"
                   disabled={busy || !comparison.remote}
                   onClick={() => void resolve('server')}
                 >
-                  Использовать серверную версию
+                  Использовать версию из системы
                 </Button>
               </div>
             </>
