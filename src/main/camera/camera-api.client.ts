@@ -16,6 +16,19 @@ type CaptureJobResponse = {
   data: { job: CaptureJob | null; server_time: string };
 };
 
+export class CameraConfigRateLimitError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(retryAfter: string | null) {
+    super('Camera config request failed: 429');
+    const seconds = Number(retryAfter);
+    const delay = Number.isFinite(seconds)
+      ? seconds * 1_000
+      : Date.parse(retryAfter ?? '') - Date.now();
+    this.retryAfterMs = Number.isFinite(delay) ? Math.max(0, delay) : 0;
+  }
+}
+
 export class CameraApiClient {
   constructor(private readonly apiUrl: string) {}
 
@@ -29,6 +42,8 @@ export class CameraApiClient {
       headers: { Authorization: `Bearer ${accessToken}` },
       signal: AbortSignal.timeout(15_000),
     });
+    if (response.status === 429)
+      throw new CameraConfigRateLimitError(response.headers.get('Retry-After'));
     if (!response.ok)
       throw new Error(`Camera config request failed: ${response.status}`);
     const body = (await response.json()) as CameraConfigResponse;
