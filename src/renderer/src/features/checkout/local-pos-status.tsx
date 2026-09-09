@@ -1,16 +1,46 @@
 import { Button } from '@renderer/common/components/ui/button';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { SyncIndicator } from '@renderer/features/local-pos';
-import { syncIndicators } from '@renderer/features/local-pos';
+import { syncAlerts } from '@renderer/features/local-pos';
 
 import { LocalConflictDialog } from './local-conflict-dialog';
 import { useLocalPosStatus } from './use-local-pos-status';
+
+const outboxFailureMessages: Record<string, string> = {
+  PRODUCT_NOT_ACTIVE: 'Товар недоступен.',
+  PRODUCT_NOT_FOUND: 'Один из товаров больше недоступен.',
+  SALE_DRAFT_ALREADY_EXISTS: 'На кассе уже открыт другой чек.',
+  SALE_NOT_EDITABLE: 'Чек уже завершён или отложен.',
+  SALE_VERSION_CONFLICT: 'Чек был изменён. Проверьте его перед отправкой.',
+};
+const outboxFailureMessage = (code: string): string =>
+  outboxFailureMessages[code] ??
+  'Не удалось отправить чек. Повторите попытку или обратитесь за помощью.';
 
 export function LocalPosStatus({ sessionId }: { sessionId: string }) {
   const { state, busy, refresh, review, retrySale, active } =
     useLocalPosStatus(sessionId);
   if (!active || !state) return null;
   const reviews = state.paymentReviews ?? [];
+  const indicators = syncAlerts(state).filter(
+    ({ id }) => id === 'catalog' || (id === 'receipts' && !state.error),
+  );
+  const showOutbox = Boolean(
+    state.outbox?.some((item) => item.code) ||
+    (!state.connected && state.pending),
+  );
+  const needsAttention = Boolean(
+    indicators.length ||
+    state.paymentPending ||
+    state.authorizationRequired ||
+    state.fiscalShiftExpired ||
+    state.error ||
+    showOutbox ||
+    !state.paymentReviews ||
+    reviews.length ||
+    state.conflicts.length,
+  );
+  if (!needsAttention) return null;
   return (
     <section
       aria-label="Состояние кассы"
@@ -19,15 +49,13 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
       <div className="flex items-start justify-between gap-3">
         <div role="status" className="space-y-1">
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            {syncIndicators(state)
-              .filter(({ id }) => ['catalog', 'receipts'].includes(id))
-              .map((indicator) => (
-                <SyncIndicator
-                  key={indicator.id}
-                  indicator={indicator}
-                  detailed
-                />
-              ))}
+            {indicators.map((indicator) => (
+              <SyncIndicator
+                key={indicator.id}
+                indicator={indicator}
+                detailed
+              />
+            ))}
           </div>
           {state.paymentPending ? (
             <p>
@@ -35,7 +63,11 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
               проверки и продолжить работу.
             </p>
           ) : null}
-          {state.error ? <p className="text-warning">{state.error}</p> : null}
+          {state.error ? (
+            <p className="text-warning">
+              Не удалось отправить некоторые чеки. Они сохранены на кассе.
+            </p>
+          ) : null}
           {state.fiscalShiftExpired ? (
             <p className="text-warning">
               Смена кассы открыта больше 24 часов. Рекомендуем закрыть её и
@@ -56,7 +88,7 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
               : 'Повторить проверку'}
         </Button>
       </div>
-      {state.outbox?.length ? (
+      {showOutbox && state.outbox?.length ? (
         <details>
           <summary className="cursor-pointer">
             Очередь отправки: {state.pending}
@@ -72,21 +104,17 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
                       ? 'Перенос оплаты на проверку'
                       : 'Событие отмены'}
                 </p>
-                <p className="break-all text-xs text-muted-foreground">
-                  {item.saleId}
-                </p>
                 {item.code ? (
                   <p className="text-warning">
-                    {item.code}: {item.message ?? 'Нужна проверка чека.'}
+                    {outboxFailureMessage(item.code)}
                   </p>
                 ) : (
                   <p>Ожидает отправки</p>
                 )}
                 {item.nextAttemptAt ? (
                   <p>
-                    Автоповтор не ранее{' '}
+                    Следующая попытка отправки — не раньше{' '}
                     {new Date(item.nextAttemptAt).toLocaleTimeString('ru-RU')}.
-                    Ошибок подряд: {item.attempts}.
                   </p>
                 ) : null}
                 {item.code && item.retryable ? (
@@ -132,9 +160,6 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
                     {item.canResume
                       ? 'Можно вернуться к чеку и повторить оплату'
                       : 'Ожидает подтверждения'}
-                  </p>
-                  <p className="break-all text-xs text-muted-foreground">
-                    {item.saleId}
                   </p>
                 </div>
                 <div className="flex gap-2">

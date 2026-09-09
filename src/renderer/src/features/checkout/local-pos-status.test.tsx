@@ -74,6 +74,22 @@ afterEach(() => {
 });
 
 describe('checkout warnings and recovery actions', () => {
+  it('does not reserve workspace space for a healthy background synchronization', async () => {
+    const state = makeStatus();
+    state.catalogReady = false;
+    state.catalogSyncing = true;
+    state.pending = 2;
+    state.paymentPending = false;
+    state.paymentReviews = [];
+    state.fiscalShiftExpired = false;
+    state.error = null;
+    mount(state);
+    await waitFor(() =>
+      expect(mocks.call).toHaveBeenCalledWith({ type: 'status' }),
+    );
+    expect(screen.queryByLabelText('Состояние кассы')).toBeNull();
+  });
+
   it('shows an outbox rejection separately from payment review and retries only the selected receipt', async () => {
     const state = makeStatus();
     const saleId = '77777777-7777-4777-8777-777777777777';
@@ -92,9 +108,8 @@ describe('checkout warnings and recovery actions', () => {
     ];
     mount(state);
     await screen.findByText('Очередь отправки: 1');
-    expect(
-      screen.getByText('PRODUCT_NOT_ACTIVE: Товар недоступен.'),
-    ).toBeTruthy();
+    expect(screen.getByText('Товар недоступен.')).toBeTruthy();
+    expect(screen.queryByText(/PRODUCT_NOT_ACTIVE/)).toBeNull();
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Повторить отправку чека',
@@ -114,7 +129,11 @@ describe('checkout warnings and recovery actions', () => {
     mount(makeStatus());
     const button = await screen.findByRole('button', { name: 'Новый чек' });
     expect(button.hasAttribute('disabled')).toBe(false);
-    expect(screen.getByText('Предупреждение').tagName).toBe('P');
+    expect(
+      screen.getByText(
+        'Не удалось отправить некоторые чеки. Они сохранены на кассе.',
+      ).tagName,
+    ).toBe('P');
     expect(
       screen.getByText(/Смена кассы открыта больше 24 часов/).tagName,
     ).toBe('P');
@@ -165,7 +184,7 @@ describe('checkout warnings and recovery actions', () => {
     );
   });
 
-  it('offers explicit return to the receipt after the backend confirms a safe retry', async () => {
+  it('offers explicit return to the receipt after a safe retry is confirmed', async () => {
     const state = makeStatus();
     state.paymentPending = false;
     state.paymentReviews[0] = {

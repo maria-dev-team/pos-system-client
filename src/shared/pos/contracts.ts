@@ -179,6 +179,7 @@ export type PosStatus = {
   pending: number;
   catalogReady: boolean;
   catalogUpdatedAt: string | null;
+  catalogNextRefreshAt?: string | null;
   catalogSyncing?: boolean;
   catalogLoaded?: number;
   catalogError?: string | null;

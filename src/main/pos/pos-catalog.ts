@@ -132,6 +132,7 @@ export class PosCatalog {
     | 'catalogRevision'
     | 'catalogPhase'
     | 'catalogRetryAt'
+    | 'catalogNextRefreshAt'
     | 'productLookups'
     | 'catalogMode'
     | 'catalogWaiting'
@@ -148,6 +149,10 @@ export class PosCatalog {
       catalogPhase: this.phase,
       catalogRetryAt:
         this.error && !this.job && this.nextRefresh
+          ? new Date(this.nextRefresh).toISOString()
+          : null,
+      catalogNextRefreshAt:
+        !this.error && !this.job && this.nextRefresh
           ? new Date(this.nextRefresh).toISOString()
           : null,
       productLookups: this.jobs.size + Number(!!this.searchJob),
