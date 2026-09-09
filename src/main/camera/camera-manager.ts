@@ -2,7 +2,10 @@ import { app } from 'electron';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
-import { CameraApiClient } from './camera-api.client';
+import {
+  CameraApiClient,
+  CameraConfigRateLimitError,
+} from './camera-api.client';
 import type {
   CameraAuthContext,
   CameraConfig,
@@ -13,6 +16,7 @@ import { resolveFfmpegPath } from './ffmpeg-path';
 import { RollingCameraBuffer } from './rolling-camera-buffer';
 
 const CONFIG_REFRESH_MS = 60_000;
+const CONFIG_MAX_RETRY_MS = 15 * 60_000;
 const CAPTURE_POLL_MS = 3_000;
 const BUFFER_SECONDS = 90;
 const CLIP_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -32,6 +36,8 @@ export class CameraManager {
   private refreshTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private refreshGeneration = 0;
+  private configRetryDelayMs = CONFIG_REFRESH_MS;
+  private refreshingGeneration: number | null = null;
   private cameraReplacement: Promise<void> = Promise.resolve();
   private readonly bufferRoot = join(app.getPath('userData'), 'camera-buffer');
   private readonly clipsRoot = join(app.getPath('userData'), 'camera-clips');
@@ -39,8 +45,17 @@ export class CameraManager {
   constructor(private readonly api: CameraApiClient) {}
 
   setContext(context: CameraAuthContext | null): void {
+    if (
+      context &&
+      (this.refreshTimer ||
+        this.refreshingGeneration === this.refreshGeneration) &&
+      context.accessToken === this.authContext?.accessToken &&
+      context.registerId === this.authContext?.registerId
+    )
+      return;
     this.refreshGeneration += 1;
-    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.configRetryDelayMs = CONFIG_REFRESH_MS;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.captureTimer) clearInterval(this.captureTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.refreshTimer = null;
@@ -54,10 +69,6 @@ export class CameraManager {
     void this.pruneBufferRoot();
     const generation = this.refreshGeneration;
     void this.refresh(generation);
-    this.refreshTimer = setInterval(
-      () => void this.refresh(generation),
-      CONFIG_REFRESH_MS,
-    );
     this.captureTimer = setInterval(
       () => void this.pollCaptureJob(generation),
       CAPTURE_POLL_MS,
@@ -71,7 +82,7 @@ export class CameraManager {
 
   async shutdown(): Promise<void> {
     this.refreshGeneration += 1;
-    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.captureTimer) clearInterval(this.captureTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.refreshTimer = null;
@@ -83,17 +94,43 @@ export class CameraManager {
 
   private async refresh(generation: number): Promise<void> {
     const context = this.authContext;
-    if (!context) return;
+    if (
+      !context ||
+      generation !== this.refreshGeneration ||
+      this.refreshingGeneration === generation
+    )
+      return;
+    this.refreshingGeneration = generation;
+    let delay = CONFIG_REFRESH_MS;
     try {
       const camera = await this.api.getConfig(
         context.accessToken,
         context.registerId,
       );
       if (generation !== this.refreshGeneration) return;
+      this.configRetryDelayMs = CONFIG_REFRESH_MS;
       await this.replaceCamera(camera);
-    } catch {
+    } catch (error) {
       // Keep an already-running local buffer alive during backend outages.
+      if (generation === this.refreshGeneration) {
+        this.configRetryDelayMs = Math.min(
+          this.configRetryDelayMs * 2,
+          CONFIG_MAX_RETRY_MS,
+        );
+        delay = Math.max(
+          this.configRetryDelayMs,
+          error instanceof CameraConfigRateLimitError ? error.retryAfterMs : 0,
+        );
+      }
     } finally {
+      if (this.refreshingGeneration === generation)
+        this.refreshingGeneration = null;
+      if (generation === this.refreshGeneration) {
+        this.refreshTimer = setTimeout(
+          () => void this.refresh(generation),
+          delay,
+        );
+      }
       void this.pruneBufferRoot();
       void this.flushStatus();
     }
