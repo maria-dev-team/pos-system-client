@@ -2,9 +2,9 @@ import { Button } from '@renderer/common/components/ui/button';
 
 import { useLocalPosSync } from './local-pos-sync-context';
 import { SyncIndicator } from './sync-indicator';
-import { syncIndicators } from './sync-indicators';
+import { syncNotices } from './sync-indicators';
 
-/** Always mounted above the routed workspace, including history and returns. */
+/** Compact global status: active work and warnings, without permanent success rows. */
 export function LocalPosSyncBar() {
   const { active, state, issue, isChecking, refreshStatus } = useLocalPosSync();
   if (!active) return null;
@@ -17,19 +17,13 @@ export function LocalPosSyncBar() {
         },
       ]
     : state
-      ? syncIndicators(state)
-      : [
-          {
-            id: 'loading',
-            tone: 'working' as const,
-            label: 'Проверяем синхронизацию…',
-            detail: 'Получаем состояние локального хранилища.',
-          },
-        ];
+      ? syncNotices(state)
+      : [];
+  if (!indicators.length) return null;
   return (
     <section
       aria-label="Синхронизация кассы"
-      className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-1.5 border-b border-border bg-card px-4 py-2 sm:px-5"
+      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-card px-4 py-1.5 sm:px-5"
     >
       {indicators.map((indicator) => (
         <SyncIndicator

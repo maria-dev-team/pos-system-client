@@ -35,6 +35,7 @@ const idle = (): PosStatus => ({
   connected: true,
   catalogReady: true,
   catalogUpdatedAt: '2026-09-08T01:00:00.000Z',
+  catalogNextRefreshAt: '2026-09-08T01:00:20.000Z',
   catalogRevision: 'revision-1',
   catalogSyncing: false,
   syncing: false,
@@ -99,12 +100,20 @@ function mount() {
   const result = render(view(true, 'Продажи'));
   return { client, result, view };
 }
+const waitForStatusRead = () =>
+  waitFor(() =>
+    expect(
+      mocks.call.mock.calls.some(([request]) => request.type === 'status'),
+    ).toBe(true),
+  );
 
 it.each(['new-cart', 'new-revision', 'completed'] as const)(
   'does not overwrite %s with a stale worker current snapshot',
   async (mode) => {
     const { client } = mount();
-    await screen.findByText('Каталог: синхронизирован');
+    await waitForStatusRead();
+    expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
+    expect(screen.getByText(/следующая проверка в/)).toBeTruthy();
     const key = queryKeys.sales.current(ids.session);
     const original = { id: 'cart-1', local_revision: 1 } as SaleResponse;
     client.setQueryData(key, original);
@@ -133,7 +142,7 @@ it.each(['new-cart', 'new-revision', 'completed'] as const)(
   },
 );
 
-it('keeps all concurrent operations visible without progress percentages or disabling controls', async () => {
+it('keeps only useful background indicators in the compact banner without disabling controls', async () => {
   state = {
     ...state,
     catalogSyncing: true,
@@ -147,19 +156,18 @@ it('keeps all concurrent operations visible without progress percentages or disa
     paymentPending: true,
   };
   mount();
-  const catalog = await screen.findByRole('progressbar', {
-    name: /Каталог: сохраняем/,
+  await screen.findByText('Проверьте оплату');
+  const catalog = screen.getByRole('progressbar', {
+    name: /Обновляем каталог/,
   });
   expect(catalog.textContent).toMatch(/97\s001/);
   expect(catalog.hasAttribute('aria-valuenow')).toBe(false);
   expect(
-    screen.getByRole('progressbar', { name: 'Чеки: отправляем · 3' }),
+    screen.getByRole('progressbar', { name: 'Отправляем чеки · 3' }),
   ).toBeTruthy();
-  expect(
-    screen.getByRole('progressbar', { name: 'Поиск на сервере · 2' }),
-  ).toBeTruthy();
-  expect(screen.getByText('Категории: загружаем')).toBeTruthy();
-  expect(screen.getByText('Оплаты: проверка')).toBeTruthy();
+  expect(screen.queryByText('Обновляем категории')).toBeNull();
+  expect(screen.queryByText('Ищем товар · 2')).toBeNull();
+  expect(screen.queryAllByRole('progressbar')).toHaveLength(2);
   expect(screen.getByRole('status').textContent).toContain(
     'Можно сканировать следующий товар',
   );
@@ -171,35 +179,45 @@ it('keeps all concurrent operations visible without progress percentages or disa
   expect(mocks.call).not.toHaveBeenCalledWith({ type: 'retry' });
 });
 
-it('keeps indicators across page switches and coalesces a burst of events into one status read', async () => {
+it('keeps a compact active indicator across page switches and coalesces a burst of events into one status read', async () => {
   const { result, view } = mount();
-  await screen.findByText('Каталог: синхронизирован');
+  await waitForStatusRead();
   result.rerender(view(true, 'История продаж'));
   expect(screen.getByLabelText('История продаж')).toBeTruthy();
-  expect(screen.getByLabelText('Синхронизация кассы')).toBeTruthy();
+  expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
   mocks.call.mockClear();
   state = { ...state, catalogSyncing: true, catalogLoaded: 250 };
   act(() => {
     for (let i = 0; i < 50; i++) notify();
   });
-  await screen.findByRole('progressbar', { name: /Каталог: загружаем/ });
+  await screen.findByRole('progressbar', {
+    name: 'Обновляем каталог · 250',
+  });
   expect(
     mocks.call.mock.calls.filter(([request]) => request.type === 'status'),
   ).toHaveLength(1);
   expect(window.localPos!.onChange).toHaveBeenCalledTimes(1);
   state = idle();
   act(() => notify());
-  await screen.findByText('Каталог: синхронизирован');
-  expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+  await waitFor(() =>
+    expect(
+      mocks.call.mock.calls.filter(([request]) => request.type === 'status'),
+    ).toHaveLength(2),
+  );
+  expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
 });
 
 it('does not invalidate product queries just because a lookup spinner changes', async () => {
   const { client } = mount();
-  await screen.findByText('Каталог: синхронизирован');
+  await waitForStatusRead();
   const invalidation = vi.spyOn(client, 'invalidateQueries');
   state = { ...state, productLookups: 1 };
   act(() => notify());
-  await screen.findByRole('progressbar', { name: 'Поиск на сервере · 1' });
+  expect((await screen.findByRole('status')).textContent).toContain(
+    'запросов: 1',
+  );
+  expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
+  expect(screen.queryByText('Ищем товар · 1')).toBeNull();
   expect(invalidation).not.toHaveBeenCalledWith({
     queryKey: queryKeys.products.all(),
   });
@@ -212,20 +230,25 @@ it('does not invalidate product queries just because a lookup spinner changes', 
   );
 });
 
-it('does not show stale success after IPC failure and recovers on the next event', async () => {
+it('shows an IPC failure only until the next successful status read', async () => {
   const { client } = mount();
-  await screen.findByText('Каталог: синхронизирован');
+  await waitForStatusRead();
+  expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
   mocks.call.mockRejectedValueOnce(new Error('worker unavailable'));
   await act(() => client.invalidateQueries({ queryKey: localPosStatusKey }));
-  await screen.findByText('Синхронизация: состояние неизвестно');
-  expect(screen.queryByText('Каталог: синхронизирован')).toBeNull();
+  await screen.findByText('Не удалось проверить синхронизацию');
+  expect(screen.queryByText(/^Каталог синхронизирован/)).toBeNull();
   act(() => notify());
-  await screen.findByText('Каталог: синхронизирован');
+  await waitFor(() =>
+    expect(screen.queryByText('Не удалось проверить синхронизацию')).toBeNull(),
+  );
+  expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
 });
 
-it('hides status on logout, unsubscribes, and does not show the previous session on login', async () => {
+it('hides warnings on logout, unsubscribes, and does not show the previous session warning on login', async () => {
+  state = { ...state, catalogError: 'Сервер занят' };
   const { result, view } = mount();
-  await screen.findByText('Каталог: синхронизирован');
+  await screen.findByText('Не удалось обновить каталог');
   result.rerender(view(false, 'Вход'));
   expect(screen.queryByLabelText('Синхронизация кассы')).toBeNull();
   expect(unsubscribe).toHaveBeenCalledTimes(1);
@@ -233,8 +256,9 @@ it('hides status on logout, unsubscribes, and does not show the previous session
     ...profileFixture(),
     session: { ...profileFixture().session, id: 'another-session' },
   });
+  state = idle();
   result.rerender(view(true, 'Другая смена'));
-  expect(screen.queryByText('Каталог: синхронизирован')).toBeNull();
+  expect(screen.queryByText('Не удалось обновить каталог')).toBeNull();
 });
 
 it('distinguishes paused catalog, offline queue, access problems and unconfirmed payments from success', () => {
@@ -248,14 +272,14 @@ it('distinguishes paused catalog, offline queue, access problems and unconfirmed
   });
   expect(indicators[0]).toMatchObject({
     tone: 'warning',
-    label: 'Каталог: пауза · 500',
+    label: 'Не удалось обновить каталог',
   });
-  expect(indicators[0]?.detail).toContain('Автоповтор не ранее');
+  expect(indicators[0]?.detail).toContain('Повторим попытку после');
   expect(indicators[1]).toMatchObject({
-    tone: 'waiting',
-    label: 'Чеки: в очереди · 2',
+    tone: 'warning',
+    label: 'Чеки ожидают отправки · 2',
   });
-  expect(indicators[1]?.detail).toContain('Локальный режим');
+  expect(indicators[1]?.detail).toContain('Нет связи');
   indicators = syncIndicators({
     ...idle(),
     pending: 2,
@@ -269,14 +293,14 @@ it('distinguishes paused catalog, offline queue, access problems and unconfirmed
   indicators = syncIndicators({ ...idle(), paymentPending: true });
   expect(indicators.some((item) => item.id === 'payments')).toBe(true);
   expect(indicators.find((item) => item.id === 'receipts')?.detail).toContain(
-    'Подтверждение оплаты проверяется отдельно',
+    'Неотправленных чеков нет',
   );
 });
 
 it.each([
-  [undefined, 'Синхронизация: требуется перезапуск POS'],
-  [null, 'Синхронизация: нет подключения к смене'],
-  [ids.register, 'Синхронизация: не совпадает смена'],
+  [undefined, 'Перезапустите POS'],
+  [null, 'Нет подключения к смене'],
+  [ids.register, 'Проверьте текущую смену'],
 ] as const)(
   'shows an actionable warning for session %s and a retry reads only status',
   async (sessionId, label) => {
@@ -285,13 +309,16 @@ it.each([
     await screen.findByText(label);
     expect(screen.queryByText('Проверяем синхронизацию…')).toBeNull();
     expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
-    expect(screen.getByText(/перезапустите|остановите/i)).toBeTruthy();
+    expect(
+      screen.getAllByText(/перезапустите|закройте/i).length,
+    ).toBeGreaterThan(0);
     state = idle();
     mocks.call.mockClear();
     fireEvent.click(
       screen.getByRole('button', { name: 'Повторить проверку статуса' }),
     );
-    await screen.findByText('Каталог: синхронизирован');
+    await waitFor(() => expect(screen.queryByText(label)).toBeNull());
+    expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
     expect(
       mocks.call.mock.calls.every(([request]) => request.type === 'status'),
     ).toBe(true);
@@ -307,20 +334,20 @@ it('does not read an unconnected worker, and starts a fresh status read as soon 
     mocks.profile.mockReturnValue(profileFixture());
     profileChanged();
   });
-  await screen.findByText('Каталог: синхронизирован');
-  expect(mocks.call).toHaveBeenCalledWith({ type: 'status' });
+  await waitFor(() =>
+    expect(mocks.call).toHaveBeenCalledWith({ type: 'status' }),
+  );
+  expect(screen.getByText(/^Каталог синхронизирован/)).toBeTruthy();
 });
 
 it('expires a hung read without blocking the workspace or accumulating new requests', async () => {
   vi.useFakeTimers();
   mocks.call.mockReturnValue(new Promise(() => {}));
   mount();
-  expect(screen.getByText('Проверяем синхронизацию…')).toBeTruthy();
+  expect(screen.queryByLabelText('Синхронизация кассы')).toBeNull();
   await act(() => vi.advanceTimersByTimeAsync(5001));
   expect(screen.queryByText('Проверяем синхронизацию…')).toBeNull();
-  expect(
-    screen.getByText('Синхронизация: локальный процесс не отвечает'),
-  ).toBeTruthy();
+  expect(screen.getByText('Не удалось проверить синхронизацию')).toBeTruthy();
   expect(
     screen
       .getByRole('button', { name: 'Следующий товар' })

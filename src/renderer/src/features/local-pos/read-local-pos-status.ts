@@ -35,6 +35,7 @@ const statusSchema = z.object({
   categoriesRevision: z.string().nullable().optional(),
   catalogReady: z.boolean(),
   catalogUpdatedAt: z.string().nullable(),
+  catalogNextRefreshAt: z.string().nullable().optional(),
   catalogSyncing: z.boolean().optional(),
   catalogLoaded: count.optional(),
   catalogMode: z.enum(['bootstrap', 'delta']).optional(),
@@ -68,22 +69,22 @@ function validateStatus(value: unknown, sessionId: string): PosStatus {
   if (!parsed.success)
     throw new PosError(
       'LOCAL_POS_STATUS_INVALID',
-      'Локальный процесс вернул некорректный статус. Полностью перезапустите POS; не удаляйте данные кассы.',
+      'Не удалось проверить состояние кассы. Полностью перезапустите POS. Данные чеков сохранятся.',
     );
   if (parsed.data.sessionId === undefined)
     throw new PosError(
       'LOCAL_POS_RESTART_REQUIRED',
-      'Локальный процесс использует старый формат статуса. Полностью остановите и запустите POS заново; обновления страницы недостаточно.',
+      'После обновления требуется перезапуск. Полностью закройте и снова запустите POS.',
     );
   if (parsed.data.sessionId === null)
     throw new PosError(
       'LOCAL_POS_SESSION_MISSING',
-      'Локальный процесс не подключён к смене. Перезапустите POS, чтобы восстановить подключение; не удаляйте данные кассы.',
+      'Не удалось восстановить подключение к текущей смене. Полностью перезапустите POS. Данные чеков сохранятся.',
     );
   if (parsed.data.sessionId !== sessionId)
     throw new PosError(
       'LOCAL_POS_SESSION_MISMATCH',
-      'Локальный процесс вернул статус другой смены. Перезапустите POS, чтобы восстановить подключение к текущей смене.',
+      'Открыта другая смена. Полностью перезапустите POS, чтобы вернуться к текущей смене.',
     );
   return parsed.data;
 }
@@ -113,7 +114,7 @@ export class LocalPosStatusReader {
         reject(
           new PosError(
             'LOCAL_POS_STATUS_TIMEOUT',
-            'Локальный процесс не ответил за 5 секунд. Статус синхронизации неизвестен. Проверка повторится автоматически; если ошибка сохраняется, полностью перезапустите POS.',
+            'Не удалось проверить синхронизацию. Повторим автоматически. Если сообщение не исчезает, полностью перезапустите POS.',
           ),
         );
       }, LOCAL_POS_STATUS_TIMEOUT_MS);
@@ -143,20 +144,20 @@ export function statusReadIssue(error: unknown): {
   detail: string;
 } {
   const labels: Record<string, string> = {
-    LOCAL_POS_STATUS_TIMEOUT: 'Синхронизация: локальный процесс не отвечает',
-    LOCAL_POS_RESTART_REQUIRED: 'Синхронизация: требуется перезапуск POS',
-    LOCAL_POS_SESSION_MISSING: 'Синхронизация: нет подключения к смене',
-    LOCAL_POS_SESSION_MISMATCH: 'Синхронизация: не совпадает смена',
-    LOCAL_POS_STATUS_INVALID: 'Синхронизация: некорректный статус',
+    LOCAL_POS_STATUS_TIMEOUT: 'Не удалось проверить синхронизацию',
+    LOCAL_POS_RESTART_REQUIRED: 'Перезапустите POS',
+    LOCAL_POS_SESSION_MISSING: 'Нет подключения к смене',
+    LOCAL_POS_SESSION_MISMATCH: 'Проверьте текущую смену',
+    LOCAL_POS_STATUS_INVALID: 'Не удалось проверить состояние кассы',
   };
   return {
     label:
       error instanceof PosError
-        ? (labels[error.code] ?? 'Синхронизация: состояние неизвестно')
-        : 'Синхронизация: состояние неизвестно',
+        ? (labels[error.code] ?? 'Не удалось проверить синхронизацию')
+        : 'Не удалось проверить синхронизацию',
     detail:
       error instanceof PosError
         ? error.message
-        : 'Не удалось получить состояние локального хранилища. Проверка повторится автоматически; не удаляйте данные кассы.',
+        : 'Повторим проверку автоматически. Если сообщение не исчезает, полностью перезапустите POS.',
   };
 }

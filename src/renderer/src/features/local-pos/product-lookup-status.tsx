@@ -14,8 +14,8 @@ export function ProductLookupStatus() {
         aria-hidden="true"
         className="size-4 animate-spin motion-reduce:animate-none"
       />
-      Ищем на сервере и сохраняем на кассе · запросов: {state.productLookups}.
-      Можно сканировать следующий товар.
+      Ищем товар · запросов: {state.productLookups}. Можно сканировать следующий
+      товар.
     </p>
   );
 }

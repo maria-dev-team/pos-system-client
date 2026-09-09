@@ -13,9 +13,18 @@ const dateTime = new Intl.DateTimeFormat('ru-RU', {
   hour: '2-digit',
   minute: '2-digit',
 });
+const time = new Intl.DateTimeFormat('ru-RU', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
 const timestamp = (value: string | null | undefined): string | null => {
   if (!value || !Number.isFinite(Date.parse(value))) return null;
   return dateTime.format(new Date(value));
+};
+const clockTime = (value: string | null | undefined): string | null => {
+  if (!value || !Number.isFinite(Date.parse(value))) return null;
+  return time.format(new Date(value));
 };
 
 /** Presentation only: do not infer completion from network availability or a loaded row count. */
@@ -23,125 +32,150 @@ export function syncIndicators(state: PosStatus): SyncIndicator[] {
   const loaded = count.format(state.catalogLoaded ?? 0);
   const updated = timestamp(state.catalogUpdatedAt);
   const retry = timestamp(state.catalogRetryAt);
+  const nextRefresh = clockTime(state.catalogNextRefreshAt);
   const catalog: SyncIndicator = state.catalogSyncing
     ? {
         id: 'catalog',
         tone: 'working',
-        label: `Каталог: ${state.catalogMode === 'delta' ? 'проверяем изменения' : state.catalogPhase === 'finalizing' ? 'завершаем' : state.catalogPhase === 'saving' ? 'сохраняем' : 'загружаем'} · ${loaded}`,
-        detail: `Обработано ${state.catalogMode === 'delta' ? 'изменений' : 'товаров за начальную загрузку'}: ${loaded}. Синхронизация идёт в фоне, можно продолжать работу.`,
+        label: `Обновляем каталог · ${loaded}`,
+        detail: `Обновлено товаров: ${loaded}. Можно продолжать работу.`,
       }
     : state.catalogError
       ? {
           id: 'catalog',
           tone: 'warning',
-          label: `Каталог: пауза · ${loaded}`,
-          detail: `${state.catalogError}${retry ? ` Автоповтор не ранее ${retry}.` : ''}`,
+          label: 'Не удалось обновить каталог',
+          detail: `Уже загруженные товары доступны.${retry ? ` Повторим попытку после ${retry}.` : ' Повторим попытку автоматически.'}`,
         }
       : state.catalogWaiting
         ? {
             id: 'catalog',
             tone: 'waiting',
-            label: 'Каталог: ожидаем транзакции сервера',
+            label: 'Каталог скоро обновится',
             detail:
-              'Есть изменения, для которых сервер ещё не может безопасно продвинуть курсор. Продолжим автоматически. Локальные товары доступны.',
+              'Новые данные ещё обрабатываются. Обновление продолжится автоматически, а доступные товары уже можно продавать.',
           }
         : state.catalogPending
           ? {
               id: 'catalog',
               tone: 'waiting',
-              label: 'Каталог: догоняем изменения',
+              label: 'Продолжаем обновление каталога',
               detail:
-                'Остались порции изменений. Продолжим автоматически после короткой паузы; локальные товары доступны.',
+                'Осталось загрузить часть товаров. Продолжим автоматически после короткой паузы.',
             }
           : state.catalogReady
             ? {
                 id: 'catalog',
                 tone: 'ready',
-                label: 'Каталог: синхронизирован',
+                label: `Каталог синхронизирован${nextRefresh ? ` · следующая проверка в ${nextRefresh}` : ''}`,
                 detail: updated
-                  ? `Последняя успешная синхронизация: ${updated}.`
-                  : 'Полная загрузка каталога завершена.',
+                  ? `Последнее обновление: ${updated}.`
+                  : 'Все товары загружены.',
               }
             : {
                 id: 'catalog',
                 tone: 'waiting',
-                label: 'Каталог: ожидает загрузки',
+                label: 'Загружаем каталог',
                 detail:
-                  'Локальные товары доступны. Отсутствующие товары ищем на сервере.',
+                  'Можно работать с уже доступными товарами. Остальные появятся после загрузки.',
               };
   const receipts: SyncIndicator = state.syncing
     ? {
         id: 'receipts',
         tone: 'working',
-        label: `Чеки: отправляем · ${state.pending}`,
-        detail:
-          'Изменения сохранены на кассе и отправляются на сервер. Можно продолжать работу.',
+        label: `Отправляем чеки · ${state.pending}`,
+        detail: 'Чеки сохранены и отправляются. Можно продолжать работу.',
       }
     : state.pending
       ? {
           id: 'receipts',
           tone:
             state.error ||
+            !state.connected ||
             state.authorizationRequired ||
             state.conflicts.length ||
             state.outbox?.some((item) => item.code)
               ? 'warning'
               : 'waiting',
-          label: `Чеки: в очереди · ${state.pending}`,
+          label: `Чеки ожидают отправки · ${state.pending}`,
           detail: state.authorizationRequired
-            ? 'Чеки сохранены на кассе. Для отправки требуется подтвердить доступ.'
-            : (state.error ??
-              (state.outbox?.some((item) => item.code)
-                ? 'Причины задержки и повтор отправки отдельных чеков доступны в очереди отправки рабочей зоны.'
+            ? 'Подтвердите вход, чтобы чеки отправились.'
+            : state.error
+              ? 'Не удалось отправить некоторые чеки. Они сохранены, повторите отправку из очереди.'
+              : state.outbox?.some((item) => item.code)
+                ? 'Некоторые чеки не отправлены. Откройте очередь, чтобы посмотреть подробности и повторить отправку.'
                 : state.connected
-                  ? 'Изменения сохранены на кассе и ожидают отправки.'
-                  : 'Локальный режим: изменения сохранены на кассе. Отправим при восстановлении связи.')),
+                  ? 'Чеки сохранены и отправятся автоматически.'
+                  : 'Нет связи. Чеки сохранены и отправятся автоматически после восстановления связи.',
         }
-      : {
-          id: 'receipts',
-          tone: 'ready',
-          label: 'Чеки: изменения отправлены',
-          detail:
-            'Очередь отправки пуста. Подтверждение оплаты проверяется отдельно.',
-        };
+      : state.error
+        ? {
+            id: 'receipts',
+            tone: 'warning',
+            label: 'Не удалось отправить чеки',
+            detail:
+              'Чеки сохранены на кассе. Повторите отправку или обратитесь за помощью.',
+          }
+        : {
+            id: 'receipts',
+            tone: 'ready',
+            label: 'Все чеки отправлены',
+            detail: 'Неотправленных чеков нет.',
+          };
   const indicators = [catalog, receipts];
   if (state.categoriesSyncing)
     indicators.push({
       id: 'categories',
       tone: 'working',
-      label: 'Категории: загружаем',
-      detail: 'Справочник категорий обновляется в фоне.',
+      label: 'Обновляем категории',
+      detail: 'Категории товаров обновляются. Можно продолжать работу.',
     });
   if (state.productLookups)
     indicators.push({
       id: 'lookup',
       tone: 'working',
-      label: `Поиск на сервере · ${state.productLookups}`,
+      label: `Ищем товар · ${state.productLookups}`,
       detail:
-        'Ищем отсутствующие в SQLite товары и сохраняем результат на кассе. Локальные товары доступны сразу.',
+        'Поиск продолжается. Можно сканировать или добавлять следующий товар.',
     });
   if (state.paymentPending || state.paymentReviews?.length)
     indicators.push({
       id: 'payments',
       tone: 'warning',
-      label: `Оплаты: проверка${state.paymentReviews?.length ? ` · ${state.paymentReviews.length}` : ''}`,
+      label: `Проверьте оплату${state.paymentReviews?.length ? ` · ${state.paymentReviews.length}` : ''}`,
       detail:
-        'Есть чеки в очереди проверки оплаты. Действия доступны в рабочей зоне продаж.',
+        'Для некоторых чеков нужно проверить результат оплаты. Откройте раздел продаж.',
     });
   if (state.authorizationRequired)
     indicators.push({
       id: 'access',
       tone: 'warning',
-      label: 'Доступ: подтвердите вход',
+      label: 'Подтвердите вход',
       detail:
-        'Подтвердите доступ в рабочей зоне продаж для продолжения обмена с сервером.',
+        'Подтвердите вход в разделе продаж, чтобы продолжить отправку чеков.',
     });
   if (state.conflicts.length)
     indicators.push({
       id: 'conflicts',
       tone: 'warning',
-      label: `Расхождения чеков · ${state.conflicts.length}`,
-      detail: 'Проверьте расхождения с сервером в рабочей зоне продаж.',
+      label: `Проверьте чеки · ${state.conflicts.length}`,
+      detail:
+        'Данные некоторых чеков отличаются. Выберите правильный вариант в разделе продаж.',
     });
   return indicators;
+}
+
+/** Global and workspace banners stay out of the way until attention is needed. */
+export function syncAlerts(state: PosStatus): SyncIndicator[] {
+  return syncIndicators(state).filter(({ tone }) => tone === 'warning');
+}
+
+/** Compact status keeps active work and warnings visible without showing success rows. */
+export function syncNotices(state: PosStatus): SyncIndicator[] {
+  return syncIndicators(state).filter(
+    ({ id, tone }) =>
+      tone === 'warning' ||
+      id === 'catalog' ||
+      (id === 'receipts' && tone !== 'ready'),
+  );
 }
