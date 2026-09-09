@@ -36,7 +36,6 @@ export class CameraManager {
   private refreshTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private refreshGeneration = 0;
-  private nextConfigRefreshAt = 0;
   private configRetryDelayMs = CONFIG_REFRESH_MS;
   private refreshingGeneration: number | null = null;
   private cameraReplacement: Promise<void> = Promise.resolve();
@@ -48,15 +47,15 @@ export class CameraManager {
   setContext(context: CameraAuthContext | null): void {
     if (
       context &&
-      this.refreshTimer &&
+      (this.refreshTimer ||
+        this.refreshingGeneration === this.refreshGeneration) &&
       context.accessToken === this.authContext?.accessToken &&
       context.registerId === this.authContext?.registerId
     )
       return;
     this.refreshGeneration += 1;
-    this.nextConfigRefreshAt = 0;
     this.configRetryDelayMs = CONFIG_REFRESH_MS;
-    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.captureTimer) clearInterval(this.captureTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.refreshTimer = null;
@@ -70,10 +69,6 @@ export class CameraManager {
     void this.pruneBufferRoot();
     const generation = this.refreshGeneration;
     void this.refresh(generation);
-    this.refreshTimer = setInterval(
-      () => void this.refresh(generation),
-      CONFIG_REFRESH_MS,
-    );
     this.captureTimer = setInterval(
       () => void this.pollCaptureJob(generation),
       CAPTURE_POLL_MS,
@@ -87,7 +82,7 @@ export class CameraManager {
 
   async shutdown(): Promise<void> {
     this.refreshGeneration += 1;
-    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.captureTimer) clearInterval(this.captureTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.refreshTimer = null;
@@ -102,11 +97,11 @@ export class CameraManager {
     if (
       !context ||
       generation !== this.refreshGeneration ||
-      this.refreshingGeneration === generation ||
-      Date.now() < this.nextConfigRefreshAt
+      this.refreshingGeneration === generation
     )
       return;
     this.refreshingGeneration = generation;
+    let delay = CONFIG_REFRESH_MS;
     try {
       const camera = await this.api.getConfig(
         context.accessToken,
@@ -122,18 +117,20 @@ export class CameraManager {
           this.configRetryDelayMs * 2,
           CONFIG_MAX_RETRY_MS,
         );
-        this.nextConfigRefreshAt =
-          Date.now() +
-          Math.max(
-            this.configRetryDelayMs,
-            error instanceof CameraConfigRateLimitError
-              ? error.retryAfterMs
-              : 0,
-          );
+        delay = Math.max(
+          this.configRetryDelayMs,
+          error instanceof CameraConfigRateLimitError ? error.retryAfterMs : 0,
+        );
       }
     } finally {
       if (this.refreshingGeneration === generation)
         this.refreshingGeneration = null;
+      if (generation === this.refreshGeneration) {
+        this.refreshTimer = setTimeout(
+          () => void this.refresh(generation),
+          delay,
+        );
+      }
       void this.pruneBufferRoot();
       void this.flushStatus();
     }

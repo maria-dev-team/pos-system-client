@@ -25,7 +25,9 @@ export class CameraConfigRateLimitError extends Error {
     const delay = Number.isFinite(seconds)
       ? seconds * 1_000
       : Date.parse(retryAfter ?? '') - Date.now();
-    this.retryAfterMs = Number.isFinite(delay) ? Math.max(0, delay) : 0;
+    this.retryAfterMs = Number.isNaN(delay)
+      ? 0
+      : Math.min(15 * 60_000, Math.max(0, delay));
   }
 }
 

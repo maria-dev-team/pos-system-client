@@ -24,9 +24,39 @@ type CameraManagerInternals = {
 };
 
 describe('CameraManager', () => {
+  it('retries exactly after backoff when a request fails between minute ticks', async () => {
+    vi.useFakeTimers();
+    const getConfig = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<null>((_resolve, reject) => {
+            setTimeout(() => reject(new Error('Timed out')), 15_000);
+          }),
+      )
+      .mockResolvedValue(null);
+    const manager = new CameraManager({
+      getConfig,
+    } as unknown as CameraApiClient);
+    try {
+      manager.setContext({ accessToken: 'token', registerId: null });
+      await vi.advanceTimersByTimeAsync(134_999);
+      expect(getConfig).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getConfig).toHaveBeenCalledTimes(2);
+    } finally {
+      await manager.shutdown();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['300', 300_000],
+    ['125', 125_000],
     ['Wed, 09 Sep 2026 00:05:00 GMT', 300_000],
+    ['Wed, 09 Sep 2026 00:02:05 GMT', 125_000],
+    ['999999999', 900_000],
+    ['Wed, 09 Sep 2099 00:00:00 GMT', 900_000],
     ['invalid', 120_000],
     [null, 120_000],
   ])('respects Retry-After: %s', async (retryAfter, delay) => {
