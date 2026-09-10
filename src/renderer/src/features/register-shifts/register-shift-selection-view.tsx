@@ -18,7 +18,6 @@ import {
 import { type FormEvent, useState } from 'react';
 
 import { type RegisterResponse, openRegisterShift } from '@renderer/common/api';
-import { syncCameraContext } from '@renderer/common/camera/camera-context';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { NumericKeypad } from '@renderer/common/components/numeric-keypad';
 import { Button } from '@renderer/common/components/ui/button';
@@ -40,7 +39,7 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
-import { authContextQueryOptions, useAuthStore } from '@renderer/features/auth';
+import { authContextQueryOptions } from '@renderer/features/auth';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import {
   LastZReportPrintButton,
@@ -106,10 +105,6 @@ export function RegisterShiftSelectionView() {
       httpErrorHandler(error, 'Не удалось открыть кассу.');
     },
     onSuccess: async (registerShift) => {
-      const accessToken = useAuthStore.getState().accessToken;
-      if (accessToken) {
-        syncCameraContext(accessToken, registerShift.register_id);
-      }
       queryClient.setQueryData(
         queryKeys.registerShifts.current(registerShift.register_id),
         registerShift,
@@ -374,11 +369,6 @@ export function RegisterShiftSelectionView() {
                             aria-label={`Начать работу на кассе ${register.name}`}
                             className="min-h-13 w-full justify-between px-5 text-base"
                             onClick={() => {
-                              const accessToken =
-                                useAuthStore.getState().accessToken;
-                              if (accessToken) {
-                                syncCameraContext(accessToken, register.id);
-                              }
                               void navigate({
                                 search: {
                                   registerId: register.id,

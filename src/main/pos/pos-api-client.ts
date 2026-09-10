@@ -3,6 +3,7 @@ import {
   type FiscalErrorDetails,
   fiscalErrorMessage,
 } from '../../shared/pos/fiscal-error';
+import { serverErrorMessage } from '../../shared/pos/server-error-message';
 import { readPosResponseJson } from './pos-response-body';
 
 export class PosApiError extends PosError {
@@ -15,6 +16,7 @@ export class PosApiError extends PosError {
     super(
       code,
       fiscalErrorMessage(details) ??
+        serverErrorMessage(code) ??
         (status === 401
           ? 'Нужно обновить авторизацию кассы и повторно проверить доступ к смене.'
           : status === 403

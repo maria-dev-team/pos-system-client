@@ -414,6 +414,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   delete window.appUpdates;
+  delete window.camera;
   delete window.receiptPrinter;
   delete window.windowControls;
 });
@@ -785,6 +786,37 @@ describe('DukenAI POS authorization flow', () => {
     expect(screen.getByText('Кассир')).toBeInTheDocument();
     expect(screen.getByText('Maria · Main store')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Выйти' })).toHaveLength(1);
+  });
+
+  it('syncs the camera with direct register navigation and disables it outside POS routes', async () => {
+    const setContext = vi.fn();
+    window.camera = { setContext };
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    const { router } = renderApp();
+
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'restored-token',
+        registerId: null,
+      }),
+    );
+
+    await router.navigate({
+      to: '/checkout',
+      search: { registerId: 'register-1', registerShiftId: 'register-shift-1' },
+    });
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'restored-token',
+        registerId: 'register-1',
+      }),
+    );
+
+    await router.navigate({ to: '/select-organization' });
+    await screen.findByRole('heading', { name: 'Выберите организацию' });
+    await waitFor(() => expect(setContext).toHaveBeenLastCalledWith(null));
   });
 
   it('requests and prints a fresh X report from an open register shift', async () => {
