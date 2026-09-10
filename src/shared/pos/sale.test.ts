@@ -35,6 +35,27 @@ describe('local sale domain', () => {
     expect(next.total).toBe('1300.00');
     expect(next.items[0]!.vat_amount).toBe('179.31');
   });
+  it('adds an unmarked product without NKT and keeps its barcode as GTIN', () => {
+    const product = productFixture();
+    product.nkt = null;
+
+    const sale = applyCommand(
+      empty(),
+      { type: 'add', productId: product.id },
+      profile,
+      product,
+      randomUUID(),
+      now,
+    );
+
+    expect(sale.items[0]).toMatchObject({
+      gtin: product.barcode,
+      is_marked: false,
+      name: product.name,
+      nkt_name: null,
+      ntin_code: null,
+    });
+  });
   it('checks permissions in the domain even if the UI enables a button', () => {
     const unauthorized = profileFixture();
     unauthorized.context.isSystemPosition = false;

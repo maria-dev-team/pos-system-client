@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 
 import {
+  type FiscalizationMode,
   type HeldSaleResponse,
   type SalePaymentPayload,
   type SaleResponse,
@@ -20,6 +21,7 @@ import { reportSaleAntiFraud } from '../anti-fraud';
 type TerminalCommand =
   | {
       buyerBinIin?: string;
+      fiscalizationMode: FiscalizationMode;
       payments: SalePaymentPayload[];
       type: 'checkout';
     }
@@ -94,6 +96,7 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
                 type: 'checkout',
                 saleId: sale.id,
                 total: sale.total,
+                fiscalizationMode: command.fiscalizationMode,
                 payments: command.payments,
                 ...(command.buyerBinIin
                   ? { buyerBinIin: command.buyerBinIin }
@@ -116,6 +119,7 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
                 ? { buyerBinIin: command.buyerBinIin }
                 : {}),
               expectedVersion: sale.version,
+              fiscalizationMode: command.fiscalizationMode,
               payments: command.payments,
             })
           : command.type === 'hold'
@@ -155,11 +159,19 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
   const checkout = useMutation({
     mutationFn: ({
       buyerBinIin,
+      fiscalizationMode = 'FISCAL',
       payments,
     }: {
       buyerBinIin?: string;
+      fiscalizationMode?: FiscalizationMode;
       payments: SalePaymentPayload[];
-    }) => runTerminal({ buyerBinIin, payments, type: 'checkout' }),
+    }) =>
+      runTerminal({
+        buyerBinIin,
+        fiscalizationMode,
+        payments,
+        type: 'checkout',
+      }),
     scope,
   });
 

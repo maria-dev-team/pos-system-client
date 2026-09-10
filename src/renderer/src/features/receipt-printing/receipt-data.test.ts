@@ -217,4 +217,25 @@ describe('buildPrintableReceipt', () => {
       buildPrintableReceipt({ ...sale, fiscal_receipt: null }, {}),
     ).toBeNull();
   });
+
+  it('builds a printable non-fiscal receipt without KKM metadata', () => {
+    const printable = buildPrintableReceipt(
+      {
+        ...sale,
+        fiscal_receipt: null,
+        fiscalization_mode: 'NON_FISCAL',
+      },
+      {
+        currentCashier: { id: 'membership-1', name: 'Айжан Қасымова' },
+        organization,
+        store: { address: 'Абай 1', name: 'Магазин №1' },
+      },
+    );
+
+    expect(printable).toMatchObject({
+      fiscal: null,
+      localReceiptNumber: '42',
+      total: '900.00',
+    });
+  });
 });

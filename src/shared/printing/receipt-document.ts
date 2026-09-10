@@ -41,7 +41,7 @@ export type PrintableReceipt = {
     registrationNumber: string;
     shiftNumber: string;
     vatTotal: string;
-  };
+  } | null;
   isTest: boolean;
   items: PrintableReceiptItem[];
   localReceiptNumber: string;
@@ -221,18 +221,18 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
       ${organizationDetails}
       <div>${escapeHtml(receipt.store.name)}</div>
       ${receipt.store.address ? `<div>${escapeHtml(receipt.store.address)}</div>` : ''}
-      <div class="title">${receipt.isTest ? 'ТЕСТОВЫЙ ЧЕК' : 'ФИСКАЛЬНЫЙ ЧЕК'}</div>
+      <div class="title">${receipt.isTest ? 'ТЕСТОВЫЙ ЧЕК' : receipt.fiscal ? 'ФИСКАЛЬНЫЙ ЧЕК' : 'НЕФИСКАЛЬНЫЙ ЧЕК'}</div>
       <div>${receipt.operationType === 'SALE' ? 'ПРОДАЖА' : 'ВОЗВРАТ'}</div>
-      ${!receipt.isTest && receipt.fiscal.offline ? '<div>АВТОНОМНЫЙ РЕЖИМ</div>' : ''}
+      ${!receipt.isTest && receipt.fiscal?.offline ? '<div>АВТОНОМНЫЙ РЕЖИМ</div>' : ''}
     </header>
     <div class="separator"></div>
-    ${receipt.isTest ? '' : receiptLine('Чек в смене №', receipt.fiscal.receiptNumber)}
-    ${receipt.isTest ? '' : receiptLine('Номер смены', receipt.fiscal.shiftNumber)}
+    ${receipt.isTest || !receipt.fiscal ? '' : receiptLine('Чек в смене №', receipt.fiscal.receiptNumber)}
+    ${receipt.isTest || !receipt.fiscal ? '' : receiptLine('Номер смены', receipt.fiscal.shiftNumber)}
     ${receiptLine('Внутренний чек №', receipt.localReceiptNumber)}
     ${receiptLine('Дата', completedAt)}
     ${receiptLine('Кассир', receipt.cashier)}
-    ${receipt.isTest ? '' : receiptLine('Уникальный № ККМ', receipt.fiscal.cashboxUniqueNumber)}
-    ${receipt.isTest ? '' : receiptLine('Регистрационный № ККМ', receipt.fiscal.registrationNumber)}
+    ${receipt.isTest || !receipt.fiscal ? '' : receiptLine('Уникальный № ККМ', receipt.fiscal.cashboxUniqueNumber)}
+    ${receipt.isTest || !receipt.fiscal ? '' : receiptLine('Регистрационный № ККМ', receipt.fiscal.registrationNumber)}
     <div class="separator"></div>
     ${items}
     <div class="separator"></div>
@@ -246,7 +246,7 @@ export const renderReceiptDocument = (receipt: PrintableReceipt): string => {
     }
     <div class="grand-total"><span>ИТОГО</span><strong>${escapeHtml(formatMoney(receipt.total))}</strong></div>
     ${
-      receipt.isTest
+      receipt.isTest || !receipt.fiscal
         ? '<div class="center notice">НЕ ЯВЛЯЕТСЯ ФИСКАЛЬНЫМ ДОКУМЕНТОМ</div>'
         : `${receiptLine('НДС всего', formatMoney(receipt.fiscal.vatTotal))}
     ${receipt.fiscal.buyerBinIin ? receiptLine('БИН/ИИН покупателя', receipt.fiscal.buyerBinIin) : ''}

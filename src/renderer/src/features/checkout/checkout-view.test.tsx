@@ -393,8 +393,11 @@ describe('server-authoritative checkout', () => {
     expect((await screen.findAllByText('650,00 ₸')).length).toBeGreaterThan(0);
   });
 
-  it('explains why a product without NKT cannot be added', async () => {
+  it('adds a product without NKT by its product barcode', async () => {
     const user = userEvent.setup();
+    vi.mocked(createSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], total: '650.00' }),
+    );
     vi.mocked(searchProducts).mockResolvedValue({
       meta: { has_more: false, limit: 20, offset: 0, total: 1 },
       products: [productFixture({ nkt: null, nkt_product_id: null })],
@@ -406,8 +409,38 @@ describe('server-authoritative checkout', () => {
       '001234{enter}',
     );
 
-    expect(await screen.findByText(/каталоге DukenAI/u)).toBeInTheDocument();
-    expect(createSale).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(createSale).toHaveBeenCalledWith({
+        items: [{ productId: 'product-1', quantity: '1' }],
+      }),
+    );
+  });
+
+  it('adds a product without NKT from a text search result', async () => {
+    const user = userEvent.setup();
+    vi.mocked(createSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], total: '650.00' }),
+    );
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      products: [productFixture({ nkt: null, nkt_product_id: null })],
+    });
+    renderCheckout();
+
+    await user.type(
+      await screen.findByLabelText('Сканируйте или найдите товар'),
+      'Молоко',
+    );
+    const product = await screen.findByRole('button', {
+      name: 'Добавить товар Молоко',
+    });
+    expect(product).toBeEnabled();
+    expect(screen.queryByText('Нужно сопоставить с НКТ')).toBeNull();
+    await user.click(product);
+
+    expect(createSale).toHaveBeenCalledWith({
+      items: [{ productId: 'product-1', quantity: '1' }],
+    });
   });
 
   it('resolves the first barcode and creates the same authoritative DRAFT', async () => {
@@ -833,6 +866,7 @@ describe('server-authoritative checkout', () => {
       expect(checkoutSale).toHaveBeenCalledWith('sale-1', {
         buyerBinIin: '123456789012',
         expectedVersion: 1,
+        fiscalizationMode: 'FISCAL',
         payments: [{ amount: '650.00', method: 'CASHLESS' }],
       }),
     );

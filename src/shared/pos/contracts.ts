@@ -8,6 +8,7 @@ import type {
   ProductSearchResponse,
 } from '../api/responses/product.response';
 import type { RegisterShiftResponse } from '../api/responses/register-shift.response';
+import type { RegisterResponse } from '../api/responses/register.response';
 import type {
   HeldSaleResponse,
   SaleResponse,
@@ -131,6 +132,7 @@ export const posRequestSchema = z.discriminatedUnion('type', [
         .string()
         .regex(/^\d{12}$/)
         .optional(),
+      fiscalizationMode: z.enum(['FISCAL', 'NON_FISCAL']).optional(),
       payments: z
         .array(
           z
@@ -152,6 +154,7 @@ export type PosRequest = z.infer<typeof posRequestSchema>;
 export const POS_STATUS_TIMEOUT_MS = 5000;
 export type PosProfile = {
   context: AuthContextResponse;
+  register: RegisterResponse;
   session: CashierSessionResponse;
   shift: RegisterShiftResponse;
   expiresAt: number;

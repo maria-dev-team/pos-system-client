@@ -98,6 +98,7 @@ export type SaleResponse = {
   held_at: string | null;
   id: string;
   fiscal_receipt: FiscalReceiptResponse | null;
+  fiscalization_mode?: 'FISCAL' | 'NON_FISCAL';
   items: SaleItemResponse[];
   organization_id: string;
   original_sale_id: string | null;
@@ -132,6 +133,7 @@ export type ReceiptSummaryResponse = {
   discount_reason: string | null;
   id: string;
   fiscal_receipt: FiscalReceiptResponse | null;
+  fiscalization_mode?: 'FISCAL' | 'NON_FISCAL';
   payments: Pick<SalePaymentResponse, 'amount' | 'method'>[];
   receipt_number: string;
   subtotal: string;
