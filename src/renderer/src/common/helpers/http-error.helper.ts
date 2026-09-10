@@ -133,6 +133,17 @@ export const getHttpErrorMessage = (
   error: unknown,
   fallback?: string,
 ): string => {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'AUTH_CONTEXT_CHANGED'
+  )
+    return error.message;
+  if (
+    axios.isAxiosError(error) &&
+    error.response?.data?.error_code === 'AUTH_STATE_CHANGED'
+  )
+    return 'Состояние входа изменилось. Данные обновлены; повторите действие.';
   if (error instanceof PosError) return error.message;
   if (axios.isAxiosError(error) && error.response?.data) {
     const message = fiscalErrorMessage(error.response.data);

@@ -10,19 +10,16 @@ import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
 
 import { AuthShell } from './components/auth-shell';
 import { authContextQueryOptions } from './hooks/use-auth-context-query';
-import { useAuthStore } from './stores/auth-store';
 
 export function StoreSelectionView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const context = useQuery(authContextQueryOptions());
-  const setAccessToken = useAuthStore((state) => state.setAccessToken);
   const mutation = useMutation({
     mutationFn: (storeId: string) =>
       selectContext(context.data!.userOrganizationId!, storeId),
     onError: (error) => httpErrorHandler(error, 'Не удалось выбрать магазин.'),
-    onSuccess: async (auth) => {
-      setAccessToken(auth.access_token);
+    onSuccess: async () => {
       await queryClient.invalidateQueries({
         queryKey: queryKeys.auth.context(),
       });

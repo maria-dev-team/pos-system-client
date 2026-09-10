@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { searchProducts } from '@renderer/common/api';
 import { queryKeys } from '@renderer/common/constants';
 import { localPosActive } from '@renderer/common/lib/local-pos';
+import { shouldRetryQuery } from '@renderer/common/lib/query-client';
 
 export function useProductSearchQuery(
   term: string,
@@ -31,7 +32,7 @@ export function useProductSearchQuery(
   const query = useQuery({
     enabled: isReady,
     queryFn: () => searchProducts({ search: searchTerm, limit: 20, offset: 0 }),
-    retry: local ? false : 1,
+    retry: local ? false : shouldRetryQuery,
     queryKey: queryKeys.products.search(
       organizationId,
       storeId,

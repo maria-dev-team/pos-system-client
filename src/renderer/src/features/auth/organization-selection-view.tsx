@@ -9,19 +9,16 @@ import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 
 import { AuthShell } from './components/auth-shell';
-import { useAuthStore } from './stores/auth-store';
 
 export function OrganizationSelectionView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const organizations = useQuery(organizationsQueryOptions());
-  const setAccessToken = useAuthStore((state) => state.setAccessToken);
   const mutation = useMutation({
     mutationFn: (membershipId: string) => selectContext(membershipId),
     onError: (error) =>
       httpErrorHandler(error, 'Не удалось выбрать организацию.'),
-    onSuccess: async (auth) => {
-      setAccessToken(auth.access_token);
+    onSuccess: async () => {
       await queryClient.invalidateQueries({
         queryKey: queryKeys.auth.context(),
       });
