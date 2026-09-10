@@ -11,7 +11,10 @@ export type {
   OrganizationResponse,
   PositionResponse,
 } from './organization.response';
-export type { RegisterResponse } from './register.response';
+export type {
+  FiscalizationPolicy,
+  RegisterResponse,
+} from './register.response';
 export type {
   CloseRegisterShiftResponse,
   FiscalShiftReportResponse,

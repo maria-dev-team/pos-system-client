@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 
 import {
   type CashierSessionResponse,
+  type FiscalizationMode,
   type HeldSaleResponse,
   type ProductResponse,
   type SaleItemResponse,
@@ -48,7 +49,10 @@ import {
   getHttpErrorMessage,
   httpErrorHandler,
 } from '@renderer/common/helpers/http-error.helper';
-import { localPosActive } from '@renderer/common/lib/local-pos';
+import {
+  localPosActive,
+  localPosProfile,
+} from '@renderer/common/lib/local-pos';
 import {
   adjustQuantityByOne,
   formatQuantity,
@@ -64,7 +68,10 @@ import {
   ReceiptPrintButton,
   XReportPrintButton,
 } from '@renderer/features/receipt-printing';
-import { registerShiftHistoryQueryOptions } from '@renderer/features/register-shifts';
+import {
+  activeRegistersQueryOptions,
+  registerShiftHistoryQueryOptions,
+} from '@renderer/features/register-shifts';
 
 import { assertProductSellable } from '../../../../shared/pos/product-policy';
 import { CheckoutCategoryPicker } from './checkout-category-picker';
@@ -202,6 +209,9 @@ function ActiveCheckout({
   const inputRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
   const context = useQuery(authContextQueryOptions());
+  const activeRegisters = useQuery(
+    activeRegistersQueryOptions(context.data?.storeId),
+  );
   const canReadShift = Boolean(
     context.data &&
     (context.data.isSystemPosition ||
@@ -250,6 +260,21 @@ function ActiveCheckout({
   const [paymentError, setPaymentError] = useState<string>();
   const [transitionError, setTransitionError] = useState<string>();
   const [completedSale, setCompletedSale] = useState<SaleResponse | null>(null);
+  const activeRegister = activeRegisters.data?.find(
+    ({ id }) => id === cashierSession.register_id,
+  );
+  const localRegister = localPosProfile()?.register;
+  const fiscalizationPolicy =
+    activeRegister?.fiscalization?.policy ??
+    localRegister?.fiscalization.policy ??
+    'ALWAYS';
+  const fiscalizationEnabled =
+    activeRegister?.fiscalization?.enabled ??
+    localRegister?.fiscalization.enabled ??
+    true;
+  const fiscalizationPreviewEnabled =
+    import.meta.env.DEV &&
+    import.meta.env.VITE_PREVIEW_FISCALIZATION === 'true';
   const canSearch = Boolean(
     context.data?.isSystemPosition ||
     context.data?.permissions.includes('product.read'),
@@ -316,19 +341,6 @@ function ActiveCheckout({
         setScanIssue({
           barcode: submitted.barcode,
           message: `Товар с кодом ${submitted.barcode} не найден`,
-        });
-        refocus();
-        return;
-      }
-      if (
-        (submitted.type === 'scan' || submitted.type === 'add') &&
-        getHttpErrorCode(error) === ErrorCode.ProductNktRequired
-      ) {
-        setScanIssue({
-          barcode:
-            submitted.type === 'scan' ? submitted.barcode : submitted.productId,
-          message:
-            'Товар не сопоставлен с НКТ. Откройте его в каталоге DukenAI.',
         });
         refocus();
         return;
@@ -532,12 +544,17 @@ function ActiveCheckout({
   const confirmPayment = async (
     payments: SalePaymentPayload[],
     buyerBinIin?: string,
+    fiscalizationMode: FiscalizationMode = 'FISCAL',
   ) => {
     setPaymentError(undefined);
     setTransitionError(undefined);
     try {
       finishTransition(
-        await transitions.checkout.mutateAsync({ buyerBinIin, payments }),
+        await transitions.checkout.mutateAsync({
+          buyerBinIin,
+          fiscalizationMode,
+          payments,
+        }),
       );
     } catch (error) {
       const message = getHttpErrorMessage(error, 'Не удалось оплатить чек.');
@@ -936,9 +953,7 @@ function ActiveCheckout({
                     ? 'Товар неактивен'
                     : product.retail_price === null
                       ? 'Цена не указана'
-                      : !product.nkt?.ntin_code || product.nkt.is_deactivated
-                        ? 'Нужно сопоставить с НКТ'
-                        : null;
+                      : null;
                   return (
                     <button
                       aria-label={`Добавить товар ${product.name}`}
@@ -1456,6 +1471,10 @@ function ActiveCheckout({
 
       {paymentSale ? (
         <CheckoutPaymentDialog
+          fiscalizationEnabled={
+            fiscalizationEnabled || fiscalizationPreviewEnabled
+          }
+          fiscalizationPolicy={fiscalizationPolicy}
           onConfirm={confirmPayment}
           onOpenChange={(open) => {
             if (!open && !transitions.checkout.isPending) {

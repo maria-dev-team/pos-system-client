@@ -235,12 +235,6 @@ export function useReturnsFlow(
   };
 
   const addProduct = (product: ProductResponse) => {
-    if (!product.nkt?.ntin_code || product.nkt.is_deactivated) {
-      setFormError(
-        `Товар «${product.name}» не сопоставлен с НКТ. Откройте его в каталоге DukenAI.`,
-      );
-      return;
-    }
     if (
       product.retail_price === null ||
       (!product.nkt?.is_marked &&
@@ -295,13 +289,6 @@ export function useReturnsFlow(
     );
     if (refreshed.some(({ product }) => product.retail_price === null)) {
       throw new Error('У одного из товаров больше нет цены продажи.');
-    }
-    if (
-      refreshed.some(
-        ({ product }) => !product.nkt?.ntin_code || product.nkt.is_deactivated,
-      )
-    ) {
-      throw new Error('Один из товаров не сопоставлен с НКТ.');
     }
     if (
       refreshed.some(({ line, product }) => {

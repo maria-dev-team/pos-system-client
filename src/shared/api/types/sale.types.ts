@@ -50,6 +50,7 @@ export type CancelSalePayload = SaleVersionPayload & {
 };
 
 export type PaymentMethod = 'CASH' | 'CASHLESS';
+export type FiscalizationMode = 'FISCAL' | 'NON_FISCAL';
 
 export type SalePaymentPayload = {
   amount: string;
@@ -59,6 +60,7 @@ export type SalePaymentPayload = {
 
 export type CheckoutSalePayload = SaleVersionPayload & {
   buyerBinIin?: string;
+  fiscalizationMode: FiscalizationMode;
   payments: SalePaymentPayload[];
 };
 

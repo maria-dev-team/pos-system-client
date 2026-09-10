@@ -12,6 +12,8 @@ export const activeRegistersQueryOptions = (storeId?: string | null) =>
     enabled: Boolean(storeId),
     queryFn: getActiveRegisters,
     queryKey: queryKeys.registers.active(storeId),
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: 'always',
     retry: false,
   });
 

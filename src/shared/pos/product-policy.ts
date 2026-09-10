@@ -5,7 +5,6 @@ export function assertProductSellable(
   product: ProductResponse | undefined,
   markingCode?: string,
 ): asserts product is ProductResponse & {
-  nkt: NonNullable<ProductResponse['nkt']>;
   retail_price: string;
 } {
   if (!product || !product.is_active || product.deleted_at)
@@ -15,17 +14,14 @@ export function assertProductSellable(
       'PRODUCT_SALE_PRICE_REQUIRED',
       'У товара не указана цена.',
     );
-  if (!product.nkt?.ntin_code || product.nkt.is_deactivated)
-    throw new PosError(
-      'PRODUCT_NKT_REQUIRED',
-      'Товар не сопоставлен с НКТ. Откройте его в каталоге DukenAI.',
-    );
-  if (product.nkt.is_marked && !markingCode)
+  const activeNkt =
+    product.nkt && !product.nkt.is_deactivated ? product.nkt : null;
+  if (activeNkt?.is_marked && !markingCode)
     throw new PosError(
       'PRODUCT_MARKING_CODE_REQUIRED',
       'Товар маркирован. Отсканируйте Data Matrix с упаковки.',
     );
-  if (!product.nkt.is_marked && markingCode)
+  if (!activeNkt?.is_marked && markingCode)
     throw new PosError(
       'PRODUCT_MARKING_CODE_NOT_ALLOWED',
       'Товар не отмечен как маркированный.',

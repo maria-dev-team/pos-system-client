@@ -132,3 +132,26 @@ it.each([
     ).toBe(false);
   },
 );
+
+it('accepts a completed non-fiscal payment without a fiscal receipt', async () => {
+  const { service, db, sale } = await pendingPayment((draft) => ({
+    sale: {
+      ...draft,
+      fiscal_receipt: null,
+      fiscalization_mode: 'NON_FISCAL',
+      status: 'COMPLETED',
+      version: draft.version + 1,
+    },
+    retry_safe: false,
+    replay_ready: false,
+  }));
+
+  await expect(
+    service.handle({ type: 'reconcilePayment', saleId: sale.id }),
+  ).resolves.toMatchObject({
+    fiscal_receipt: null,
+    fiscalization_mode: 'NON_FISCAL',
+    status: 'COMPLETED',
+  });
+  expect(db.sale(ids.session, sale.id)?.payment).toBeNull();
+});

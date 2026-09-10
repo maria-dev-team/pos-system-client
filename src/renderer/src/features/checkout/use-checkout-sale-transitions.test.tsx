@@ -140,6 +140,7 @@ describe('checkout terminal transitions', () => {
 
     expect(checkoutSale).toHaveBeenCalledWith('sale-1', {
       expectedVersion: 5,
+      fiscalizationMode: 'FISCAL',
       payments: [{ amount: '650.00', method: 'CASHLESS' }],
     });
     expect(
