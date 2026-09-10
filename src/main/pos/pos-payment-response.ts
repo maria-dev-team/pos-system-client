@@ -32,20 +32,23 @@ export function assertCompletedPayment(
 ): asserts sale is SaleResponse {
   assertSaleAcknowledgement(sale, record);
   const receipt = sale.fiscal_receipt;
+  const fiscalizationMode = sale.fiscalization_mode ?? 'FISCAL';
   if (
     sale.status !== 'COMPLETED' ||
-    !receipt ||
-    receipt.status !== 'FISCALIZED' ||
-    !['WEBKASSA', 'REKASSA'].includes(receipt.provider) ||
-    receipt.currency !== sale.currency ||
-    receipt.operation_type !== sale.transaction_type ||
     !isMoney(sale.total) ||
-    !isMoney(receipt.total) ||
-    !new Decimal(sale.total).eq(receipt.total) ||
-    !text(receipt.fiscal_sign) ||
-    !text(receipt.receipt_number) ||
-    !text(receipt.cashbox_unique_number) ||
-    !text(receipt.shift_number) ||
+    (fiscalizationMode === 'NON_FISCAL' && receipt !== null) ||
+    (fiscalizationMode === 'FISCAL' &&
+      (!receipt ||
+        receipt.status !== 'FISCALIZED' ||
+        !['WEBKASSA', 'REKASSA'].includes(receipt.provider) ||
+        receipt.currency !== sale.currency ||
+        receipt.operation_type !== sale.transaction_type ||
+        !isMoney(receipt.total) ||
+        !new Decimal(sale.total).eq(receipt.total) ||
+        !text(receipt.fiscal_sign) ||
+        !text(receipt.receipt_number) ||
+        !text(receipt.cashbox_unique_number) ||
+        !text(receipt.shift_number))) ||
     (record.payment &&
       !new Decimal(sale.total).eq(record.payment.request.total))
   )

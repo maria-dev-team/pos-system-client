@@ -41,6 +41,19 @@ describe('local POS HTTP client', () => {
       message: 'Сервер временно недоступен.',
     });
   });
+  it('preserves a useful message for a definitive payment rejection', async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error_code: 'INSUFFICIENT_STOCK' }), {
+          status: 409,
+        }),
+    );
+    await expect(request(fetcher)).rejects.toMatchObject({
+      code: 'INSUFFICIENT_STOCK',
+      status: 409,
+      message: 'Недостаточно товара на складе.',
+    });
+  });
   it.each(['<html>Proxy error</html>', '{}', '{"data":null}'])(
     'diagnoses an invalid API response: %s',
     async (body) => {

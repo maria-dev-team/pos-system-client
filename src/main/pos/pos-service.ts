@@ -211,6 +211,7 @@ export class PosService {
       !forceOnline &&
       this.profile?.tokenHash === hash(accessToken) &&
       this.profile.session.register_id === registerId &&
+      this.profile.register?.id === registerId &&
       this.initialized &&
       this.profile.expiresAt > Date.now()
     ) {
@@ -229,6 +230,7 @@ export class PosService {
       if (
         !forceOnline &&
         cached &&
+        cached.register?.id === registerId &&
         cached.expiresAt > Date.now() &&
         !this.db.get<boolean>(`revoked:${cached.session.id}`)
       ) {
@@ -244,11 +246,18 @@ export class PosService {
       } else {
         const [
           { context },
+          { register },
           { cashier_session: session },
           { register_shift: shift },
         ] = await Promise.all([
           this.api<{ context: PosProfile['context'] }>(
             '/v1/auth/context',
+            undefined,
+            15000,
+            accessToken,
+          ),
+          this.api<{ register: PosProfile['register'] }>(
+            `/v1/registers/${registerId}`,
             undefined,
             15000,
             accessToken,
@@ -276,6 +285,7 @@ export class PosService {
           );
         profile = {
           context,
+          register,
           session,
           shift,
           tokenHash,
@@ -417,10 +427,14 @@ export class PosService {
       try {
         const [
           { context },
+          { register },
           { cashier_session: session },
           { register_shift: shift },
         ] = await Promise.all([
           this.api<{ context: PosProfile['context'] }>('/v1/auth/context'),
+          this.api<{ register: PosProfile['register'] }>(
+            `/v1/registers/${p.session.register_id}`,
+          ),
           this.api<{ cashier_session: PosProfile['session'] | null }>(
             `/v1/registers/${p.session.register_id}/cashier-sessions/current`,
           ),
@@ -453,6 +467,7 @@ export class PosService {
         this.profile = {
           ...p,
           context,
+          register,
           session,
           shift,
           verifiedAt: Date.now(),
@@ -1167,7 +1182,7 @@ export class PosService {
         this.sending.delete(id);
       }
     }
-    if (sale.status !== 'COMPLETED' || !sale.fiscal_receipt) {
+    if (sale.status !== 'COMPLETED') {
       if (retrySafe)
         this.save({
           ...this.record(id),
@@ -1259,10 +1274,10 @@ export class PosService {
     try {
       const sale = await this.sendPayment(record.sale.id, request);
       this.assertEpoch(epoch);
-      if (sale.status !== 'COMPLETED' || !sale.fiscal_receipt)
+      if (sale.status !== 'COMPLETED')
         throw new PosError(
           'PAYMENT_UNCERTAIN',
-          'Сервер не подтвердил фискальный чек.',
+          'Сервер не подтвердил завершение оплаты.',
         );
       this.save({
         ...this.record(record.sale.id),
@@ -1301,6 +1316,7 @@ export class PosService {
       `/v1/sales/${id}/checkout`,
       {
         expected_version: this.record(id).serverVersion,
+        fiscalization_mode: request.fiscalizationMode ?? 'FISCAL',
         payments: request.payments,
         ...(request.buyerBinIin ? { buyer_bin_iin: request.buyerBinIin } : {}),
       },

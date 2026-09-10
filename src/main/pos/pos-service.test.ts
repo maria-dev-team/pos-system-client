@@ -63,6 +63,8 @@ async function fixture(
         });
       if (path.startsWith('/v1/categories'))
         return response({ categories: [], meta: { has_more: false } });
+      if (path === `/v1/registers/${ids.register}`)
+        return response({ register: profile.register });
       if (path === '/v1/sales/deferred-checkouts')
         return response({ sales: [] });
       if (handler)
@@ -389,6 +391,8 @@ describe('local POS application service', () => {
           return response({ cashier_session: profile.session });
         if (url.includes('/register-shifts/current'))
           return response({ register_shift: profile.shift });
+        if (url.endsWith(`/v1/registers/${ids.register}`))
+          return response({ register: profile.register });
         if (url.endsWith('/v1/sales/current')) return response({ sale: null });
         if (url.endsWith('/v1/sales/held')) return response({ sales: [] });
         if (url.includes('/v1/pos/catalog/page?'))
@@ -408,7 +412,8 @@ describe('local POS application service', () => {
           authorizationRequired: false,
           fiscalShiftExpired: hours >= 24,
         });
-        expect(timeout.mock.calls.slice(0, 3)).toEqual([
+        expect(timeout.mock.calls.slice(0, 4)).toEqual([
+          [15000],
           [15000],
           [15000],
           [15000],
@@ -488,6 +493,8 @@ describe('local POS application service', () => {
         return response({ cashier_session: null });
       if (url.includes('/register-shifts/current'))
         return response({ register_shift: profile.shift });
+      if (url.endsWith(`/v1/registers/${ids.register}`))
+        return response({ register: profile.register });
       throw new TypeError('offline');
     });
     await expect(

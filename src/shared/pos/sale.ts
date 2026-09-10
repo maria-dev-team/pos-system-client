@@ -73,6 +73,7 @@ export function newSale(
     items: [],
     payments: [],
     fiscal_receipt: null,
+    fiscalization_mode: 'FISCAL',
     subtotal: '0.00',
     total: '0.00',
   };
@@ -100,7 +101,8 @@ export function applyCommand(
     requirePermission(profile, 'product.read');
     assertProductSellable(product, command.markingCode);
     const q = quantity(command.quantity ?? '1', product.unit);
-    if (product.nkt.is_marked && q !== '1.000')
+    const nkt = product.nkt && !product.nkt.is_deactivated ? product.nkt : null;
+    if (nkt?.is_marked && q !== '1.000')
       throw new PosError(
         'INVALID_PRODUCT_QUANTITY',
         'Маркированный товар добавляется по одной упаковке.',
@@ -149,10 +151,10 @@ export function applyCommand(
         discount_amount: '0.00',
         vat_rate: product.vat_rate ?? 'NONE',
         vat_amount: '0.00',
-        nkt_name: product.nkt.name_ru,
-        ntin_code: product.nkt.ntin_code,
-        gtin: product.nkt.gtin,
-        is_marked: product.nkt.is_marked,
+        nkt_name: nkt?.name_ru ?? null,
+        ntin_code: nkt?.ntin_code ?? null,
+        gtin: nkt?.gtin ?? product.barcode ?? null,
+        is_marked: nkt?.is_marked ?? false,
         marking_code: command.markingCode ?? null,
         price_override_reason: null,
         price_overridden_by_membership_id: null,

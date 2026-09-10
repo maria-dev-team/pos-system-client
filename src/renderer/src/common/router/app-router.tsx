@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
+import { syncCameraContext } from '@renderer/common/camera/camera-context';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
@@ -72,6 +73,35 @@ function SessionRedirect(): null {
       void navigate({ replace: true, to: '/login' });
     }
   }, [accessToken, isInitialized, navigate, pathname]);
+
+  const cameraEnabled = useRouterState({
+    select: (state) =>
+      state.matches.some((match) =>
+        [
+          '/select-register-shift',
+          '/cashier-session',
+          '/checkout',
+          '/sales-history',
+          '/returns',
+        ].includes(match.pathname),
+      ),
+  });
+
+  const cameraRegisterId = useRouterState({
+    select: (state) => {
+      const match = state.matches.at(-1);
+      return match &&
+        match.pathname !== '/select-register-shift' &&
+        'registerId' in match.search &&
+        typeof match.search.registerId === 'string'
+        ? match.search.registerId
+        : null;
+    },
+  });
+
+  useEffect(() => {
+    syncCameraContext(cameraEnabled ? accessToken : null, cameraRegisterId);
+  }, [accessToken, cameraEnabled, cameraRegisterId]);
 
   return null;
 }

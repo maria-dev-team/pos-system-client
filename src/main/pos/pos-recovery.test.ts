@@ -77,6 +77,8 @@ async function fixture(): Promise<{
       return response({ cashier_session: profile.session });
     if (path === '/v1/register-shifts/current')
       return response({ register_shift: profile.shift });
+    if (path === `/v1/registers/${ids.register}`)
+      return response({ register: profile.register });
     if (path === '/v1/pos/catalog/page')
       return response({
         products: [{ ...productFixture(), store_id: profile.session.store_id }],

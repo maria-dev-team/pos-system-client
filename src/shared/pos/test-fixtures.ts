@@ -42,6 +42,22 @@ export function profileFixture(): PosProfile {
     tokenHash: '',
     verifiedAt: Date.now(),
     expiresAt: Date.now() + 3600000,
+    register: {
+      code: 'REG-1',
+      created_at: now,
+      fiscalization: {
+        cashbox_unique_number: 'test-cashbox',
+        enabled: true,
+        policy: 'ALWAYS',
+        provider: 'WEBKASSA',
+      },
+      id: ids.register,
+      name: 'Касса 1',
+      organization_id: ids.organization,
+      status: 'ACTIVE',
+      store_id: ids.store,
+      updated_at: now,
+    },
     context: {
       isSystemPosition: true,
       organizationId: ids.organization,
