@@ -16,7 +16,13 @@ import './common/styles/base.css';
 const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);
 
-configureAccessTokenProvider(authTokenProvider);
+configureAccessTokenProvider({
+  ...authTokenProvider,
+  resyncAuth: () => {
+    queryClient.removeQueries();
+    void router.invalidate();
+  },
+});
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -56,7 +56,23 @@ const api = vi.hoisted(() => ({
   triggerAntiFraudEvent: vi.fn(),
 }));
 
-vi.mock('@renderer/common/api', () => api);
+vi.mock('@renderer/common/api', () => ({
+  ...api,
+  logout: async () => {
+    await api.logout();
+    useAuthStore.getState().commitAccessToken(null);
+  },
+  login: async (...args: unknown[]) => {
+    const result = await api.login(...args);
+    useAuthStore.getState().commitAccessToken(result.auth.access_token);
+    return result;
+  },
+  selectContext: async (...args: unknown[]) => {
+    const result = await api.selectContext(...args);
+    useAuthStore.getState().commitAccessToken(result.access_token);
+    return result;
+  },
+}));
 
 const userResponse = {
   created_at: '2026-08-23T00:00:00.000Z',
@@ -383,7 +399,11 @@ beforeEach(() => {
     isInitializing: false,
     isLoggingOut: false,
   });
-  api.refreshTokens.mockRejectedValue(new Error('No refresh session'));
+  api.refreshTokens.mockRejectedValue(
+    new AxiosError('No refresh session', undefined, undefined, undefined, {
+      status: 401,
+    } as never),
+  );
   api.getCurrentUser.mockResolvedValue(userResponse);
   api.getMyOrganizations.mockResolvedValue([membershipResponse]);
   api.getAuthContext.mockResolvedValue(contextResponse);
@@ -420,6 +440,27 @@ afterEach(() => {
 });
 
 describe('DukenAI POS authorization flow', () => {
+  it('shows a retryable restoration error and resumes after the server recovers', async () => {
+    api.refreshTokens
+      .mockRejectedValueOnce(
+        new AxiosError('Unavailable', undefined, undefined, undefined, {
+          status: 503,
+        } as never),
+      )
+      .mockResolvedValue({ access_token: 'restored-token' });
+    renderApp();
+    expect(
+      await screen.findByText('Не удалось восстановить данные'),
+    ).toBeInTheDocument();
+    expect(useAuthStore.getState().isInitialized).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    expect(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    ).toBeInTheDocument();
+  });
+
   it('keeps daily actions in the sale panel and rare equipment settings in the header', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });

@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
+import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { profileFixture } from '../../../../shared/pos/test-fixtures';
@@ -7,17 +8,27 @@ const mocks = vi.hoisted(() => ({
   token: 'old-token' as string | null,
   refresh: vi.fn(),
 }));
-vi.mock('../api/access-token.provider', () => ({
-  getAccessToken: () => mocks.token,
-}));
-vi.mock('../api/request', () => ({ refreshAccessToken: mocks.refresh }));
-
 async function fixture() {
   vi.resetModules();
   mocks.token = 'old-token';
-  mocks.refresh.mockReset().mockImplementation(async () => {
-    mocks.token = 'new-token';
-    return mocks.token;
+  mocks.refresh.mockReset().mockResolvedValue('new-token');
+  axios.defaults.adapter = async (config) => ({
+    config,
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    data: { data: { auth: { access_token: await mocks.refresh() } } },
+  });
+  const { configureAccessTokenProvider } =
+    await import('../api/access-token.provider');
+  configureAccessTokenProvider({
+    getAccessToken: () => mocks.token,
+    setAccessToken: (value) => {
+      mocks.token = value;
+    },
+    clearAccessToken: () => {
+      mocks.token = null;
+    },
   });
   const request = vi.fn();
   Object.defineProperty(window, 'localPos', {
@@ -61,6 +72,72 @@ describe('local cashier session authorization', () => {
       expect(f.request).toHaveBeenCalledWith({ type: 'disconnect' });
     },
   );
+  it('does not retry a connect under a different login after the original token fails', async () => {
+    const f = await fixture();
+    f.request.mockImplementation(async () => {
+      mocks.token = 'different-login';
+      return { ok: false, code: 'INVALID_TOKEN', message: 'Expired' };
+    });
+    await expect(
+      f.connectLocalPos(f.profile.session.register_id),
+    ).rejects.toMatchObject({ code: 'LOCAL_CONTEXT_CHANGED' });
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect(f.localPosProfile()).toBeNull();
+  });
+
+  it('suppresses an old execute result after authentication changes without replaying IPC', async () => {
+    const f = await fixture();
+    let finish!: (value: unknown) => void;
+    f.request.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = f.executeLocalSale({} as never);
+    const checked = expect(pending).rejects.toMatchObject({
+      code: 'LOCAL_CONTEXT_CHANGED',
+    });
+    mocks.token = 'different-login';
+    finish({ ok: true, value: { id: 'saved-sale' } });
+    await checked;
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses shared refresh when restore rejects its token and leaves profile caches empty', async () => {
+    const f = await fixture();
+    const client = new QueryClient();
+    f.request.mockResolvedValue({
+      ok: false,
+      code: 'INVALID_TOKEN',
+      message: 'Expired',
+    });
+    await expect(f.restoreLocalPos(client)).resolves.toBeNull();
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect(f.localPosProfile()).toBeNull();
+    expect(client.getQueryCache().getAll()).toEqual([]);
+  });
+
+  it('does not reconnect after refresh sanitizes the selected store', async () => {
+    const f = await fixture();
+    const jwt = (storeId: string | null) =>
+      `h.${btoa(JSON.stringify({ sub: 'user', sessionId: 'session', userOrganizationId: 'membership', organizationId: 'org', storeId }))}.s`;
+    mocks.token = jwt('store');
+    mocks.refresh.mockResolvedValue(jwt(null));
+    f.request.mockResolvedValue({
+      ok: false,
+      code: 'INVALID_TOKEN',
+      message: 'Expired',
+    });
+    await expect(
+      f.connectLocalPos(f.profile.session.register_id),
+    ).rejects.toMatchObject({ code: 'LOCAL_CONTEXT_CHANGED' });
+    expect(mocks.token).toBe(jwt(null));
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect(f.localPosProfile()).toBeNull();
+  });
+
   it('publishes a stable profile snapshot after connect, restore and disconnect', async () => {
     const {
       subscribeLocalPosProfile,

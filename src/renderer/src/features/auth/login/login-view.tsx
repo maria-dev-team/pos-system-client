@@ -17,7 +17,6 @@ import { queryKeys } from '@renderer/common/constants';
 import { httpErrorHandler } from '@renderer/common/helpers/http-error.helper';
 
 import { AuthShell } from '../components/auth-shell';
-import { useAuthStore } from '../stores/auth-store';
 import { type LoginValues, loginSchema } from './login.schema';
 
 type LoginErrors = Partial<Record<keyof LoginValues, string>>;
@@ -39,7 +38,6 @@ const getValidationErrors = (values: LoginValues): LoginErrors => {
 export function LoginView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const setAccessToken = useAuthStore((state) => state.setAccessToken);
   const [values, setValues] = useState<LoginValues>({
     login: '',
     password: '',
@@ -52,7 +50,6 @@ export function LoginView() {
     mutationFn: login,
     onError: (error) => httpErrorHandler(error),
     onSuccess: (result: LoginResponse) => {
-      setAccessToken(result.auth.access_token);
       queryClient.setQueryData(queryKeys.auth.currentUser(), result.user);
       queryClient.setQueryData(
         queryKeys.organizations.mine(),

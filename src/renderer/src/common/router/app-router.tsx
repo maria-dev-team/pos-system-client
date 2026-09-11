@@ -8,6 +8,7 @@ import {
   createRouter,
   redirect,
   useNavigate,
+  useRouter,
   useRouterState,
 } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
@@ -120,6 +121,17 @@ function RootLayout() {
         </div>
       </LocalPosSyncProvider>
     </OnScreenKeyboardProvider>
+  );
+}
+
+function RouteError({ error }: { error: Error }) {
+  const router = useRouter();
+  return (
+    <FullPageState
+      title="Не удалось восстановить данные"
+      description={getHttpErrorMessage(error)}
+      onRetry={() => void router.invalidate()}
+    />
   );
 }
 
@@ -840,6 +852,7 @@ const routeTree = rootRoute.addChildren([
 export const createAppRouter = (queryClient: QueryClient) =>
   createRouter({
     context: { queryClient },
+    defaultErrorComponent: RouteError,
     defaultPendingComponent: () => (
       <FullPageState isLoading title="Загружаем данные" />
     ),

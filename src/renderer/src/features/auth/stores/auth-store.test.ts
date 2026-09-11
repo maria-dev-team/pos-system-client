@@ -1,3 +1,4 @@
+import { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
@@ -34,8 +35,12 @@ describe('auth store', () => {
     });
   });
 
-  it('finishes initialization as a guest when refresh fails', async () => {
-    api.refreshTokens.mockRejectedValue(new Error('No session'));
+  it('finishes initialization as a guest only when refresh returns 401', async () => {
+    api.refreshTokens.mockRejectedValue(
+      new AxiosError('No session', undefined, undefined, undefined, {
+        status: 401,
+      } as never),
+    );
     const store = await loadStore();
 
     await store.getState().initialize();
@@ -44,6 +49,39 @@ describe('auth store', () => {
       accessToken: null,
       isInitialized: true,
     });
+  });
+
+  it('preserves a retryable restoration failure and succeeds on retry', async () => {
+    api.refreshTokens
+      .mockRejectedValueOnce(new Error('Network unavailable'))
+      .mockResolvedValueOnce({ access_token: 'fresh-token' });
+    const store = await loadStore();
+    await expect(store.getState().initialize()).rejects.toThrow(
+      'Network unavailable',
+    );
+    expect(store.getState().isInitialized).toBe(false);
+    await store.getState().initialize();
+    expect(store.getState().accessToken).toBe('fresh-token');
+  });
+
+  it('does not restore a session after logout starts with no token', async () => {
+    let finish!: (value: unknown) => void;
+    api.refreshTokens.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    api.logout.mockResolvedValue(undefined);
+    const store = await loadStore();
+    const pending = store.getState().initialize();
+    const checked = expect(pending).rejects.toMatchObject({
+      code: 'AUTH_CONTEXT_CHANGED',
+    });
+    await store.getState().logout();
+    finish({ access_token: 'late-token' });
+    await checked;
+    expect(store.getState().accessToken).toBeNull();
   });
 
   it('keeps the local session when backend logout fails', async () => {
@@ -60,8 +98,10 @@ describe('auth store', () => {
   });
 
   it('clears the local session after backend logout succeeds', async () => {
-    api.logout.mockResolvedValue(undefined);
     const store = await loadStore();
+    api.logout.mockImplementation(async () =>
+      store.getState().commitAccessToken(null),
+    );
     store.getState().setAccessToken('access-token');
 
     await store.getState().logout();

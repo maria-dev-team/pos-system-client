@@ -9,7 +9,12 @@ import type {
 } from '../../../../shared/pos/contracts';
 import { PosError } from '../../../../shared/pos/contracts';
 import { getAccessToken } from '../api/access-token.provider';
-import { refreshAccessToken } from '../api/request';
+import {
+  assertAuthCurrent,
+  captureAuth,
+  refreshAccessToken,
+  waitForAuthRefresh,
+} from '../api/request';
 import { queryKeys } from '../constants/query-keys';
 
 let profile: PosProfile | null = null;
@@ -34,6 +39,13 @@ const contextChanged = (): PosError =>
     'LOCAL_CONTEXT_CHANGED',
     'Контекст кассы изменился. Повторите вход в смену.',
   );
+const assertLocalAuth = (auth: ReturnType<typeof captureAuth>): void => {
+  try {
+    assertAuthCurrent(auth);
+  } catch {
+    throw contextChanged();
+  }
+};
 let connecting: {
   accessToken: string;
   registerId: string;
@@ -60,8 +72,13 @@ export async function connectLocalPos(
   registerId: string,
   force = false,
 ): Promise<PosProfile> {
-  if (disconnecting) await disconnecting;
+  const auth = captureAuth();
   const epoch = lifecycle;
+  if (disconnecting) await disconnecting;
+  const refreshing = waitForAuthRefresh();
+  if (refreshing) await refreshing;
+  assertLocalAuth(auth);
+  if (epoch !== lifecycle) throw contextChanged();
   const accessToken = getAccessToken();
   if (!accessToken) throw new PosError('INVALID_SESSION', 'Войдите в систему.');
   if (
@@ -80,6 +97,7 @@ export async function connectLocalPos(
       return connecting.promise;
     await connecting.promise.catch(() => undefined);
     if (epoch !== lifecycle) throw contextChanged();
+    assertLocalAuth(auth);
     return connectLocalPos(registerId, force);
   }
   const promise = (async (): Promise<PosProfile> => {
@@ -94,6 +112,7 @@ export async function connectLocalPos(
       });
     } catch (error) {
       if (epoch !== lifecycle) throw contextChanged();
+      assertLocalAuth(auth);
       if (!needsTokenRefresh(error)) throw error;
       // Only authentication is retried here, never a payment or sale command.
       // Use the same single-flight refresh as ordinary HTTP requests.
@@ -102,6 +121,7 @@ export async function connectLocalPos(
       verifiedToken =
         latest !== accessToken ? latest : await refreshAccessToken();
       if (epoch !== lifecycle) throw contextChanged();
+      assertLocalAuth(auth);
       connected = await callLocalPos<PosProfile>({
         type: 'connect',
         accessToken: verifiedToken,
@@ -109,7 +129,8 @@ export async function connectLocalPos(
         forceOnline: true,
       });
     }
-    if (epoch !== lifecycle || getAccessToken() !== verifiedToken)
+    assertLocalAuth(auth);
+    if (epoch !== lifecycle)
       throw new PosError(
         'LOCAL_CONTEXT_CHANGED',
         'Авторизация изменилась во время проверки кассы. Повторите вход в смену.',
@@ -130,8 +151,13 @@ export async function connectLocalPos(
 export async function restoreLocalPos(
   queryClient: QueryClient,
 ): Promise<PosProfile | null> {
-  if (disconnecting) await disconnecting;
+  const auth = captureAuth();
   const epoch = lifecycle;
+  if (disconnecting) await disconnecting;
+  const refreshing = waitForAuthRefresh();
+  if (refreshing) await refreshing;
+  assertLocalAuth(auth);
+  if (epoch !== lifecycle) throw contextChanged();
   const accessToken = getAccessToken();
   if (!window.localPos || !accessToken) return null;
   let restored: PosProfile | null;
@@ -142,14 +168,17 @@ export async function restoreLocalPos(
     });
   } catch (error) {
     if (epoch !== lifecycle) throw contextChanged();
+    assertLocalAuth(auth);
     if (!needsTokenRefresh(error)) throw error;
     if (getAccessToken() === accessToken) await refreshAccessToken();
+    assertLocalAuth(auth);
     // The new token is not trusted against the old offline grant. The router
     // reloads the active register/session online before reconnecting.
     return null;
   }
+  assertLocalAuth(auth);
   if (!restored) return null;
-  if (epoch !== lifecycle || getAccessToken() !== accessToken)
+  if (epoch !== lifecycle)
     throw new PosError(
       'LOCAL_CONTEXT_CHANGED',
       'Авторизация изменилась во время восстановления кассы.',
@@ -187,7 +216,11 @@ export async function disconnectLocalPos(): Promise<void> {
 export async function executeLocalSale(
   command: SaleCommand,
 ): Promise<SaleResponse> {
+  const auth = captureAuth();
   if (profile && token !== getAccessToken())
     await connectLocalPos(profile.session.register_id);
-  return callLocalPos<SaleResponse>({ type: 'execute', command });
+  assertLocalAuth(auth);
+  const result = await callLocalPos<SaleResponse>({ type: 'execute', command });
+  assertLocalAuth(auth);
+  return result;
 }
