@@ -124,6 +124,7 @@ export function productFixture(): ProductResponse {
     vat_rate: '16',
     unit: 'pcs',
     is_active: true,
+    is_quick: false,
     deleted_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

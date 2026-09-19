@@ -29,7 +29,7 @@ const category = (
   created_at: '2026-08-29T10:00:00.000Z',
   deleted_at: null,
   id: 'category-1',
-  name: 'Напитки',
+  name: 'Выпечка',
   organization_id: 'organization-1',
   parent_id: null,
   updated_at: '2026-08-29T10:00:00.000Z',
@@ -40,24 +40,18 @@ const product = (
   overrides: Partial<ProductResponse> = {},
 ): ProductResponse => ({
   barcode: '001234',
-  category_id: 'tea',
+  category_id: 'bread',
   created_at: '2026-08-29T10:00:00.000Z',
   deleted_at: null,
   id: 'product-1',
   is_active: true,
-  name: 'Чёрный чай',
-  nkt: {
-    gtin: '001234',
-    is_marked: false,
-    is_social: false,
-    name_kk: null,
-    name_ru: 'Чёрный чай',
-    ntin_code: 'NTIN-001234',
-  },
-  nkt_product_id: 'nkt-product-1',
+  is_quick: true,
+  name: 'Хлеб',
+  nkt: null,
+  nkt_product_id: null,
   organization_id: 'organization-1',
-  retail_price: '950.00',
-  sku: 'TEA-1',
+  retail_price: '450.00',
+  sku: 'BREAD-1',
   unit: 'pcs',
   updated_at: '2026-08-29T10:00:00.000Z',
   vat_rate: null,
@@ -68,12 +62,13 @@ const tree = [
   category({
     children: [
       category({
-        id: 'tea',
-        name: 'Чай',
+        id: 'bread',
+        name: 'Хлеб',
         parent_id: 'category-1',
       }),
     ],
   }),
+  category({ id: 'drinks', name: 'Напитки' }),
 ];
 
 const categoryPage = (categories = tree, hasMore = false, offset = 0) => ({
@@ -126,48 +121,60 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('CheckoutCategoryPicker', () => {
-  it('loads categories only when opened', async () => {
+  it('loads only quick products when opened', async () => {
     const { queryClient } = renderPicker(false);
 
     expect(getCategories).not.toHaveBeenCalled();
+    expect(searchProducts).not.toHaveBeenCalled();
     cleanup();
     queryClient.clear();
     renderPicker(true);
 
     expect(
-      await screen.findByRole('button', { name: 'Открыть категорию Напитки' }),
+      await screen.findByRole('button', { name: 'Открыть категорию Выпечка' }),
     ).toBeInTheDocument();
     expect(getCategories).toHaveBeenCalledWith({ limit: 100, offset: 0 });
+    expect(searchProducts).toHaveBeenCalledWith({
+      isQuick: true,
+      limit: 100,
+      offset: 0,
+    });
   });
 
-  it('shows only sellable products after drilling into a leaf category', async () => {
+  it('shows only categories that contain sellable quick products', async () => {
     const user = userEvent.setup();
     vi.mocked(searchProducts).mockResolvedValue(
       productPage([
         product(),
-        product({ id: 'inactive', is_active: false, name: 'Старый чай' }),
-        product({ id: 'no-price', name: 'Чай без цены', retail_price: null }),
+        product({ id: 'inactive', is_active: false, name: 'Старый хлеб' }),
+        product({ id: 'no-price', name: 'Хлеб без цены', retail_price: null }),
+        product({
+          category_id: 'drinks',
+          id: 'ordinary',
+          is_quick: false,
+          name: 'Обычный напиток',
+        }),
       ]),
     );
     renderPicker(true);
 
+    const bakery = await screen.findByRole('button', {
+      name: 'Открыть категорию Выпечка',
+    });
+    expect(
+      screen.queryByRole('button', { name: 'Открыть категорию Напитки' }),
+    ).not.toBeInTheDocument();
+    await user.click(bakery);
     await user.click(
-      await screen.findByRole('button', { name: 'Открыть категорию Напитки' }),
-    );
-    await user.click(
-      screen.getByRole('button', { name: 'Открыть категорию Чай' }),
+      screen.getByRole('button', { name: 'Открыть категорию Хлеб' }),
     );
 
     expect(
-      await screen.findByRole('button', { name: 'Добавить товар Чёрный чай' }),
+      await screen.findByRole('button', { name: 'Добавить товар Хлеб' }),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Старый чай')).not.toBeInTheDocument();
-    expect(screen.queryByText('Чай без цены')).not.toBeInTheDocument();
-    expect(searchProducts).toHaveBeenCalledWith({
-      categoryId: 'tea',
-      limit: 100,
-      offset: 0,
-    });
+    expect(screen.queryByText('Старый хлеб')).not.toBeInTheDocument();
+    expect(screen.queryByText('Хлеб без цены')).not.toBeInTheDocument();
+    expect(screen.queryByText('Обычный напиток')).not.toBeInTheDocument();
   });
 
   it('keeps the dialog open and announces a successful add', async () => {
@@ -175,31 +182,50 @@ describe('CheckoutCategoryPicker', () => {
     const { onSelectProduct } = renderPicker(true);
 
     await user.click(
-      await screen.findByRole('button', { name: 'Открыть категорию Напитки' }),
+      await screen.findByRole('button', {
+        name: 'Открыть категорию Выпечка',
+      }),
     );
     await user.click(
-      screen.getByRole('button', { name: 'Открыть категорию Чай' }),
+      screen.getByRole('button', { name: 'Открыть категорию Хлеб' }),
     );
     await user.click(
-      await screen.findByRole('button', { name: 'Добавить товар Чёрный чай' }),
+      await screen.findByRole('button', { name: 'Добавить товар Хлеб' }),
     );
 
     await waitFor(() =>
       expect(onSelectProduct).toHaveBeenCalledWith(product()),
     );
-    expect(screen.getByText('Товар «Чёрный чай» добавлен')).toBeInTheDocument();
+    expect(screen.getByText('Товар «Хлеб» добавлен')).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { name: 'Товары по категориям' }),
+      screen.getByRole('heading', { name: 'Быстрые товары' }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Закрыть' }));
 
     expect(
-      screen.getByRole('button', { name: 'Открыть категорию Напитки' }),
+      screen.getByRole('button', { name: 'Открыть категорию Выпечка' }),
     ).toBeInTheDocument();
+    expect(screen.queryByText('Товар «Хлеб» добавлен')).not.toBeInTheDocument();
+  });
+
+  it('shows uncategorized quick products in a fallback category', async () => {
+    const user = userEvent.setup();
+    vi.mocked(searchProducts).mockResolvedValue(
+      productPage([
+        product({ category_id: null, id: 'kurt', name: 'Курт', sku: null }),
+      ]),
+    );
+    renderPicker(true);
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Открыть категорию Без категории',
+      }),
+    );
     expect(
-      screen.queryByText('Товар «Чёрный чай» добавлен'),
-    ).not.toBeInTheDocument();
+      screen.getByRole('button', { name: 'Добавить товар Курт' }),
+    ).toBeInTheDocument();
   });
 
   it('can be closed while product selection is disabled', async () => {
@@ -212,48 +238,46 @@ describe('CheckoutCategoryPicker', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('retries a failed category request', async () => {
+  it('retries a failed quick-products request', async () => {
     const user = userEvent.setup();
-    vi.mocked(getCategories)
+    vi.mocked(searchProducts)
       .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValueOnce(categoryPage());
+      .mockResolvedValueOnce(productPage([product()]));
     renderPicker(true);
 
     expect(
-      await screen.findByText('Не удалось загрузить категории'),
+      await screen.findByText('Не удалось загрузить быстрые товары'),
     ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Повторить' }));
 
     expect(
-      await screen.findByRole('button', { name: 'Открыть категорию Напитки' }),
+      await screen.findByRole('button', { name: 'Открыть категорию Выпечка' }),
     ).toBeInTheDocument();
   });
 
-  it('loads the next product page inside a leaf category', async () => {
-    const user = userEvent.setup();
+  it('loads every quick-product page before building categories', async () => {
     vi.mocked(searchProducts).mockImplementation(async ({ offset }) =>
       offset === 0
         ? productPage([product()], true)
         : productPage(
-            [product({ id: 'product-2', name: 'Зелёный чай' })],
+            [
+              product({
+                category_id: 'drinks',
+                id: 'product-2',
+                name: 'Вода',
+              }),
+            ],
             false,
             100,
           ),
     );
     renderPicker(true);
 
-    await user.click(
+    expect(
       await screen.findByRole('button', { name: 'Открыть категорию Напитки' }),
-    );
-    await user.click(
-      screen.getByRole('button', { name: 'Открыть категорию Чай' }),
-    );
-    await screen.findByText('Чёрный чай');
-    await user.click(screen.getByRole('button', { name: 'Загрузить ещё' }));
-
-    expect(await screen.findByText('Зелёный чай')).toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(searchProducts).toHaveBeenLastCalledWith({
-      categoryId: 'tea',
+      isQuick: true,
       limit: 100,
       offset: 100,
     });

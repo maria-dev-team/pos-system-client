@@ -55,12 +55,16 @@ const getBlockingSales = (error: unknown): BlockingSale[] => {
 
 type EndCashierSessionActionProps = {
   cashierSession: CashierSessionResponse;
+  includeOtherInCurrentQuery?: boolean;
+  isOtherCashierSession?: boolean;
   onEnded: () => void;
   onEndedLocally?: () => void;
 };
 
 export function EndCashierSessionAction({
   cashierSession,
+  includeOtherInCurrentQuery = false,
+  isOtherCashierSession = false,
   onEnded,
   onEndedLocally,
 }: EndCashierSessionActionProps) {
@@ -91,7 +95,11 @@ export function EndCashierSessionAction({
     onSuccess: (session) => {
       onEndedLocally?.();
       queryClient.setQueryData(
-        queryKeys.cashierSessions.current(cashierSession.register_id),
+        includeOtherInCurrentQuery
+          ? queryKeys.cashierSessions.currentIncludingOthers(
+              cashierSession.register_id,
+            )
+          : queryKeys.cashierSessions.current(cashierSession.register_id),
         session,
       );
       setEndedSession(session);
@@ -136,7 +144,11 @@ export function EndCashierSessionAction({
 
   const finish = () => {
     queryClient.setQueryData(
-      queryKeys.cashierSessions.current(cashierSession.register_id),
+      includeOtherInCurrentQuery
+        ? queryKeys.cashierSessions.currentIncludingOthers(
+            cashierSession.register_id,
+          )
+        : queryKeys.cashierSessions.current(cashierSession.register_id),
       null,
     );
     setIsOpen(false);
@@ -147,14 +159,18 @@ export function EndCashierSessionAction({
   return (
     <>
       <Button
-        aria-label="Завершить работу на кассе"
+        aria-label={
+          isOtherCashierSession
+            ? 'Завершить смену другого кассира'
+            : 'Завершить работу на кассе'
+        }
         className="min-h-11 w-full border-border bg-background px-4 text-muted-foreground hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
         onClick={() => setIsOpen(true)}
         type="button"
         variant="ghost"
       >
         <CircleStop aria-hidden="true" />
-        Завершить работу
+        {isOtherCashierSession ? 'Завершить смену кассира' : 'Завершить работу'}
       </Button>
 
       <Dialog onOpenChange={changeOpen} open={isOpen}>
@@ -176,8 +192,9 @@ export function EndCashierSessionAction({
                 </span>
                 <DialogTitle>Работа завершена</DialogTitle>
                 <DialogDescription>
-                  Касса остаётся открытой для следующего сотрудника. Проверьте
-                  итог.
+                  {isOtherCashierSession
+                    ? 'Смена другого кассира завершена. Проверьте итог перед открытием своей смены.'
+                    : 'Касса остаётся открытой для следующего сотрудника. Проверьте итог.'}
                 </DialogDescription>
               </DialogHeader>
 
@@ -203,23 +220,32 @@ export function EndCashierSessionAction({
               </div>
 
               <Button className="min-h-13 w-full text-base" onClick={finish}>
-                К выбору кассы
+                {isOtherCashierSession
+                  ? 'Перейти к своей смене'
+                  : 'К выбору кассы'}
               </Button>
             </div>
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>Завершить работу на кассе</DialogTitle>
+                <DialogTitle>
+                  {isOtherCashierSession
+                    ? 'Завершить смену другого кассира'
+                    : 'Завершить работу на кассе'}
+                </DialogTitle>
                 <DialogDescription>
-                  Пересчитайте свои наличные. Касса останется открытой для
-                  следующего сотрудника.
+                  {isOtherCashierSession
+                    ? 'Пересчитайте наличные в кассе. Действие будет зафиксировано как административное завершение.'
+                    : 'Пересчитайте свои наличные. Касса останется открытой для следующего сотрудника.'}
                 </DialogDescription>
               </DialogHeader>
 
               <form className="space-y-5" onSubmit={submit}>
                 <FormField>
                   <Label htmlFor="cashier-actual-cash">
-                    Наличные у кассира, ₸
+                    {isOtherCashierSession
+                      ? 'Фактические наличные в кассе, ₸'
+                      : 'Наличные у кассира, ₸'}
                   </Label>
                   <Input
                     aria-describedby={
@@ -305,7 +331,9 @@ export function EndCashierSessionAction({
                         className="animate-spin"
                       />
                     ) : null}
-                    Завершить работу
+                    {isOtherCashierSession
+                      ? 'Завершить смену'
+                      : 'Завершить работу'}
                   </Button>
                 </DialogFooter>
               </form>

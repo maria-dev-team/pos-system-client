@@ -120,6 +120,22 @@ describe('durable local database', () => {
     );
     expect(db.search('store', '', undefined, 20, 0).meta.total).toBe(2);
   });
+  it('returns only configured quick products from the offline catalog', async () => {
+    const db = open();
+    const regular = productFixture();
+    const quick = {
+      ...regular,
+      id: 'quick-product',
+      barcode: 'quick-barcode',
+      is_quick: true,
+      name: 'Быстрый товар',
+    };
+    await db.replaceCatalog('store', [regular, quick]);
+
+    expect(db.search('store', '', undefined, 20, 0, true).products).toEqual([
+      expect.objectContaining({ id: 'quick-product', is_quick: true }),
+    ]);
+  });
   it('rejects ambiguous barcode/GTIN matches instead of selecting an arbitrary product', async () => {
     const db = open();
     const milk = productFixture();
