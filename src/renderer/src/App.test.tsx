@@ -1359,6 +1359,70 @@ describe('DukenAI POS authorization flow', () => {
     expect(api.createSale).not.toHaveBeenCalled();
   });
 
+  it('allows an authorized employee to reconcile and end another cashier session', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: [
+        ...contextResponse.permissions,
+        'cashier_session.end_others',
+      ],
+    });
+    const otherCashierSession = {
+      ...cashierSessionResponse,
+      membership_id: 'membership-2',
+    };
+    api.getCurrentCashierSession.mockResolvedValue(otherCashierSession);
+    api.endCashierSession.mockResolvedValue({
+      ...endedCashierSessionResponse,
+      end_reason: 'ADMIN_TERMINATED',
+      membership_id: 'membership-2',
+    });
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'На кассе работает другой кассир',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Оформление продажи' }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Завершить смену другого кассира',
+      }),
+    );
+    await user.type(
+      screen.getByLabelText('Фактические наличные в кассе, ₸'),
+      '4900',
+    );
+    await user.click(screen.getByRole('button', { name: 'Завершить смену' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Работа завершена' }),
+    ).toBeInTheDocument();
+    expect(api.endCashierSession).toHaveBeenCalledWith('cashier-session-1', {
+      actualCash: '4900',
+    });
+    expect(api.getCurrentSale).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Перейти к своей смене' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Начало работы' }),
+    ).toBeInTheDocument();
+  });
+
   it('restores a locked cashier session without opening it again', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });

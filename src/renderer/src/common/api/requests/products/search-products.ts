@@ -7,8 +7,14 @@ import type { SearchProductsPayload } from '../../types/product.types';
 export const searchProducts = async (
   params: SearchProductsPayload,
 ): Promise<ProductSearchResponse> => {
-  if (localPosActive())
-    return callLocalPos<ProductSearchResponse>({ type: 'search', ...params });
+  if (localPosActive()) {
+    const { isQuick, ...searchParams } = params;
+    return callLocalPos<ProductSearchResponse>({
+      type: 'search',
+      ...searchParams,
+      quickOnly: isQuick,
+    });
+  }
   if (window.localPos)
     throw new PosError(
       'LOCAL_NOT_READY',

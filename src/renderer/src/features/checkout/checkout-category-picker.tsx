@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { ChevronRight, Folder, LoaderCircle } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronRight, Folder, LoaderCircle, Star } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   type CategoryResponse,
@@ -21,6 +21,7 @@ import { formatCash } from '@renderer/common/helpers/format-cash';
 import { LocalPosSyncBar } from '@renderer/features/local-pos';
 
 const PAGE_SIZE = 100;
+const UNCATEGORIZED_ID = '__uncategorized__';
 
 type CheckoutCategoryPickerProps = {
   disabled: boolean;
@@ -30,6 +31,17 @@ type CheckoutCategoryPickerProps = {
   organizationId: string;
   storeId: string;
 };
+
+const pruneCategoryTree = (
+  categories: CategoryResponse[],
+  categoryIds: Set<string>,
+): CategoryResponse[] =>
+  categories.flatMap((category) => {
+    const children = pruneCategoryTree(category.children, categoryIds);
+    return categoryIds.has(category.id) || children.length
+      ? [{ ...category, children }]
+      : [];
+  });
 
 export function CheckoutCategoryPicker({
   disabled,
@@ -43,9 +55,6 @@ export function CheckoutCategoryPicker({
   const [addingProductId, setAddingProductId] = useState<string>();
   const [announcement, setAnnouncement] = useState('');
   const selectedCategory = path.at(-1);
-  const isLeaf = Boolean(
-    selectedCategory && selectedCategory.children.length === 0,
-  );
   const categories = useInfiniteQuery({
     enabled: open,
     initialPageParam: 0,
@@ -55,37 +64,93 @@ export function CheckoutCategoryPicker({
       page.meta.has_more ? page.meta.offset + page.meta.limit : undefined,
     queryKey: queryKeys.categories.tree(organizationId),
   });
-  const products = useInfiniteQuery({
-    enabled: open && isLeaf,
+  const quickProducts = useInfiniteQuery({
+    enabled: open,
     initialPageParam: 0,
     queryFn: ({ pageParam }) =>
       searchProducts({
-        categoryId: selectedCategory!.id,
+        isQuick: true,
         limit: PAGE_SIZE,
         offset: pageParam,
       }),
     getNextPageParam: (page) =>
       page.meta.has_more ? page.meta.offset + page.meta.limit : undefined,
-    queryKey: queryKeys.products.category(
-      organizationId,
-      storeId,
-      selectedCategory?.id ?? '',
-    ),
+    queryKey: queryKeys.products.quick(organizationId, storeId),
   });
 
-  const rootCategories =
-    categories.data?.pages.flatMap((page) => page.categories) ?? [];
+  useEffect(() => {
+    if (open && categories.hasNextPage && !categories.isFetchingNextPage)
+      void categories.fetchNextPage();
+  }, [
+    categories.fetchNextPage,
+    categories.hasNextPage,
+    categories.isFetchingNextPage,
+    open,
+  ]);
+
+  useEffect(() => {
+    if (open && quickProducts.hasNextPage && !quickProducts.isFetchingNextPage)
+      void quickProducts.fetchNextPage();
+  }, [
+    open,
+    quickProducts.fetchNextPage,
+    quickProducts.hasNextPage,
+    quickProducts.isFetchingNextPage,
+  ]);
+
+  const sellableQuickProducts = useMemo(
+    () =>
+      (quickProducts.data?.pages.flatMap((page) => page.products) ?? []).filter(
+        (product) =>
+          product.is_quick &&
+          product.is_active &&
+          product.retail_price !== null,
+      ),
+    [quickProducts.data],
+  );
+  const rootCategories = useMemo(() => {
+    const categoryIds = new Set(
+      sellableQuickProducts.flatMap((product) =>
+        product.category_id ? [product.category_id] : [],
+      ),
+    );
+    const roots = pruneCategoryTree(
+      categories.data?.pages.flatMap((page) => page.categories) ?? [],
+      categoryIds,
+    );
+    if (sellableQuickProducts.some((product) => !product.category_id)) {
+      roots.push({
+        children: [],
+        created_at: '',
+        deleted_at: null,
+        id: UNCATEGORIZED_ID,
+        name: 'Без категории',
+        organization_id: organizationId,
+        parent_id: null,
+        updated_at: '',
+      });
+    }
+    return roots;
+  }, [categories.data, organizationId, sellableQuickProducts]);
   const visibleCategories = selectedCategory
     ? selectedCategory.children
     : rootCategories;
-  const visibleProducts =
-    products.data?.pages
-      .flatMap((page) => page.products)
-      .filter(
-        (product) => product.is_active && product.retail_price !== null,
-      ) ?? [];
+  const visibleProducts = selectedCategory
+    ? sellableQuickProducts.filter((product) =>
+        selectedCategory.id === UNCATEGORIZED_ID
+          ? !product.category_id
+          : product.category_id === selectedCategory.id,
+      )
+    : [];
   const busy = addingProductId !== undefined;
   const pending = disabled || busy;
+  const loading =
+    categories.isPending ||
+    quickProducts.isPending ||
+    categories.hasNextPage ||
+    quickProducts.hasNextPage ||
+    categories.isFetchingNextPage ||
+    quickProducts.isFetchingNextPage;
 
   const selectProduct = async (product: ProductResponse) => {
     if (pending) return;
@@ -118,10 +183,9 @@ export function CheckoutCategoryPicker({
         showCloseButton={!busy}
       >
         <DialogHeader className="border-b border-border px-6 py-5">
-          <DialogTitle>Товары по категориям</DialogTitle>
+          <DialogTitle>Быстрые товары</DialogTitle>
           <DialogDescription>
-            Выберите категорию, затем нажмите на товар, чтобы добавить его в
-            чек.
+            Показаны только категории, в которых настроены быстрые товары.
           </DialogDescription>
         </DialogHeader>
         <LocalPosSyncBar />
@@ -140,7 +204,7 @@ export function CheckoutCategoryPicker({
             type="button"
             variant="ghost"
           >
-            Все категории
+            Быстрые товары
           </Button>
           {path.map((category, index) => (
             <span className="flex items-center gap-1" key={category.id}>
@@ -166,109 +230,97 @@ export function CheckoutCategoryPicker({
         </nav>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
-          {categories.isPending ? (
-            <LoadingState label="Загружаем категории" />
-          ) : categories.isError ? (
+          {loading ? (
+            <LoadingState label="Загружаем быстрые товары" />
+          ) : categories.isError || quickProducts.isError ? (
             <ErrorState
-              label="Не удалось загрузить категории"
-              onRetry={() => void categories.refetch()}
+              label="Не удалось загрузить быстрые товары"
+              onRetry={() =>
+                void Promise.all([
+                  categories.refetch(),
+                  quickProducts.refetch(),
+                ])
+              }
             />
-          ) : isLeaf ? (
-            products.isPending ? (
-              <LoadingState label="Загружаем товары" />
-            ) : products.isError ? (
-              <ErrorState
-                label="Не удалось загрузить товары"
-                onRetry={() => void products.refetch()}
-              />
-            ) : (
-              <>
-                {visibleProducts.length ? (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {visibleProducts.map((product) => {
-                      return (
-                        <button
-                          aria-label={`Добавить товар ${product.name}`}
-                          className="min-h-28 rounded-xl border border-border bg-background p-4 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={pending}
-                          key={product.id}
-                          onClick={() => void selectProduct(product)}
-                          type="button"
-                        >
-                          <span className="flex items-start justify-between gap-3">
-                            <span className="font-semibold leading-snug">
-                              {product.name}
-                            </span>
-                            {addingProductId === product.id ? (
-                              <LoaderCircle
-                                aria-hidden="true"
-                                className="size-5 shrink-0 animate-spin text-primary"
-                              />
-                            ) : (
-                              <span className="shrink-0 font-bold tabular-nums text-primary">
-                                {formatCash(product.retail_price)}
-                              </span>
-                            )}
-                          </span>
-                          <span className="mt-3 block text-xs text-muted-foreground">
-                            {product.sku} · {product.barcode}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <EmptyState label="В этой категории нет доступных товаров" />
-                )}
-                {products.hasNextPage ? (
-                  <LoadMoreButton
-                    loading={products.isFetchingNextPage}
-                    onClick={() => void products.fetchNextPage()}
-                  />
-                ) : null}
-              </>
-            )
-          ) : (
-            <>
+          ) : visibleCategories.length || visibleProducts.length ? (
+            <div className="space-y-6">
               {visibleCategories.length ? (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {visibleCategories.map((category) => (
-                    <button
-                      aria-label={`Открыть категорию ${category.name}`}
-                      className="flex min-h-28 items-center justify-between gap-4 rounded-xl border border-border bg-background p-4 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-55"
-                      disabled={pending}
-                      key={category.id}
-                      onClick={() => {
-                        setPath([...path, category]);
-                        setAnnouncement('');
-                      }}
-                      type="button"
-                    >
-                      <span className="flex min-w-0 items-center gap-3">
-                        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                          <Folder aria-hidden="true" className="size-5" />
+                <section aria-label="Категории быстрых товаров">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {visibleCategories.map((category) => (
+                      <button
+                        aria-label={`Открыть категорию ${category.name}`}
+                        className="flex min-h-28 items-center justify-between gap-4 rounded-xl border border-border bg-background p-4 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-55"
+                        disabled={pending}
+                        key={category.id}
+                        onClick={() => {
+                          setPath([...path, category]);
+                          setAnnouncement('');
+                        }}
+                        type="button"
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                            <Folder aria-hidden="true" className="size-5" />
+                          </span>
+                          <span className="font-semibold leading-snug">
+                            {category.name}
+                          </span>
                         </span>
-                        <span className="font-semibold leading-snug">
-                          {category.name}
-                        </span>
-                      </span>
-                      <ChevronRight
-                        aria-hidden="true"
-                        className="size-5 shrink-0 text-muted-foreground"
-                      />
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState label="Категорий пока нет" />
-              )}
-              {!selectedCategory && categories.hasNextPage ? (
-                <LoadMoreButton
-                  loading={categories.isFetchingNextPage}
-                  onClick={() => void categories.fetchNextPage()}
-                />
+                        <ChevronRight
+                          aria-hidden="true"
+                          className="size-5 shrink-0 text-muted-foreground"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ) : null}
-            </>
+
+              {visibleProducts.length ? (
+                <section aria-label="Товары выбранной категории">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {visibleProducts.map((product) => (
+                      <button
+                        aria-label={`Добавить товар ${product.name}`}
+                        className="min-h-28 rounded-xl border border-border bg-background p-4 text-left transition-[border-color,background-color,box-shadow] hover:border-primary/30 hover:bg-primary/[0.025] hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={pending}
+                        key={product.id}
+                        onClick={() => void selectProduct(product)}
+                        type="button"
+                      >
+                        <span className="flex items-start justify-between gap-3">
+                          <span className="font-semibold leading-snug">
+                            {product.name}
+                          </span>
+                          {addingProductId === product.id ? (
+                            <LoaderCircle
+                              aria-hidden="true"
+                              className="size-5 shrink-0 animate-spin text-primary"
+                            />
+                          ) : (
+                            <span className="shrink-0 font-bold tabular-nums text-primary">
+                              {formatCash(product.retail_price)}
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Star
+                            aria-hidden="true"
+                            className="size-3.5 fill-primary/15 text-primary"
+                          />
+                          {[product.sku, product.barcode]
+                            .filter(Boolean)
+                            .join(' · ') || 'Быстрый товар'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          ) : (
+            <EmptyState label="Быстрые товары пока не настроены" />
           )}
         </div>
 
@@ -318,31 +370,8 @@ function ErrorState({
 
 function EmptyState({ label }: { label: string }) {
   return (
-    <p className="grid min-h-52 place-items-center rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-      {label}
-    </p>
-  );
-}
-
-function LoadMoreButton({
-  loading,
-  onClick,
-}: {
-  loading: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      className="mx-auto mt-5 min-h-12 border-border bg-background"
-      disabled={loading}
-      onClick={onClick}
-      type="button"
-      variant="ghost"
-    >
-      {loading ? (
-        <LoaderCircle aria-hidden="true" className="animate-spin" />
-      ) : null}
-      {loading ? 'Загружаем' : 'Загрузить ещё'}
-    </Button>
+    <div className="grid min-h-52 place-items-center text-center">
+      <p className="max-w-sm text-sm text-muted-foreground">{label}</p>
+    </div>
   );
 }

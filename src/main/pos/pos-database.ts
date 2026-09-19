@@ -25,7 +25,7 @@ export class PosDatabase {
       CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS local_sales (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, sequence INTEGER NOT NULL, value BLOB NOT NULL);
       CREATE INDEX IF NOT EXISTS sales_session ON local_sales(session_id, sequence);
-      CREATE TABLE IF NOT EXISTS products (scope TEXT NOT NULL, id TEXT NOT NULL, barcode TEXT NOT NULL, gtin TEXT, category TEXT, name TEXT NOT NULL, value BLOB NOT NULL, PRIMARY KEY(scope,id));
+      CREATE TABLE IF NOT EXISTS products (scope TEXT NOT NULL, id TEXT NOT NULL, barcode TEXT NOT NULL, gtin TEXT, category TEXT, name TEXT NOT NULL, quick INTEGER NOT NULL DEFAULT 0, value BLOB NOT NULL, PRIMARY KEY(scope,id));
       CREATE INDEX IF NOT EXISTS products_barcode ON products(scope,barcode);
       CREATE INDEX IF NOT EXISTS products_gtin ON products(scope,gtin);
       CREATE INDEX IF NOT EXISTS products_category ON products(scope,category,name);
@@ -37,6 +37,14 @@ export class PosDatabase {
     for (const column of ['content_hash', 'last_seen'])
       if (!columns.some((row) => row.name === column))
         this.db.exec(`ALTER TABLE products ADD COLUMN ${column} TEXT`);
+    if (!columns.some((row) => row.name === 'quick')) {
+      this.db.exec(
+        'ALTER TABLE products ADD COLUMN quick INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS products_quick ON products(scope,quick,name,id)',
+    );
     // Align FTS row IDs once, including existing installations. Cleanup then uses
     // indexed row IDs instead of scanning the unindexed FTS scope on every batch.
     if (Number(this.statement('PRAGMA user_version').get()?.user_version) < 1) {
@@ -143,7 +151,7 @@ export class PosDatabase {
   ): Promise<void> {
     const generation = `${scope}:${randomUUID()}`;
     const insert = this.statement(
-      'INSERT INTO products(scope,id,barcode,gtin,category,name,value) VALUES (?,?,?,?,?,?,?)',
+      'INSERT INTO products(scope,id,barcode,gtin,category,name,quick,value) VALUES (?,?,?,?,?,?,?,?)',
     );
     const search = this.statement(
       'INSERT INTO product_search(rowid,scope,id,name) VALUES (?,?,?,?)',
@@ -160,6 +168,7 @@ export class PosDatabase {
             p.nkt?.gtin ?? null,
             p.category_id,
             p.name.toLocaleLowerCase('ru'),
+            Number(p.is_quick),
             this.seal(p, `product:${generation}:${p.id}`),
           );
           search.run(inserted.lastInsertRowid, generation, p.id, p.name);
@@ -226,10 +235,10 @@ export class PosDatabase {
       'SELECT rowid,content_hash,last_seen,value FROM products WHERE scope=? AND id=?',
     );
     const insert = this.statement(
-      'INSERT INTO products(scope,id,barcode,gtin,category,name,value,content_hash,last_seen) VALUES (?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO products(scope,id,barcode,gtin,category,name,quick,value,content_hash,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?)',
     );
     const update = this.statement(
-      'UPDATE products SET barcode=?,gtin=?,category=?,name=?,value=?,content_hash=?,last_seen=? WHERE rowid=?',
+      'UPDATE products SET barcode=?,gtin=?,category=?,name=?,quick=?,value=?,content_hash=?,last_seen=? WHERE rowid=?',
     );
     for (let offset = 0; offset < products.length; offset += 25) {
       if (!current()) return;
@@ -261,6 +270,7 @@ export class PosDatabase {
                   product.nkt?.gtin ?? null,
                   product.category_id,
                   product.name.toLocaleLowerCase('ru'),
+                  Number(product.is_quick),
                   this.seal(product, `product:${generation}:${product.id}`),
                   hash,
                   cycle,
@@ -288,6 +298,7 @@ export class PosDatabase {
               product.nkt?.gtin ?? null,
               product.category_id,
               product.name.toLocaleLowerCase('ru'),
+              Number(product.is_quick),
               this.seal(product, `product:${generation}:${product.id}`),
               hash,
               cycle,
@@ -411,6 +422,7 @@ export class PosDatabase {
     category: string | undefined,
     limit: number,
     offset: number,
+    quickOnly?: boolean,
   ): ProductSearchResponse {
     scope = this.catalogScope(scope);
     const words = term
@@ -418,18 +430,19 @@ export class PosDatabase {
       ?.map((w) => `"${w}"*`)
       .join(' AND ');
     const categoryClause = category ? ' AND category=?' : '';
+    const quickClause = quickOnly ? ' AND quick=1' : '';
     const categoryParams = category ? [category] : [];
     let rows;
     if (!term) {
       rows = this.statement(
-        `SELECT id,value FROM products WHERE scope=?${categoryClause} ORDER BY name,id LIMIT ? OFFSET ?`,
+        `SELECT id,value FROM products WHERE scope=?${categoryClause}${quickClause} ORDER BY name,id LIMIT ? OFFSET ?`,
       ).all(scope, ...categoryParams, limit + 1, offset);
     } else {
       // Exact identifiers first, then stable FTS row order. Alphabetically sorting
       // every text match made a common word scan/sort the entire 100k catalog.
       const exact = this.statement(
-        `SELECT id,value FROM products WHERE scope=? AND barcode=?${categoryClause}
-        UNION SELECT id,value FROM products WHERE scope=? AND gtin=?${categoryClause} LIMIT ?`,
+        `SELECT id,value FROM products WHERE scope=? AND barcode=?${categoryClause}${quickClause}
+        UNION SELECT id,value FROM products WHERE scope=? AND gtin=?${categoryClause}${quickClause} LIMIT ?`,
       ).all(
         scope,
         term,
@@ -455,7 +468,7 @@ export class PosDatabase {
               `
           SELECT p.id,p.value FROM product_search CROSS JOIN products p ON p.rowid=product_search.rowid
           WHERE product_search MATCH ? AND product_search.rowid BETWEEN ? AND ? AND p.scope=?
-            AND p.barcode<>? AND (p.gtin IS NULL OR p.gtin<>?)${category ? ' AND p.category=?' : ''}
+            AND p.barcode<>? AND (p.gtin IS NULL OR p.gtin<>?)${category ? ' AND p.category=?' : ''}${quickClause}
           ORDER BY product_search.rowid LIMIT ? OFFSET ?`,
             ).all(
               words,

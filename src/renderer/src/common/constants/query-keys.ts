@@ -11,12 +11,19 @@ export const queryKeys = {
     all: () => ['cashier-sessions'] as const,
     current: (registerId: string) =>
       ['cashier-sessions', 'current', registerId] as const,
+    currentIncludingOthers: (registerId: string) =>
+      ['cashier-sessions', 'current', registerId, 'include-others'] as const,
   },
   health: {
     api: () => ['health', 'api'] as const,
   },
   products: {
     all: () => ['products'] as const,
+    quick: (
+      organizationId: string | null | undefined,
+      storeId: string | null | undefined,
+    ) =>
+      ['products', 'quick', organizationId ?? null, storeId ?? null] as const,
     category: (
       organizationId: string | null | undefined,
       storeId: string | null | undefined,

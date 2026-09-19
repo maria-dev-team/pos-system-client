@@ -104,6 +104,7 @@ const productFixture = (
   deleted_at: null,
   id: 'product-1',
   is_active: true,
+  is_quick: false,
   name: 'Молоко',
   organization_id: 'organization-1',
   retail_price: '650.00',
@@ -286,12 +287,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
-  it('shows category products only with both read permissions', async () => {
+  it('shows quick products by category only with both read permissions', async () => {
     renderCheckout();
 
     await screen.findByLabelText('Сканируйте или найдите товар');
     expect(
-      screen.queryByRole('button', { name: 'Товары по категориям' }),
+      screen.queryByRole('button', { name: 'Быстрые товары' }),
     ).not.toBeInTheDocument();
 
     cleanup();
@@ -301,7 +302,7 @@ describe('server-authoritative checkout', () => {
     renderCheckout();
 
     expect(
-      await screen.findByRole('button', { name: 'Товары по категориям' }),
+      await screen.findByRole('button', { name: 'Быстрые товары' }),
     ).toBeInTheDocument();
   });
 
@@ -331,16 +332,14 @@ describe('server-authoritative checkout', () => {
     );
     vi.mocked(searchProducts).mockResolvedValue({
       meta: { has_more: false, limit: 100, offset: 0, total: 1 },
-      products: [productFixture()],
+      products: [productFixture({ is_quick: true })],
     });
     vi.mocked(createSale).mockResolvedValue(created);
     vi.mocked(addSaleItem).mockResolvedValue(updated);
     renderCheckout();
 
     const search = await screen.findByLabelText('Сканируйте или найдите товар');
-    await user.click(
-      screen.getByRole('button', { name: 'Товары по категориям' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Быстрые товары' }));
     await user.click(
       await screen.findByRole('button', {
         name: 'Открыть категорию Быстрые товары',
@@ -365,7 +364,7 @@ describe('server-authoritative checkout', () => {
       }),
     );
     expect(
-      screen.getByRole('heading', { name: 'Товары по категориям' }),
+      screen.getByRole('heading', { name: 'Быстрые товары' }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Закрыть' }));

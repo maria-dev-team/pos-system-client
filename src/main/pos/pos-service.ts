@@ -1482,6 +1482,7 @@ export class PosService {
           request.categoryId,
           request.limit ?? 20,
           request.offset ?? 0,
+          request.quickOnly,
         );
       case 'categories': {
         requirePermission(this.active(), 'category.read');

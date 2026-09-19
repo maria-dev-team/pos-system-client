@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   CreditCard,
   History,
-  LayoutGrid,
   LoaderCircle,
   Minus,
   PackageSearch,
@@ -14,6 +13,7 @@ import {
   RotateCcw,
   ScanLine,
   ShoppingBasket,
+  Star,
   Trash2,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
@@ -430,7 +430,6 @@ function ActiveCheckout({
     context.data?.organizationId,
     context.data?.storeId,
   );
-
   const transitionPending =
     transitions.cancel.isPending ||
     transitions.checkout.isPending ||
@@ -877,8 +876,8 @@ function ActiveCheckout({
               onClick={() => setCategoryPickerOpen(true)}
               type="button"
             >
-              <LayoutGrid aria-hidden="true" className="size-6" />
-              Товары по категориям
+              <Star aria-hidden="true" className="size-6" />
+              Быстрые товары
             </Button>
           ) : null}
         </div>

@@ -1,5 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
-import { type QueryClient, useQuery } from '@tanstack/react-query';
+import {
+  type QueryClient,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   Outlet,
   createMemoryHistory,
@@ -16,6 +20,7 @@ import { useEffect, useState } from 'react';
 import { syncCameraContext } from '@renderer/common/camera/camera-context';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
+import { queryKeys } from '@renderer/common/constants';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
 import {
   connectLocalPos,
@@ -272,6 +277,7 @@ const cashierSessionRoute = createRoute({
 
 function CheckoutRouteComponent() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { registerId, registerShiftId } = checkoutRoute.useSearch();
   const cashierSession = useQuery(
     currentCashierSessionQueryOptions(registerId ?? ''),
@@ -289,6 +295,13 @@ function CheckoutRouteComponent() {
     retainedSession.register_id === registerId &&
     retainedSession.register_shift_id === registerShiftId,
   );
+  const refetchSession = async () => {
+    const result = await cashierSession.refetch();
+    queryClient.setQueryData(
+      queryKeys.cashierSessions.currentIncludingOthers(registerId ?? ''),
+      result.data ?? null,
+    );
+  };
 
   useEffect(() => {
     if (
@@ -325,7 +338,7 @@ function CheckoutRouteComponent() {
           cashierSession.error,
           'Не удалось проверить доступ к кассе.',
         )}
-        onRetry={() => void cashierSession.refetch()}
+        onRetry={() => void refetchSession()}
         title="Не удалось проверить доступ к кассе"
       />
     );
@@ -355,7 +368,7 @@ function CheckoutRouteComponent() {
           to: '/sales-history',
         })
       }
-      onRetrySession={() => void cashierSession.refetch()}
+      onRetrySession={() => void refetchSession()}
       onSessionEndedLocally={() => setLocallyEndedSession(session)}
       onSessionEnded={() =>
         void navigate({ replace: true, to: '/select-register-shift' })

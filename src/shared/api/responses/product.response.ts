@@ -7,6 +7,7 @@ export type ProductResponse = {
   deleted_at: string | null;
   id: string;
   is_active: boolean;
+  is_quick: boolean;
   name: string;
   nkt: {
     gtin: string | null;
