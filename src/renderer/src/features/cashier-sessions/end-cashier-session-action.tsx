@@ -37,7 +37,9 @@ import {
   disconnectLocalPos,
   localPosActive,
 } from '@renderer/common/lib/local-pos';
+import { readPendingCashMovement } from '@renderer/features/cash-movements';
 
+import { PosError } from '../../../../shared/pos/contracts';
 import { cashierSessionClosingSchema } from './cashier-session.schema';
 
 type BlockingSale = {
@@ -78,6 +80,11 @@ export function EndCashierSessionAction({
     useState<CashierSessionResponse | null>(null);
   const mutation = useMutation({
     mutationFn: async (cash: string) => {
+      if (readPendingCashMovement(cashierSession.id))
+        throw new PosError(
+          'CASH_MOVEMENT_PENDING',
+          'Сначала проверьте неподтверждённое внесение или изъятие в окне «Наличные в кассе».',
+        );
       if (localPosActive()) await callLocalPos({ type: 'flush' });
       const session = await endCashierSession(cashierSession.id, {
         actualCash: cash,

@@ -85,6 +85,73 @@ async function fixture(
 }
 
 describe('local POS application service', () => {
+  it('requires synchronization before cash movements but permits an already synchronized draft', async () => {
+    const { service, db } = await fixture(async (path, body) => {
+      if (path === '/v1/sales/local-draft')
+        return response({
+          sale: {
+            ...db.sale(ids.session, String(body.sale_id))!.sale,
+            version: Number(body.expected_version) + 1,
+          },
+        });
+      throw new TypeError('offline');
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.syncedRevision).toBe(1),
+    );
+    await expect(
+      service.handle({ type: 'prepareCashMovement' }),
+    ).resolves.toBeNull();
+    await expect(service.handle({ type: 'flush' })).rejects.toMatchObject({
+      code: 'SYNC_REQUIRED',
+    });
+  });
+  it('blocks cash movements while an offline sale has unsynchronized changes', async () => {
+    const { service } = await fixture();
+    await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    });
+    await expect(
+      service.handle({ type: 'prepareCashMovement' }),
+    ).rejects.toMatchObject({ code: 'SYNC_REQUIRED' });
+  });
+  it('scans primary and generated additional codes into one durable offline receipt line', async () => {
+    const { service, db, fetcher } = await fixture();
+    const p = {
+      ...productFixture(),
+      additional_barcode: '2900000000018',
+      nkt: null,
+    };
+    await db.cacheProducts(
+      `${ids.organization}:${ids.store}`,
+      [p],
+      () => true,
+      'authoritative',
+    );
+    fetcher.mockRejectedValue(new TypeError('offline'));
+    const first = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: p.barcode },
+    })) as SaleResponse;
+    const second = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: p.additional_barcode },
+    })) as SaleResponse;
+    expect(second.id).toBe(first.id);
+    expect(second.items).toHaveLength(1);
+    expect(second.items[0]).toMatchObject({
+      product_id: p.id,
+      barcode: p.barcode,
+      quantity: '2.000',
+    });
+    expect(db.sale(ids.session, second.id)?.sale.items).toEqual(second.items);
+  });
+
   it.each(['foreign', 'invalid-flag', 'empty-continuation', 'repeated-page'])(
     'keeps the old category snapshot on %s and stops pagination',
     async (mode) => {

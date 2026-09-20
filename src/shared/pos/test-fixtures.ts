@@ -119,6 +119,7 @@ export function productFixture(): ProductResponse {
     category_id: null,
     name: 'Молоко цельное',
     barcode: '4870000000012',
+    additional_barcode: null,
     sku: null,
     retail_price: '650.00',
     vat_rate: '16',

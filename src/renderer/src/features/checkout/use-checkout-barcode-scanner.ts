@@ -10,11 +10,18 @@ const OVERLAY =
 function workspaceAcceptsKeys(
   workspace: HTMLElement,
   target: EventTarget | null,
+  withinDialog = false,
 ): boolean {
+  const allowedDialog = withinDialog
+    ? workspace.closest('[role="dialog"]')
+    : null;
   if (
     !workspace.isConnected ||
     document.hidden ||
-    document.querySelector(OVERLAY)
+    (withinDialog && !allowedDialog) ||
+    Array.from(document.querySelectorAll(OVERLAY)).some(
+      (overlay) => overlay !== allowedDialog,
+    )
   )
     return false;
   if (
@@ -40,10 +47,13 @@ export function useCheckoutBarcodeScanner({
   enabled,
   workspaceRef,
   onScan,
+  withinDialog = false,
 }: {
   enabled: boolean;
   workspaceRef: RefObject<HTMLElement | null>;
   onScan: (barcode: string) => void;
+  /** Only the explicitly opted-in dialog may handle scanner input. */
+  withinDialog?: boolean;
 }): void {
   const callback = useRef(onScan);
   const scanner = useRef(new BarcodeScannerBuffer());
@@ -59,7 +69,7 @@ export function useCheckoutBarcodeScanner({
       const workspace = workspaceRef.current;
       if (
         !workspace ||
-        !workspaceAcceptsKeys(workspace, event.target) ||
+        !workspaceAcceptsKeys(workspace, event.target, withinDialog) ||
         event.defaultPrevented ||
         event.isComposing ||
         event.repeat
@@ -108,5 +118,5 @@ export function useCheckoutBarcodeScanner({
       document.removeEventListener('visibilitychange', reset);
       window.removeEventListener('blur', reset);
     };
-  }, [enabled, workspaceRef]);
+  }, [enabled, workspaceRef, withinDialog]);
 }

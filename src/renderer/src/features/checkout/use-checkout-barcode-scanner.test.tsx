@@ -195,3 +195,58 @@ describe('checkout-only unfocused scanner', () => {
     expect(amount).toHaveFocus();
   });
 });
+
+function PriceDialogHarness({
+  overlay = false,
+  onScan,
+}: {
+  overlay?: boolean;
+  onScan: (code: string) => void;
+}) {
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  useCheckoutBarcodeScanner({
+    enabled: true,
+    workspaceRef,
+    onScan,
+    withinDialog: true,
+  });
+  return (
+    <>
+      <div
+        role="dialog"
+        aria-label="Проверка цены"
+        ref={workspaceRef}
+        tabIndex={-1}
+      >
+        <input aria-label="Поиск цены" />
+      </div>
+      {overlay ? <div role="dialog" aria-label="Экранная клавиатура" /> : null}
+    </>
+  );
+}
+
+describe('price dialog scanner isolation', () => {
+  it('only sends the scan to the opted-in dialog and blocks it when another overlay is open', () => {
+    const onCheckoutScan = vi.fn(),
+      onPriceScan = vi.fn();
+    const { rerender } = render(
+      <>
+        <Harness onScan={onCheckoutScan} />
+        <PriceDialogHarness onScan={onPriceScan} />
+      </>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Проверка цены' });
+    scan(dialog);
+    expect(onPriceScan).toHaveBeenCalledWith('001234');
+    expect(onCheckoutScan).not.toHaveBeenCalled();
+    rerender(
+      <>
+        <Harness onScan={onCheckoutScan} />
+        <PriceDialogHarness overlay onScan={onPriceScan} />
+      </>,
+    );
+    scan(dialog);
+    expect(onPriceScan).toHaveBeenCalledTimes(1);
+    expect(onCheckoutScan).not.toHaveBeenCalled();
+  });
+});

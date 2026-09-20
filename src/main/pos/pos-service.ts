@@ -1554,6 +1554,7 @@ export class PosService {
         await this.synchronize();
         return this.status();
       }
+      case 'prepareCashMovement':
       case 'flush':
         await this.synchronize();
         if (
@@ -1562,8 +1563,9 @@ export class PosService {
               r.revision > r.syncedRevision ||
               r.payment ||
               r.fiscalBlocked ||
-              r.sale.status === 'DRAFT' ||
-              r.sale.status === 'HELD',
+              (request.type === 'prepareCashMovement' && r.deferredPayment) ||
+              (request.type === 'flush' &&
+                (r.sale.status === 'DRAFT' || r.sale.status === 'HELD')),
           )
         )
           throw new PosError(

@@ -309,7 +309,13 @@ export function CheckoutCategoryPicker({
                             aria-hidden="true"
                             className="size-3.5 fill-primary/15 text-primary"
                           />
-                          {[product.sku, product.barcode]
+                          {[
+                            product.sku,
+                            product.barcode,
+                            product.additional_barcode
+                              ? `Доп.: ${product.additional_barcode}`
+                              : null,
+                          ]
                             .filter(Boolean)
                             .join(' · ') || 'Быстрый товар'}
                         </span>

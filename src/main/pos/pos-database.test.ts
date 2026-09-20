@@ -198,3 +198,171 @@ describe('durable local database', () => {
     ).toHaveLength(1);
   });
 });
+
+describe('additional barcode catalog', () => {
+  it.each(['replace', 'cache'] as const)(
+    'indexes both codes through %s without duplicating a GTIN match',
+    async (mode) => {
+      const db = open();
+      const product = {
+        ...productFixture(),
+        additional_barcode: '000456',
+        nkt: { ...productFixture().nkt!, gtin: '000456' },
+      };
+      if (mode === 'replace') await db.replaceCatalog('store', [product]);
+      else await db.cacheProducts('store', [product]);
+      expect(db.barcode('store', product.barcode)?.id).toBe(product.id);
+      expect(db.barcode('store', '000456')?.id).toBe(product.id);
+      expect(db.barcode('other-store', '000456')).toBeUndefined();
+      expect(db.search('store', '000456', undefined, 20, 0).products).toEqual([
+        product,
+      ]);
+    },
+  );
+
+  it('rejects an additional code that is also another product primary code or GTIN', async () => {
+    const db = open();
+    const product = { ...productFixture(), additional_barcode: '000456' };
+    for (const other of [
+      { ...productFixture(), id: 'other', barcode: '000456', nkt: null },
+      {
+        ...productFixture(),
+        id: 'other',
+        barcode: 'other',
+        nkt: { ...productFixture().nkt!, gtin: '000456' },
+      },
+    ]) {
+      await db.replaceCatalog('store', [product, other]);
+      expect(() => db.barcode('store', '000456')).toThrow('нескольким товарам');
+      expect(
+        db.search('store', '000456', undefined, 20, 0).products,
+      ).toHaveLength(2);
+    }
+  });
+
+  it('removes old index entries when a code is changed, cleared or the product is deleted', async () => {
+    const db = open();
+    const product = { ...productFixture(), additional_barcode: '000456' };
+    await db.cacheProducts('store', [product]);
+    await db.cacheProducts(
+      'store',
+      [{ ...product, additional_barcode: '000789' }],
+      () => true,
+      'authoritative',
+    );
+    expect(db.barcode('store', '000456')).toBeUndefined();
+    expect(db.barcode('store', '000789')?.id).toBe(product.id);
+    await db.cacheProducts(
+      'store',
+      [{ ...product, additional_barcode: null }],
+      () => true,
+      'authoritative',
+    );
+    expect(db.barcode('store', '000789')).toBeUndefined();
+    await db.cacheProducts('store', [product], () => true, 'authoritative');
+    await db.deleteProducts('store', [product.id], () => true);
+    expect(db.barcode('store', '000456')).toBeUndefined();
+  });
+
+  it('paginates secondary-code and name matches once and keeps category/quick filters', async () => {
+    const db = open();
+    const products = Array.from({ length: 6 }, (_, index) => ({
+      ...productFixture(),
+      id: `item-${index}`,
+      barcode: `code-${index}`,
+      additional_barcode: index === 5 ? 'мол' : null,
+      category_id: 'milk',
+      is_quick: index === 5,
+    }));
+    await db.replaceCatalog('store', products);
+    const pages = [0, 2, 4].flatMap(
+      (offset) => db.search('store', 'мол', 'milk', 2, offset).products,
+    );
+    expect(pages[0].id).toBe('item-5');
+    expect(pages).toHaveLength(6);
+    expect(new Set(pages.map((product) => product.id)).size).toBe(6);
+    expect(db.search('store', 'мол', 'bread', 20, 0).products).toHaveLength(0);
+    expect(
+      db
+        .search('store', 'мол', 'milk', 20, 0, true)
+        .products.map((product) => product.id),
+    ).toEqual(['item-5']);
+  });
+
+  it('checks the encrypted record against the additional barcode index', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-barcode-integrity-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const db = open(path);
+    await db.cacheProducts('store', [productFixture()]);
+    const connection = new DatabaseSync(path);
+    try {
+      connection.exec("UPDATE products SET additional_barcode='tampered'");
+    } finally {
+      connection.close();
+    }
+    expect(() => db.barcode('store', 'tampered')).toThrow(
+      'Catalog index integrity failure',
+    );
+  });
+
+  it('migrates old installations once, retaining offline products, receipts and unrelated metadata', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-barcode-upgrade-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const key = randomBytes(32);
+    const initial = new PosDatabase(path, key);
+    const legacyProduct = productFixture();
+    delete legacyProduct.additional_barcode;
+    await initial.replaceCatalog('store', [legacyProduct]);
+    const sale = receipt();
+    initial.save(sale);
+    initial.set('clock', 123);
+    for (const scope of ['store', 'other-store']) {
+      initial.set(`catalog-cursor:${scope}`, 'old-cursor');
+      initial.set(`catalog-progress:${scope}`, {
+        after: ids.product,
+        loaded: 1,
+        cursor: 'old-baseline',
+        cycle: 'old-cycle',
+      });
+      initial.set(`catalog-pending:${scope}`, true);
+    }
+    initial.close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec(
+      'DROP INDEX products_additional_barcode; ALTER TABLE products DROP COLUMN additional_barcode; PRAGMA user_version=1',
+    );
+    legacy.close();
+    const upgraded = new PosDatabase(path, key);
+    try {
+      expect(upgraded.barcode('store', legacyProduct.barcode)?.id).toBe(
+        legacyProduct.id,
+      );
+      expect(upgraded.sale(ids.session, sale.sale.id)).toEqual(sale);
+      expect(upgraded.get('clock')).toBe(123);
+      for (const scope of ['store', 'other-store']) {
+        expect(upgraded.get(`catalog-cursor:${scope}`)).toBeNull();
+        expect(upgraded.get(`catalog-progress:${scope}`)).toBeNull();
+        expect(upgraded.get(`catalog-pending:${scope}`)).toBeNull();
+      }
+      await upgraded.cacheProducts('store', [
+        { ...legacyProduct, additional_barcode: '000456' },
+      ]);
+      expect(upgraded.barcode('store', '000456')?.id).toBe(legacyProduct.id);
+      upgraded.set('catalog-cursor:store', 'new-cursor');
+      upgraded.set('catalog-progress:other-store', {
+        cursor: 'new-baseline',
+        after: ids.product,
+      });
+    } finally {
+      upgraded.close();
+    }
+    const restarted = open(path, key);
+    expect(restarted.get('catalog-cursor:store')).toBe('new-cursor');
+    expect(restarted.get('catalog-progress:other-store')).toMatchObject({
+      cursor: 'new-baseline',
+    });
+    expect(restarted.barcode('store', '000456')?.id).toBe(legacyProduct.id);
+  });
+});

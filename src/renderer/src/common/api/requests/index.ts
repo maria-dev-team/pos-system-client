@@ -11,3 +11,4 @@ export * from './products';
 export * from './sales';
 export * from './support';
 export * from './users';
+export * from './cash-movements';
