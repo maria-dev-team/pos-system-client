@@ -128,3 +128,42 @@ it('rejects a product belonging to another organization', async () => {
   await act(() => f.result.current(productFixture().barcode));
   expect(f.execute).not.toHaveBeenCalled();
 });
+
+it.each(['000456', '2900000000018'])(
+  'adds a product by its additional barcode %s in the browser fallback',
+  async (barcode) => {
+    const product = {
+      ...productFixture(),
+      additional_barcode: barcode,
+      nkt: null,
+    };
+    vi.mocked(searchProducts).mockResolvedValue(response(product));
+    const f = fixture();
+    await act(() => f.result.current(barcode));
+    expect(f.execute).toHaveBeenCalledWith({
+      type: 'add',
+      productId: product.id,
+    });
+    expect(f.onResolved).toHaveBeenCalledWith(barcode);
+  },
+);
+
+it('refuses a secondary code matching another product primary code in the browser fallback', async () => {
+  const product = { ...productFixture(), additional_barcode: '000456' };
+  vi.mocked(searchProducts).mockResolvedValue(
+    response(product, {
+      ...productFixture(),
+      id: ids.shift,
+      barcode: '000456',
+      nkt: null,
+    }),
+  );
+  const f = fixture();
+  await act(() => f.result.current('000456'));
+  expect(f.execute).not.toHaveBeenCalled();
+  expect(f.onIssue).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      message: expect.stringContaining('нескольким товарам'),
+    }),
+  );
+});

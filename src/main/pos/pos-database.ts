@@ -10,6 +10,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { ProductSearchResponse } from '../../shared/api/responses/product.response';
 import type { LocalSale, ProductResponse } from '../../shared/pos/contracts';
 import { PosError } from '../../shared/pos/contracts';
+import { productMatchesBarcode } from '../../shared/pos/product-policy';
 
 /** This connection lives exclusively in the POS worker, never on the UI thread. */
 export class PosDatabase {
@@ -53,6 +54,28 @@ export class PosDatabase {
         INSERT INTO product_search(rowid,scope,id,name) SELECT rowid,scope,id,name FROM products;
         PRAGMA user_version=1;
         COMMIT;`);
+    }
+    if (Number(this.statement('PRAGMA user_version').get()?.user_version) < 2) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!columns.some((row) => row.name === 'additional_barcode'))
+          this.db.exec(
+            'ALTER TABLE products ADD COLUMN additional_barcode TEXT',
+          );
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS products_additional_barcode ON products(scope,additional_barcode);
+          -- Older parsers discarded this field. Rewalk every store's catalog once,
+          -- retaining encrypted products and receipts for offline use until then.
+          DELETE FROM metadata WHERE key LIKE 'catalog-cursor:%'
+            OR key LIKE 'catalog-progress:%' OR key LIKE 'catalog-pending:%'
+            OR key LIKE 'catalog:%';
+          PRAGMA user_version=2;
+          COMMIT;
+        `);
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
     }
   }
   /** Reuse hot parameterized queries; keep even future dynamic SQL shapes bounded. */
@@ -151,7 +174,7 @@ export class PosDatabase {
   ): Promise<void> {
     const generation = `${scope}:${randomUUID()}`;
     const insert = this.statement(
-      'INSERT INTO products(scope,id,barcode,gtin,category,name,quick,value) VALUES (?,?,?,?,?,?,?,?)',
+      'INSERT INTO products(scope,id,barcode,additional_barcode,gtin,category,name,quick,value) VALUES (?,?,?,?,?,?,?,?,?)',
     );
     const search = this.statement(
       'INSERT INTO product_search(rowid,scope,id,name) VALUES (?,?,?,?)',
@@ -165,6 +188,7 @@ export class PosDatabase {
             generation,
             p.id,
             p.barcode,
+            p.additional_barcode ?? null,
             p.nkt?.gtin ?? null,
             p.category_id,
             p.name.toLocaleLowerCase('ru'),
@@ -235,10 +259,10 @@ export class PosDatabase {
       'SELECT rowid,content_hash,last_seen,value FROM products WHERE scope=? AND id=?',
     );
     const insert = this.statement(
-      'INSERT INTO products(scope,id,barcode,gtin,category,name,quick,value,content_hash,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO products(scope,id,barcode,additional_barcode,gtin,category,name,quick,value,content_hash,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     );
     const update = this.statement(
-      'UPDATE products SET barcode=?,gtin=?,category=?,name=?,quick=?,value=?,content_hash=?,last_seen=? WHERE rowid=?',
+      'UPDATE products SET barcode=?,additional_barcode=?,gtin=?,category=?,name=?,quick=?,value=?,content_hash=?,last_seen=? WHERE rowid=?',
     );
     for (let offset = 0; offset < products.length; offset += 25) {
       if (!current()) return;
@@ -253,12 +277,18 @@ export class PosDatabase {
             .digest('hex');
           const row = find.get(generation, product.id);
           if (row) {
-            if (mode === 'missing') continue;
             if (row.content_hash !== hash) {
               const previous = this.open<ProductResponse>(
                 row.value as Uint8Array,
                 `product:${generation}:${product.id}`,
               );
+              // Enrich legacy records on an online scan before bootstrap finishes.
+              // Once a record knows this field, foreground lookups must not replace it.
+              if (
+                mode === 'missing' &&
+                previous.additional_barcode !== undefined
+              )
+                continue;
               // A slow background page must not overwrite a newer on-demand price/product.
               if (
                 mode === 'authoritative' ||
@@ -267,6 +297,7 @@ export class PosDatabase {
               ) {
                 update.run(
                   product.barcode,
+                  product.additional_barcode ?? null,
                   product.nkt?.gtin ?? null,
                   product.category_id,
                   product.name.toLocaleLowerCase('ru'),
@@ -295,6 +326,7 @@ export class PosDatabase {
               generation,
               product.id,
               product.barcode,
+              product.additional_barcode ?? null,
               product.nkt?.gtin ?? null,
               product.category_id,
               product.name.toLocaleLowerCase('ru'),
@@ -399,8 +431,8 @@ export class PosDatabase {
   barcode(scope: string, barcode: string): ProductResponse | undefined {
     scope = this.catalogScope(scope);
     const rows = this.statement(
-      'SELECT id,value FROM products WHERE scope=? AND barcode=? UNION SELECT id,value FROM products WHERE scope=? AND gtin=? LIMIT 2',
-    ).all(scope, barcode, scope, barcode);
+      'SELECT id,value FROM products WHERE scope=? AND barcode=? UNION SELECT id,value FROM products WHERE scope=? AND additional_barcode=? UNION SELECT id,value FROM products WHERE scope=? AND gtin=? LIMIT 2',
+    ).all(scope, barcode, scope, barcode, scope, barcode);
     if (rows.length > 1)
       throw new PosError(
         'PRODUCT_BARCODE_AMBIGUOUS',
@@ -412,7 +444,7 @@ export class PosDatabase {
           `product:${scope}:${rows[0].id}`,
         )
       : undefined;
-    if (product && product.barcode !== barcode && product.nkt?.gtin !== barcode)
+    if (product && !productMatchesBarcode(product, barcode))
       throw new Error('Catalog index integrity failure');
     return product;
   }
@@ -442,8 +474,12 @@ export class PosDatabase {
       // every text match made a common word scan/sort the entire 100k catalog.
       const exact = this.statement(
         `SELECT id,value FROM products WHERE scope=? AND barcode=?${categoryClause}${quickClause}
+        UNION SELECT id,value FROM products WHERE scope=? AND additional_barcode=?${categoryClause}${quickClause}
         UNION SELECT id,value FROM products WHERE scope=? AND gtin=?${categoryClause}${quickClause} LIMIT ?`,
       ).all(
+        scope,
+        term,
+        ...categoryParams,
         scope,
         term,
         ...categoryParams,
@@ -468,13 +504,14 @@ export class PosDatabase {
               `
           SELECT p.id,p.value FROM product_search CROSS JOIN products p ON p.rowid=product_search.rowid
           WHERE product_search MATCH ? AND product_search.rowid BETWEEN ? AND ? AND p.scope=?
-            AND p.barcode<>? AND (p.gtin IS NULL OR p.gtin<>?)${category ? ' AND p.category=?' : ''}${quickClause}
+            AND p.barcode<>? AND (p.additional_barcode IS NULL OR p.additional_barcode<>?) AND (p.gtin IS NULL OR p.gtin<>?)${category ? ' AND p.category=?' : ''}${quickClause}
           ORDER BY product_search.rowid LIMIT ? OFFSET ?`,
             ).all(
               words,
               first.rowid,
               last.rowid,
               scope,
+              term,
               term,
               term,
               ...categoryParams,

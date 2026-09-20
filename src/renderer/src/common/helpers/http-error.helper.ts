@@ -9,6 +9,10 @@ import {
 } from '../constants/error-code';
 
 const messages: Record<ErrorCodeValue, string> = {
+  [ErrorCode.CashMovementInsufficient]: 'Недостаточно наличных для изъятия.',
+  [ErrorCode.CashMovementInvalid]: 'Проверьте сумму и причину операции.',
+  [ErrorCode.CashMovementConflict]:
+    'Сохранённая операция имеет другие параметры. Нельзя повторить её с изменёнными данными.',
   [ErrorCode.CashierSessionForbidden]:
     'Вы не можете управлять сменой другого кассира.',
   [ErrorCode.CashierSessionHasOpenSales]:

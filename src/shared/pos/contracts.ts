@@ -124,6 +124,7 @@ export const posRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status') }).strict(),
   z.object({ type: z.literal('retry') }).strict(),
   z.object({ type: z.literal('flush') }).strict(),
+  z.object({ type: z.literal('prepareCashMovement') }).strict(),
   z
     .object({
       type: z.literal('checkout'),

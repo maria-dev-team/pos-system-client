@@ -7,6 +7,7 @@ import {
   type PosStatus,
   type ProductResponse,
 } from '../../shared/pos/contracts';
+import { productMatchesBarcode } from '../../shared/pos/product-policy';
 import { PosApiError, PosConnectionError } from './pos-api-client';
 import { PosDatabase } from './pos-database';
 
@@ -15,6 +16,12 @@ const productSchema = z.object({
   organization_id: z.string().uuid(),
   store_id: z.string().uuid(),
   barcode: z.string().max(512),
+  additional_barcode: z
+    .string()
+    .min(1)
+    .max(255)
+    .nullish()
+    .transform((value) => value ?? null),
   name: z.string().max(1000),
   sku: z.string().nullable(),
   category_id: z.string().uuid().nullable(),
@@ -456,8 +463,7 @@ export class PosCatalog {
           products.some((p) =>
             params.has('product_id')
               ? p.id !== params.get('product_id')
-              : p.barcode !== params.get('barcode') &&
-                p.nkt?.gtin !== params.get('barcode'),
+              : !productMatchesBarcode(p, params.get('barcode') ?? ''),
           )
         )
           throw new PosError(
@@ -474,8 +480,7 @@ export class PosCatalog {
           const local = this.db.product(this.scope, p.id);
           return local &&
             (params.has('product_id') ||
-              local.barcode === params.get('barcode') ||
-              local.nkt?.gtin === params.get('barcode'))
+              productMatchesBarcode(local, params.get('barcode') ?? ''))
             ? [local]
             : [];
         });
@@ -521,7 +526,7 @@ export class PosCatalog {
     const local = this.db.barcode(this.scope, code);
     if (local) return local;
     const products = await this.lookup(new URLSearchParams({ barcode: code }));
-    if (products.some((p) => p.barcode !== code && p.nkt?.gtin !== code))
+    if (products.some((p) => !productMatchesBarcode(p, code)))
       throw new PosError(
         'POS_API_INVALID_RESPONSE',
         'Сервер вернул другой штрихкод.',

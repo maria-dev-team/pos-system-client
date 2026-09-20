@@ -28,12 +28,24 @@ export function assertProductSellable(
     );
 }
 
+export function productMatchesBarcode(
+  product: ProductResponse,
+  barcode: string,
+): boolean {
+  return (
+    Boolean(barcode) &&
+    (product.barcode === barcode ||
+      product.additional_barcode === barcode ||
+      product.nkt?.gtin === barcode)
+  );
+}
+
 export function selectExactBarcodeProduct(
   products: ProductResponse[],
   barcode: string,
 ): ProductResponse {
-  const matches = products.filter(
-    (product) => product.barcode === barcode || product.nkt?.gtin === barcode,
+  const matches = products.filter((product) =>
+    productMatchesBarcode(product, barcode),
   );
   if (matches.length > 1)
     throw new PosError(

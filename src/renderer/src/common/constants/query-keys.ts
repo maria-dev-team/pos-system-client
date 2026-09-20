@@ -8,6 +8,10 @@ export const queryKeys = {
       ['categories', 'tree', organizationId ?? null] as const,
   },
   cashierSessions: {
+    cashMovements: (sessionId: string, offset?: number) =>
+      offset === undefined
+        ? (['cashier-sessions', sessionId, 'cash-movements'] as const)
+        : (['cashier-sessions', sessionId, 'cash-movements', offset] as const),
     all: () => ['cashier-sessions'] as const,
     current: (registerId: string) =>
       ['cashier-sessions', 'current', registerId] as const,
