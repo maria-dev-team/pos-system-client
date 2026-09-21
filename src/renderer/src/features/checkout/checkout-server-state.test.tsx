@@ -95,6 +95,7 @@ const productSearchFixture: ProductSearchResponse = {
       deleted_at: null,
       id: 'product-1',
       is_active: true,
+      is_quick: false,
       name: 'Молоко',
       nkt: null,
       nkt_product_id: null,

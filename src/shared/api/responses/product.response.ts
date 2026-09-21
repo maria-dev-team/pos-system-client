@@ -2,11 +2,14 @@ export type ProductUnit = 'pcs' | 'kg' | 'l' | 'm';
 
 export type ProductResponse = {
   barcode: string;
+  /** Absent only in catalogs cached before additional barcode support. */
+  additional_barcode?: string | null;
   category_id: string | null;
   created_at: string;
   deleted_at: string | null;
   id: string;
   is_active: boolean;
+  is_quick: boolean;
   name: string;
   nkt: {
     gtin: string | null;

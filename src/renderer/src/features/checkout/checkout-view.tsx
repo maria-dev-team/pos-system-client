@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   CreditCard,
   History,
-  LayoutGrid,
   LoaderCircle,
   Minus,
   PackageSearch,
@@ -14,6 +13,8 @@ import {
   RotateCcw,
   ScanLine,
   ShoppingBasket,
+  Star,
+  Tags,
   Trash2,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
@@ -59,6 +60,7 @@ import {
   quantitySchema,
 } from '@renderer/common/lib/quantity';
 import { authContextQueryOptions } from '@renderer/features/auth';
+import { CashMovementsDialog } from '@renderer/features/cash-movements';
 import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
 import { ProductLookupStatus } from '@renderer/features/local-pos';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
@@ -82,6 +84,7 @@ import {
   saleDiscountSchema,
 } from './checkout-input';
 import { CheckoutPaymentDialog } from './checkout-payment-dialog';
+import { CheckoutPriceCheckDialog } from './checkout-price-check-dialog';
 import {
   currentSaleQueryOptions,
   heldSalesQueryOptions,
@@ -230,6 +233,10 @@ function ActiveCheckout({
   const currentKey = queryKeys.sales.current(cashierSession.id);
   const [search, setSearch] = useState('');
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+  const [priceCheckOpen, setPriceCheckOpen] = useState(false);
+  const [cashMovementType, setCashMovementType] = useState<
+    'DEPOSIT' | 'WITHDRAWAL' | null
+  >(null);
   const [scanIssue, setScanIssue] = useState<{
     barcode: string;
     message: string;
@@ -430,7 +437,6 @@ function ActiveCheckout({
     context.data?.organizationId,
     context.data?.storeId,
   );
-
   const transitionPending =
     transitions.cancel.isPending ||
     transitions.checkout.isPending ||
@@ -454,6 +460,8 @@ function ActiveCheckout({
       !cancelOpen &&
       !discountOpen &&
       !categoryPickerOpen &&
+      !priceCheckOpen &&
+      !cashMovementType &&
       !quantityItem &&
       !removeItem &&
       !priceItem,
@@ -843,8 +851,8 @@ function ActiveCheckout({
     >
       <LocalPosStatus sessionId={cashierSession.id} />
       <section className="shrink-0 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
-        <div className="flex gap-2">
-          <div className="relative min-w-0 flex-1">
+        <div className="flex flex-wrap gap-2">
+          <div className="relative min-w-0 flex-1 basis-full sm:basis-0">
             <ScanLine
               aria-hidden="true"
               className="absolute left-4 top-1/2 size-6 -translate-y-1/2 text-primary"
@@ -870,6 +878,18 @@ function ActiveCheckout({
               Сканируйте или найдите товар
             </Label>
           </div>
+          {canSearch ? (
+            <Button
+              className="min-h-15 shrink-0 border-border px-4"
+              disabled={scannerBlocked}
+              onClick={() => setPriceCheckOpen(true)}
+              type="button"
+              variant="ghost"
+            >
+              <Tags aria-hidden="true" className="size-6" />
+              Проверить цену
+            </Button>
+          ) : null}
           {canBrowseCategories ? (
             <Button
               className="min-h-15 shrink-0 px-4"
@@ -877,8 +897,8 @@ function ActiveCheckout({
               onClick={() => setCategoryPickerOpen(true)}
               type="button"
             >
-              <LayoutGrid aria-hidden="true" className="size-6" />
-              Товары по категориям
+              <Star aria-hidden="true" className="size-6" />
+              Быстрые товары
             </Button>
           ) : null}
         </div>
@@ -974,6 +994,9 @@ function ActiveCheckout({
                       <span className="mt-1 block break-all text-xs text-muted-foreground">
                         <span>{product.sku}</span> ·{' '}
                         <span>{product.barcode}</span>
+                        {product.additional_barcode ? (
+                          <span> · Доп.: {product.additional_barcode}</span>
+                        ) : null}
                       </span>
                       {reason ? (
                         <span className="mt-1 block text-xs font-semibold text-destructive">
@@ -1352,6 +1375,26 @@ function ActiveCheckout({
               <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
                 Касса и отчёты
               </p>
+              {hasPermission('cash_movement.create') ? (
+                <div className="mb-2 grid grid-cols-2 gap-2">
+                  <Button
+                    className="min-h-14 border-border text-sm"
+                    variant="ghost"
+                    disabled={isBusy}
+                    onClick={() => setCashMovementType('DEPOSIT')}
+                  >
+                    Внесение
+                  </Button>
+                  <Button
+                    className="min-h-14 border-border text-sm"
+                    variant="ghost"
+                    disabled={isBusy}
+                    onClick={() => setCashMovementType('WITHDRAWAL')}
+                  >
+                    Изъятие
+                  </Button>
+                </div>
+              ) : null}
               <div className="grid grid-cols-2 gap-2">
                 {canReadShift ? (
                   <XReportPrintButton
@@ -1392,6 +1435,35 @@ function ActiveCheckout({
           </div>
         </aside>
       </div>
+
+      {cashMovementType && hasPermission('cash_movement.create') ? (
+        <CashMovementsDialog
+          session={cashierSession}
+          initialType={cashMovementType}
+          onClose={() => {
+            setCashMovementType(null);
+            refocus();
+          }}
+        />
+      ) : null}
+      {canSearch && priceCheckOpen ? (
+        <CheckoutPriceCheckDialog
+          canAdd={canAddProduct && !isBusy}
+          onClose={() => {
+            setPriceCheckOpen(false);
+            refocus();
+          }}
+          onAdd={(product, markingCode) =>
+            command.mutateAsync({
+              type: 'add',
+              productId: product.id,
+              ...(markingCode ? { markingCode } : {}),
+            })
+          }
+          organizationId={cashierSession.organization_id}
+          storeId={cashierSession.store_id}
+        />
+      ) : null}
 
       {canBrowseCategories ? (
         <CheckoutCategoryPicker

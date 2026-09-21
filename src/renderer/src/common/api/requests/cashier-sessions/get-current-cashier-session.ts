@@ -4,16 +4,17 @@ import type { CashierSessionResponse } from '../../responses/cashier-session.res
 
 export const getCurrentCashierSession = async (
   registerId: string,
+  includeOther = false,
 ): Promise<CashierSessionResponse | null> => {
   const local = localPosProfile();
   if (local?.session.register_id === registerId)
     return (await connectLocalPos(registerId)).session;
   const response = await request.get(
-    `/v1/registers/${registerId}/cashier-sessions/current`,
+    `/v1/registers/${registerId}/cashier-sessions/current${includeOther ? '?include_other=true' : ''}`,
   );
   const session = response.data.data
     .cashier_session as CashierSessionResponse | null;
-  if (window.localPos && session?.status === 'ACTIVE')
+  if (!includeOther && window.localPos && session?.status === 'ACTIVE')
     return (await connectLocalPos(registerId)).session;
   return session;
 };

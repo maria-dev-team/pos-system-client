@@ -7,6 +7,7 @@ import {
   type PosStatus,
   type ProductResponse,
 } from '../../shared/pos/contracts';
+import { productMatchesBarcode } from '../../shared/pos/product-policy';
 import { PosApiError, PosConnectionError } from './pos-api-client';
 import { PosDatabase } from './pos-database';
 
@@ -15,12 +16,19 @@ const productSchema = z.object({
   organization_id: z.string().uuid(),
   store_id: z.string().uuid(),
   barcode: z.string().max(512),
+  additional_barcode: z
+    .string()
+    .min(1)
+    .max(255)
+    .nullish()
+    .transform((value) => value ?? null),
   name: z.string().max(1000),
   sku: z.string().nullable(),
   category_id: z.string().uuid().nullable(),
   nkt_product_id: z.string().uuid().nullable(),
   unit: z.enum(['pcs', 'kg', 'l', 'm']),
   is_active: z.boolean(),
+  is_quick: z.boolean(),
   retail_price: z
     .string()
     .regex(/^\d+(?:\.\d{1,2})?$/)
@@ -455,8 +463,7 @@ export class PosCatalog {
           products.some((p) =>
             params.has('product_id')
               ? p.id !== params.get('product_id')
-              : p.barcode !== params.get('barcode') &&
-                p.nkt?.gtin !== params.get('barcode'),
+              : !productMatchesBarcode(p, params.get('barcode') ?? ''),
           )
         )
           throw new PosError(
@@ -473,8 +480,7 @@ export class PosCatalog {
           const local = this.db.product(this.scope, p.id);
           return local &&
             (params.has('product_id') ||
-              local.barcode === params.get('barcode') ||
-              local.nkt?.gtin === params.get('barcode'))
+              productMatchesBarcode(local, params.get('barcode') ?? ''))
             ? [local]
             : [];
         });
@@ -520,7 +526,7 @@ export class PosCatalog {
     const local = this.db.barcode(this.scope, code);
     if (local) return local;
     const products = await this.lookup(new URLSearchParams({ barcode: code }));
-    if (products.some((p) => p.barcode !== code && p.nkt?.gtin !== code))
+    if (products.some((p) => !productMatchesBarcode(p, code)))
       throw new PosError(
         'POS_API_INVALID_RESPONSE',
         'Сервер вернул другой штрихкод.',
@@ -538,11 +544,23 @@ export class PosCatalog {
     category: string | undefined,
     limit: number,
     offset: number,
+    quickOnly?: boolean,
   ): Promise<ProductSearchResponse> {
     const epoch = this.epoch;
     const sequence = ++this.searchSequence;
-    const local = this.db.search(this.scope, term, category, limit, offset);
-    if (local.products.length) return local;
+    const local = this.db.search(
+      this.scope,
+      term,
+      category,
+      limit,
+      offset,
+      quickOnly,
+    );
+    if (
+      local.products.length ||
+      (quickOnly && this.db.get<string>(`catalog:${this.scope}`))
+    )
+      return local;
     // Only a local miss waits for the backend. Rapid text input does not issue one HTTP request per key.
     await this.wait(200);
     this.check(epoch);
@@ -552,7 +570,14 @@ export class PosCatalog {
     if (this.searchJob) await this.searchJob.catch(() => undefined);
     this.check(epoch);
     if (sequence !== this.searchSequence) return empty(limit, offset);
-    const hydrated = this.db.search(this.scope, term, category, limit, offset);
+    const hydrated = this.db.search(
+      this.scope,
+      term,
+      category,
+      limit,
+      offset,
+      quickOnly,
+    );
     if (hydrated.products.length) return hydrated;
     const params = new URLSearchParams({
       search: term,
@@ -560,6 +585,7 @@ export class PosCatalog {
       offset: String(offset),
     });
     if (category) params.set('category_id', category);
+    if (quickOnly) params.set('quick_only', 'true');
     if (Date.now() < this.foregroundRetryAt)
       throw new PosError(
         'CATALOG_BUSY',
@@ -581,6 +607,11 @@ export class PosCatalog {
             'POS_API_INVALID_RESPONSE',
             'Сервер вернул другую категорию.',
           );
+        if (quickOnly && products.some((product) => !product.is_quick))
+          throw new PosError(
+            'POS_API_INVALID_RESPONSE',
+            'Сервер вернул товар вне быстрого выбора.',
+          );
         if (!result.meta || typeof result.meta.has_more !== 'boolean')
           throw new PosError(
             'POS_API_INVALID_RESPONSE',
@@ -588,7 +619,14 @@ export class PosCatalog {
           );
         await this.cache(products, epoch, writes);
         if (writes !== this.writes)
-          return this.db.search(this.scope, term, category, limit, offset);
+          return this.db.search(
+            this.scope,
+            term,
+            category,
+            limit,
+            offset,
+            quickOnly,
+          );
         if (!products.length) {
           if (this.misses.size >= 128)
             this.misses.delete(this.misses.keys().next().value!);

@@ -7,6 +7,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
@@ -26,6 +27,7 @@ import {
   checkoutSale,
   createSale,
   getAuthContext,
+  getCashMovements,
   getCategories,
   getCurrentSale,
   getMyOrganizations,
@@ -50,6 +52,7 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
     createSale: vi.fn(),
     getAuthContext: vi.fn(),
     getCategories: vi.fn(),
+    getCashMovements: vi.fn(),
     getCurrentSale: vi.fn(),
     getMyOrganizations: vi.fn(),
     overrideSaleItemPrice: vi.fn(),
@@ -104,6 +107,7 @@ const productFixture = (
   deleted_at: null,
   id: 'product-1',
   is_active: true,
+  is_quick: false,
   name: 'Молоко',
   organization_id: 'organization-1',
   retail_price: '650.00',
@@ -286,12 +290,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('server-authoritative checkout', () => {
-  it('shows category products only with both read permissions', async () => {
+  it('shows quick products by category only with both read permissions', async () => {
     renderCheckout();
 
     await screen.findByLabelText('Сканируйте или найдите товар');
     expect(
-      screen.queryByRole('button', { name: 'Товары по категориям' }),
+      screen.queryByRole('button', { name: 'Быстрые товары' }),
     ).not.toBeInTheDocument();
 
     cleanup();
@@ -301,7 +305,7 @@ describe('server-authoritative checkout', () => {
     renderCheckout();
 
     expect(
-      await screen.findByRole('button', { name: 'Товары по категориям' }),
+      await screen.findByRole('button', { name: 'Быстрые товары' }),
     ).toBeInTheDocument();
   });
 
@@ -331,16 +335,14 @@ describe('server-authoritative checkout', () => {
     );
     vi.mocked(searchProducts).mockResolvedValue({
       meta: { has_more: false, limit: 100, offset: 0, total: 1 },
-      products: [productFixture()],
+      products: [productFixture({ is_quick: true })],
     });
     vi.mocked(createSale).mockResolvedValue(created);
     vi.mocked(addSaleItem).mockResolvedValue(updated);
     renderCheckout();
 
     const search = await screen.findByLabelText('Сканируйте или найдите товар');
-    await user.click(
-      screen.getByRole('button', { name: 'Товары по категориям' }),
-    );
+    await user.click(screen.getByRole('button', { name: 'Быстрые товары' }));
     await user.click(
       await screen.findByRole('button', {
         name: 'Открыть категорию Быстрые товары',
@@ -365,7 +367,7 @@ describe('server-authoritative checkout', () => {
       }),
     );
     expect(
-      screen.getByRole('heading', { name: 'Товары по категориям' }),
+      screen.getByRole('heading', { name: 'Быстрые товары' }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Закрыть' }));
@@ -877,4 +879,228 @@ describe('server-authoritative checkout', () => {
       screen.getByRole('button', { name: 'Печать чека' }),
     ).toBeInTheDocument();
   });
+});
+
+describe('price checking before receipt changes', () => {
+  async function openPriceCheck() {
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Проверить цену' }),
+    );
+    return screen.getByRole('dialog', { name: 'Проверка цены' });
+  }
+  function scanPrice(target: HTMLElement, code: string) {
+    let at = performance.now();
+    for (const key of [...code, 'Enter']) {
+      const event = createEvent.keyDown(target, {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, 'timeStamp', { value: (at += 8) });
+      fireEvent(target, event);
+    }
+  }
+  it.each(['001234', '2000000000015'])(
+    'shows price for scanned barcode %s and creates a receipt only on explicit addition',
+    async (barcode) => {
+      vi.mocked(searchProducts).mockResolvedValue({
+        meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+        products: [productFixture({ additional_barcode: '2000000000015' })],
+      });
+      vi.mocked(createSale).mockResolvedValue(
+        saleFixture({ items: [itemFixture()], total: '650.00' }),
+      );
+      renderCheckout({}, true);
+      const dialog = await openPriceCheck();
+      expect(dialog).toHaveFocus();
+      expect(
+        screen.queryByRole('dialog', { name: 'Экранная клавиатура' }),
+      ).not.toBeInTheDocument();
+      scanPrice(dialog, barcode);
+      expect(await within(dialog).findByText('650,00 ₸')).toBeInTheDocument();
+      expect(searchProducts).toHaveBeenCalledWith({
+        search: barcode,
+        limit: 20,
+        offset: 0,
+      });
+      expect(createSale).not.toHaveBeenCalled();
+      expect(addSaleItem).not.toHaveBeenCalled();
+      const add = within(dialog).getByRole('button', {
+        name: 'Добавить в чек Молоко',
+      });
+      add.focus();
+      scanPrice(add, barcode);
+      expect(createSale).not.toHaveBeenCalled();
+      await userEvent.click(add);
+      await waitFor(() =>
+        expect(createSale).toHaveBeenCalledWith({
+          items: [{ productId: 'product-1', quantity: '1' }],
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('dialog', { name: 'Проверка цены' }),
+        ).not.toBeInTheDocument(),
+      );
+    },
+  );
+  it('keeps the existing receipt unchanged when searching by name, pressing Enter and closing', async () => {
+    vi.mocked(getCurrentSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], total: '650.00' }),
+    );
+    renderCheckout();
+    const dialog = await openPriceCheck();
+    await userEvent.type(
+      within(dialog).getByLabelText('Название или штрихкод для проверки цены'),
+      'Молоко{enter}',
+    );
+    expect(await within(dialog).findByText('650,00 ₸')).toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Закрыть' }),
+    );
+    expect(createSale).not.toHaveBeenCalled();
+    expect(addSaleItem).not.toHaveBeenCalled();
+    expect(cancelSale).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole('main', { name: 'Рабочая зона продаж' }),
+    ).toBeInTheDocument();
+  });
+  it('allows product readers to check prices without sale permissions', async () => {
+    vi.mocked(getAuthContext).mockResolvedValue(
+      contextFixture(['product.read']),
+    );
+    renderCheckout();
+    const dialog = await openPriceCheck();
+    scanPrice(dialog, '001234');
+    expect(await within(dialog).findByText('650,00 ₸')).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('button', { name: /Добавить в чек/ }),
+    ).not.toBeInTheDocument();
+    expect(createSale).not.toHaveBeenCalled();
+  });
+  it('distinguishes an unset price from a zero price and prevents selling unavailable products', async () => {
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 3 },
+      products: [
+        productFixture({ retail_price: null }),
+        productFixture({
+          id: 'zero',
+          name: 'Бесплатный товар',
+          retail_price: '0.00',
+          unit: 'kg',
+        }),
+        productFixture({
+          id: 'inactive',
+          name: 'Неактивный товар',
+          is_active: false,
+        }),
+      ],
+    });
+    renderCheckout();
+    const dialog = await openPriceCheck();
+    scanPrice(dialog, '001234');
+    expect(
+      await within(dialog).findByText('Цена не задана'),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('0,00 ₸')).toBeInTheDocument();
+    expect(within(dialog).getByText('За 1 кг')).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: 'Добавить в чек Молоко' }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole('button', {
+        name: 'Добавить в чек Неактивный товар',
+      }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole('button', {
+        name: 'Добавить в чек Бесплатный товар',
+      }),
+    ).toBeEnabled();
+    expect(createSale).not.toHaveBeenCalled();
+  });
+  it('retains a scanned Data Matrix for explicit addition of marked goods', async () => {
+    const gtin = '04870000000012';
+    const code = `01${gtin}21ABC`;
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 1 },
+      products: [
+        productFixture({
+          nkt: { ...productFixture().nkt!, gtin, is_marked: true },
+        }),
+      ],
+    });
+    vi.mocked(createSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], total: '650.00' }),
+    );
+    renderCheckout();
+    const dialog = await openPriceCheck();
+    scanPrice(dialog, `]d2${code}`);
+    expect(await within(dialog).findByText('650,00 ₸')).toBeInTheDocument();
+    expect(searchProducts).toHaveBeenCalledWith({
+      search: gtin,
+      limit: 20,
+      offset: 0,
+    });
+    expect(createSale).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Добавить в чек Молоко' }),
+    );
+    await waitFor(() =>
+      expect(createSale).toHaveBeenCalledWith({
+        items: [{ productId: 'product-1', quantity: '1', markingCode: code }],
+      }),
+    );
+  });
+  it('shows an empty search result without changing a receipt', async () => {
+    vi.mocked(searchProducts).mockResolvedValue({
+      meta: { has_more: false, limit: 20, offset: 0, total: 0 },
+      products: [],
+    });
+    renderCheckout();
+    const dialog = await openPriceCheck();
+    scanPrice(dialog, '999999');
+    expect(
+      await within(dialog).findByText(
+        'Товар не найден. Проверьте код или название.',
+      ),
+    ).toBeInTheDocument();
+    expect(createSale).not.toHaveBeenCalled();
+  });
+});
+
+it('exposes cash movements only with the dedicated permission and isolates scans while the dialog is open', async () => {
+  renderCheckout();
+  await screen.findByLabelText('Сканируйте или найдите товар');
+  expect(
+    screen.queryByRole('button', { name: 'Внесение' }),
+  ).not.toBeInTheDocument();
+  cleanup();
+  vi.mocked(getAuthContext).mockResolvedValue(
+    contextFixture(['product.read', 'sales.create', 'cash_movement.create']),
+  );
+  vi.mocked(getCashMovements).mockResolvedValue({
+    balance: '5000.00',
+    deposited: '0.00',
+    withdrawn: '0.00',
+    movements: [],
+    meta: { total: 0, limit: 20, offset: 0, has_more: false },
+  });
+  renderCheckout();
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Внесение' }),
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Наличные в кассе' });
+  let at = performance.now();
+  for (const key of [...'001234', 'Enter']) {
+    const event = createEvent.keyDown(dialog, {
+      key,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(event, 'timeStamp', { value: (at += 8) });
+    fireEvent(dialog, event);
+  }
+  expect(createSale).not.toHaveBeenCalled();
+  expect(addSaleItem).not.toHaveBeenCalled();
 });

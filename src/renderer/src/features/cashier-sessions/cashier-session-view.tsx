@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Banknote, LoaderCircle, LogIn } from 'lucide-react';
+import { Banknote, LoaderCircle, LogIn, ShieldAlert } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 
 import { startCashierSession } from '@renderer/common/api';
@@ -19,6 +19,7 @@ import { authContextQueryOptions } from '@renderer/features/auth';
 
 import { currentCashierSessionQueryOptions } from './cashier-session-query-options';
 import { cashierSessionOpeningSchema } from './cashier-session.schema';
+import { EndCashierSessionAction } from './end-cashier-session-action';
 
 type CashierSessionViewProps = {
   registerId: string;
@@ -33,10 +34,18 @@ export function CashierSessionView({
   const queryClient = useQueryClient();
   const context = useQuery(authContextQueryOptions());
   const currentSession = useQuery(
-    currentCashierSessionQueryOptions(registerId),
+    currentCashierSessionQueryOptions(registerId, true),
   );
   const [openingCash, setOpeningCash] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const session = currentSession.data;
+  const isOwnSession = Boolean(
+    session && session.membership_id === context.data?.userOrganizationId,
+  );
+  const canEndOtherCashierSession = Boolean(
+    context.data?.isSystemPosition ||
+    context.data?.permissions.includes('cashier_session.end_others'),
+  );
   const startMutation = useMutation({
     mutationFn: (cash: string) =>
       startCashierSession(registerShiftId, { openingCash: cash }),
@@ -56,7 +65,7 @@ export function CashierSessionView({
 
   useEffect(() => {
     const cashierSession = currentSession.data;
-    if (!cashierSession) return;
+    if (!cashierSession || !isOwnSession) return;
 
     if (
       cashierSession.register_id !== registerId ||
@@ -65,6 +74,11 @@ export function CashierSessionView({
       void navigate({ replace: true, to: '/select-register-shift' });
       return;
     }
+
+    queryClient.setQueryData(
+      queryKeys.cashierSessions.current(registerId),
+      cashierSession,
+    );
 
     if (
       cashierSession.status === 'ACTIVE' ||
@@ -76,7 +90,14 @@ export function CashierSessionView({
         to: '/checkout',
       });
     }
-  }, [currentSession.data, navigate, registerId, registerShiftId]);
+  }, [
+    currentSession.data,
+    isOwnSession,
+    navigate,
+    queryClient,
+    registerId,
+    registerShiftId,
+  ]);
 
   const changeOpeningCash = (value: string) => {
     setOpeningCash(value);
@@ -114,10 +135,65 @@ export function CashierSessionView({
     );
   }
   if (
-    currentSession.data?.status === 'ACTIVE' ||
-    currentSession.data?.status === 'LOCKED'
+    isOwnSession &&
+    (currentSession.data?.status === 'ACTIVE' ||
+      currentSession.data?.status === 'LOCKED')
   ) {
     return <FullPageState isLoading title="Восстанавливаем работу" />;
+  }
+
+  if (session && !isOwnSession) {
+    if (!canEndOtherCashierSession) {
+      return (
+        <FullPageState
+          description="Обратитесь к администратору или выберите другую кассу."
+          onRetry={() =>
+            void navigate({ replace: true, to: '/select-register-shift' })
+          }
+          retryLabel="К выбору кассы"
+          title="На кассе работает другой кассир"
+        />
+      );
+    }
+
+    return (
+      <main className="grid min-h-full place-items-center bg-workspace p-4 sm:p-6">
+        <section className="w-full max-w-xl rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-surface)] sm:p-7">
+          <header className="mb-6">
+            <span className="grid size-12 place-items-center rounded-xl bg-destructive/10 text-destructive">
+              <ShieldAlert aria-hidden="true" className="size-6" />
+            </span>
+            <h1 className="mt-4 text-2xl font-bold tracking-[-0.035em] text-card-foreground sm:text-3xl">
+              На кассе работает другой кассир
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Продажи от имени другого сотрудника недоступны. Если его смена
+              осталась открытой, пересчитайте наличные и завершите её с
+              административной отметкой.
+            </p>
+          </header>
+
+          <div className="grid gap-3">
+            <EndCashierSessionAction
+              cashierSession={session}
+              includeOtherInCurrentQuery
+              isOtherCashierSession
+              onEnded={() => undefined}
+            />
+            <Button
+              className="min-h-11 w-full"
+              onClick={() =>
+                void navigate({ replace: true, to: '/select-register-shift' })
+              }
+              type="button"
+              variant="ghost"
+            >
+              К выбору кассы
+            </Button>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   const canStart =

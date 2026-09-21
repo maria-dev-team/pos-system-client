@@ -109,6 +109,7 @@ export const posRequestSchema = z.discriminatedUnion('type', [
       type: z.literal('search'),
       search: z.string().max(512).optional(),
       categoryId: id.optional(),
+      quickOnly: z.boolean().optional(),
       limit: z.number().int().min(1).max(100).optional(),
       offset: z.number().int().min(0).max(1000000).optional(),
     })
@@ -123,6 +124,7 @@ export const posRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('status') }).strict(),
   z.object({ type: z.literal('retry') }).strict(),
   z.object({ type: z.literal('flush') }).strict(),
+  z.object({ type: z.literal('prepareCashMovement') }).strict(),
   z
     .object({
       type: z.literal('checkout'),

@@ -8,6 +8,17 @@ vi.mock('electron', () => ({ app: {}, ipcMain: {}, safeStorage: {} }));
 
 afterEach(() => vi.unstubAllEnvs());
 describe('POS IPC trust boundary', () => {
+  it('accepts cash preparation without accepting extra command fields', () => {
+    expect(
+      posRequestSchema.safeParse({ type: 'prepareCashMovement' }).success,
+    ).toBe(true);
+    expect(
+      posRequestSchema.safeParse({
+        type: 'prepareCashMovement',
+        skipSync: true,
+      }).success,
+    ).toBe(false);
+  });
   it('allows only the main frame of the registered window and the local app origin', () => {
     vi.stubEnv('ELECTRON_RENDERER_URL', '');
     const frame = { url: 'maria://app/' };

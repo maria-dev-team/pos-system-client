@@ -382,6 +382,10 @@ describe('API endpoints', () => {
         '/v1/registers/register-1/cashier-sessions/current': {
           data: { cashier_session: cashierSession },
         },
+        '/v1/registers/register-1/cashier-sessions/current?include_other=true':
+          {
+            data: { cashier_session: cashierSession },
+          },
         '/v1/cashier-sessions/cashier-session-1/end': {
           data: { cashier_session: endedCashierSession },
         },
@@ -463,6 +467,9 @@ describe('API endpoints', () => {
     await expect(getCurrentCashierSession('register-1')).resolves.toEqual(
       cashierSession,
     );
+    await expect(getCurrentCashierSession('register-1', true)).resolves.toEqual(
+      cashierSession,
+    );
     await expect(
       endCashierSession('cashier-session-1', { actualCash: '9900.00' }),
     ).resolves.toEqual(endedCashierSession);
@@ -485,6 +492,10 @@ describe('API endpoints', () => {
       ['post', '/v1/register-shifts/register-shift-1/close'],
       ['post', '/v1/register-shifts/register-shift-1/cashier-sessions'],
       ['get', '/v1/registers/register-1/cashier-sessions/current'],
+      [
+        'get',
+        '/v1/registers/register-1/cashier-sessions/current?include_other=true',
+      ],
       ['post', '/v1/cashier-sessions/cashier-session-1/end'],
       ['get', '/health'],
       ['get', '/v1/register-shifts'],
@@ -510,14 +521,14 @@ describe('API endpoints', () => {
     expect(JSON.parse(calls.at(9)?.data as string)).toEqual({
       actual_cash: '12400.00',
     });
-    expect(calls.at(14)?.params).toEqual({ register_id: 'register-1' });
+    expect(calls.at(15)?.params).toEqual({ register_id: 'register-1' });
     expect(JSON.parse(calls.at(10)?.data as string)).toEqual({
       opening_cash: '10000.00',
     });
-    expect(JSON.parse(calls.at(12)?.data as string)).toEqual({
+    expect(JSON.parse(calls.at(13)?.data as string)).toEqual({
       actual_cash: '9900.00',
     });
-    expect(calls.at(13)?.timeout).toBe(3_000);
+    expect(calls.at(14)?.timeout).toBe(3_000);
   });
 
   it('uses the checkout product and sale contracts and unwraps the inner sale', async () => {

@@ -559,3 +559,110 @@ it('does not advance cursor for a malformed delta and bounds a busy feed to 20 p
   expect(db.get(`catalog-cursor:${scope}`)).toBe('next-20');
   expect(db.get(`catalog:${scope}`)).toBeNull();
 });
+
+it('looks up an additional barcode online, preserves it in the schema and serves subsequent scans offline', async () => {
+  const p = { ...product(), additional_barcode: '000456' };
+  const { catalog, db, request } = setup(async () => ({ products: [p] }));
+  expect(await catalog.barcode('000456')).toMatchObject({
+    id: p.id,
+    additional_barcode: '000456',
+  });
+  request.mockRejectedValue(new TypeError('offline'));
+  expect(await catalog.barcode('000456')).toMatchObject({ id: p.id });
+  expect(await catalog.barcode(p.barcode)).toMatchObject({ id: p.id });
+  expect(
+    (await catalog.search('000456', undefined, 20, 0)).products[0].id,
+  ).toBe(p.id);
+  expect(db.product(scope, p.id)?.additional_barcode).toBe('000456');
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('enriches a legacy cached product on a secondary scan before the full refresh completes', async () => {
+  const p = { ...product(), additional_barcode: '000456' };
+  const { db, catalog } = setup(async () => ({ products: [p] }));
+  const legacy = { ...p } as ProductResponse;
+  delete legacy.additional_barcode;
+  await db.cacheProducts(scope, [legacy]);
+  expect(await catalog.barcode('000456')).toMatchObject({
+    id: p.id,
+    additional_barcode: '000456',
+  });
+  expect(db.barcode(scope, '000456')?.id).toBe(p.id);
+});
+
+it.each([123, {}, '', '1'.repeat(256)])(
+  'rejects malformed additional barcode %j',
+  async (additional_barcode) => {
+    const p = product();
+    const { catalog, db } = setup(async () => ({
+      products: [{ ...p, additional_barcode }],
+    }));
+    await expect(catalog.barcode(p.barcode)).rejects.toMatchObject({
+      code: 'POS_API_INVALID_RESPONSE',
+    });
+    expect(db.product(scope, p.id)).toBeUndefined();
+  },
+);
+
+it('accepts an older backend response with no additional barcode', async () => {
+  const p = product();
+  delete p.additional_barcode;
+  const { catalog } = setup(async () => ({ products: [p] }));
+  expect(await catalog.barcode(p.barcode)).toMatchObject({
+    id: p.id,
+    additional_barcode: null,
+  });
+});
+
+it('rejects ambiguous remote primary/additional matches', async () => {
+  const p = { ...product(), additional_barcode: '000456' };
+  const { catalog } = setup(async () => ({
+    products: [
+      p,
+      { ...product(), id: randomUUID(), barcode: '000456', nkt: null },
+    ],
+  }));
+  await expect(catalog.barcode('000456')).rejects.toMatchObject({
+    code: 'PRODUCT_BARCODE_AMBIGUOUS',
+  });
+});
+
+it('applies additional barcode updates and removals from the journal without a full reload', async () => {
+  const p = { ...product(), additional_barcode: '000456' };
+  const { db, catalog, request } = setup();
+  await db.cacheProducts(scope, [p]);
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  request.mockResolvedValue(delta([{ ...p, additional_barcode: '000789' }]));
+  await catalog.refresh();
+  expect(db.barcode(scope, '000456')).toBeUndefined();
+  expect(db.barcode(scope, '000789')?.id).toBe(p.id);
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  request.mockResolvedValue(
+    delta([{ ...p, additional_barcode: null }], [], 'cleared'),
+  );
+  await catalog.refresh();
+  expect(db.barcode(scope, '000789')).toBeUndefined();
+  expect(db.barcode(scope, p.barcode)?.id).toBe(p.id);
+  expect(request.mock.calls.every(([path]) => path.includes('/changes?'))).toBe(
+    true,
+  );
+});
+
+it('does not restore an additional code removed while its online lookup was in flight', async () => {
+  const p = { ...product(), additional_barcode: '000456' };
+  let finish!: (value: unknown) => void;
+  const { db, catalog, request } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  request.mockImplementation(async (path) =>
+    path.includes('/lookup?')
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : delta([{ ...p, additional_barcode: null }]),
+  );
+  const lookup = catalog.barcode('000456');
+  await catalog.refresh();
+  finish({ products: [p] });
+  expect(await lookup).toBeUndefined();
+  expect(db.barcode(scope, '000456')).toBeUndefined();
+});
