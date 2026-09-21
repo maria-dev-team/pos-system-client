@@ -20,8 +20,7 @@ export const buildPrintableReceipt = (
   if (
     sale.status !== 'COMPLETED' ||
     !sale.completed_at ||
-    !sale.receipt_number ||
-    !sale.fiscal_receipt
+    !sale.receipt_number
   ) {
     return null;
   }
@@ -54,7 +53,7 @@ export const buildPrintableReceipt = (
 
   return {
     cashier: cashierName,
-    completedAt: fiscal.fiscalized_at,
+    completedAt: fiscal?.fiscalized_at ?? sale.completed_at,
     currency: sale.currency,
     discountAmount: sale.discount_amount,
     discountPercentage: sale.discount_percentage,
@@ -73,31 +72,33 @@ export const buildPrintableReceipt = (
       vatRate: item.vat_rate,
     })),
     organization: {
-      binIin: fiscal.taxpayer_bin_iin,
+      binIin: fiscal?.taxpayer_bin_iin ?? null,
       displayName:
         organization?.trade_name ?? organization?.name ?? sale.organization_id,
-      legalName: fiscal.taxpayer_name,
+      legalName: fiscal?.taxpayer_name ?? null,
     },
-    fiscal: {
-      address: fiscal.address,
-      buyerBinIin: fiscal.buyer_bin_iin,
-      cashboxUniqueNumber: fiscal.cashbox_unique_number,
-      fiscalSign: fiscal.fiscal_sign,
-      offline: fiscal.offline,
-      ofdName: fiscal.ofd_name,
-      ofdWebsite: fiscal.ofd_website,
-      qrUrl: fiscal.qr_url,
-      receiptNumber: fiscal.receipt_number,
-      registrationNumber: fiscal.registration_number,
-      shiftNumber: fiscal.shift_number,
-      vatTotal: fiscal.vat_total,
-    },
+    fiscal: fiscal
+      ? {
+          address: fiscal.address,
+          buyerBinIin: fiscal.buyer_bin_iin,
+          cashboxUniqueNumber: fiscal.cashbox_unique_number,
+          fiscalSign: fiscal.fiscal_sign,
+          offline: fiscal.offline,
+          ofdName: fiscal.ofd_name,
+          ofdWebsite: fiscal.ofd_website,
+          qrUrl: fiscal.qr_url,
+          receiptNumber: fiscal.receipt_number,
+          registrationNumber: fiscal.registration_number,
+          shiftNumber: fiscal.shift_number,
+          vatTotal: fiscal.vat_total,
+        }
+      : null,
     isTest: false,
     localReceiptNumber: sale.receipt_number,
     operationType: sale.transaction_type,
     payments,
     store: {
-      address: fiscal.address,
+      address: fiscal?.address ?? metadata.store?.address ?? null,
       name: metadata.store?.name ?? sale.store_id,
     },
     subtotal: sale.subtotal,

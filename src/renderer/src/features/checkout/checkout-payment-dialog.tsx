@@ -1,7 +1,12 @@
 import { Banknote, CreditCard, LoaderCircle, Split } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 
-import type { SalePaymentPayload, SaleResponse } from '@renderer/common/api';
+import type {
+  FiscalizationMode,
+  FiscalizationPolicy,
+  SalePaymentPayload,
+  SaleResponse,
+} from '@renderer/common/api';
 import { Button } from '@renderer/common/components/ui/button';
 import {
   Dialog,
@@ -26,9 +31,12 @@ import {
 type PaymentMode = 'CASH' | 'CASHLESS' | 'MIXED';
 
 type CheckoutPaymentDialogProps = {
+  fiscalizationEnabled?: boolean;
+  fiscalizationPolicy?: FiscalizationPolicy;
   onConfirm: (
     payments: SalePaymentPayload[],
     buyerBinIin?: string,
+    fiscalizationMode?: FiscalizationMode,
   ) => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -44,6 +52,8 @@ const modes = [
 ] as const;
 
 function PaymentForm({
+  fiscalizationEnabled = true,
+  fiscalizationPolicy = 'ALWAYS',
   onConfirm,
   onOpenChange,
   pending,
@@ -54,6 +64,7 @@ function PaymentForm({
   const [cashAmount, setCashAmount] = useState('');
   const [cashReceived, setCashReceived] = useState('');
   const [buyerBinIin, setBuyerBinIin] = useState('');
+  const [fiscalize, setFiscalize] = useState(true);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [dismissedServerError, setDismissedServerError] = useState<
     string | null
@@ -93,6 +104,15 @@ function PaymentForm({
     serverErrorMessage && serverErrorMessage !== dismissedServerError
       ? serverErrorMessage
       : null;
+  const fiscalizationMode: FiscalizationMode = !fiscalizationEnabled
+    ? 'NON_FISCAL'
+    : fiscalizationPolicy === 'SELECTIVE'
+      ? fiscalize
+        ? 'FISCAL'
+        : 'NON_FISCAL'
+      : fiscalizationPolicy === 'CASHLESS_ONLY' && mode !== 'CASHLESS'
+        ? 'NON_FISCAL'
+        : 'FISCAL';
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -118,9 +138,11 @@ function PaymentForm({
     confirmingRef.current = true;
     try {
       void Promise.resolve(
-        normalizedBuyerBinIin
-          ? onConfirm(payments, normalizedBuyerBinIin)
-          : onConfirm(payments),
+        fiscalizationMode === 'NON_FISCAL'
+          ? onConfirm(payments, undefined, fiscalizationMode)
+          : normalizedBuyerBinIin
+            ? onConfirm(payments, normalizedBuyerBinIin)
+            : onConfirm(payments),
       )
         .catch(() => undefined)
         .finally(() => {
@@ -186,6 +208,57 @@ function PaymentForm({
           })}
         </div>
 
+        {fiscalizationEnabled && fiscalizationPolicy === 'SELECTIVE' ? (
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between gap-4 px-1">
+              <p className="text-sm font-semibold">Тип чека</p>
+              <p className="text-xs text-muted-foreground">
+                Для текущей продажи
+              </p>
+            </div>
+            <div
+              aria-label="Тип чека"
+              className="grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/40 p-1"
+              role="radiogroup"
+            >
+              <button
+                aria-checked={fiscalize}
+                className={`min-h-11 rounded-lg px-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 ${fiscalize ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}`}
+                disabled={pending}
+                onClick={() => setFiscalize(true)}
+                role="radio"
+                type="button"
+              >
+                С фискализацией
+              </button>
+              <button
+                aria-checked={!fiscalize}
+                className={`min-h-11 rounded-lg px-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/25 ${!fiscalize ? 'bg-background text-foreground shadow-sm ring-1 ring-border' : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}`}
+                disabled={pending}
+                onClick={() => setFiscalize(false)}
+                role="radio"
+                type="button"
+              >
+                Без фискализации
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {fiscalizationEnabled && fiscalizationPolicy === 'CASHLESS_ONLY' ? (
+          <p className="text-sm text-muted-foreground">
+            {mode === 'CASHLESS'
+              ? 'Безналичная оплата будет фискализирована.'
+              : 'Для этого способа оплаты чек будет нефискальным.'}
+          </p>
+        ) : null}
+
+        {!fiscalizationEnabled ? (
+          <p className="text-sm text-muted-foreground">
+            Фискализация для этой кассы не подключена.
+          </p>
+        ) : null}
+
         {mode === 'CASH' ? (
           <FormField>
             <Label htmlFor="checkout-cash-received">
@@ -248,23 +321,25 @@ function PaymentForm({
           </div>
         ) : null}
 
-        <FormField>
-          <Label htmlFor="checkout-buyer-bin-iin">
-            БИН/ИИН покупателя — по запросу
-          </Label>
-          <Input
-            disabled={pending}
-            id="checkout-buyer-bin-iin"
-            inputMode="numeric"
-            maxLength={12}
-            onChange={(event) => {
-              setBuyerBinIin(event.target.value.replace(/\D/gu, ''));
-              setValidationError(null);
-            }}
-            placeholder="12 цифр"
-            value={buyerBinIin}
-          />
-        </FormField>
+        {fiscalizationMode === 'FISCAL' ? (
+          <FormField>
+            <Label htmlFor="checkout-buyer-bin-iin">
+              БИН/ИИН покупателя — по запросу
+            </Label>
+            <Input
+              disabled={pending}
+              id="checkout-buyer-bin-iin"
+              inputMode="numeric"
+              maxLength={12}
+              onChange={(event) => {
+                setBuyerBinIin(event.target.value.replace(/\D/gu, ''));
+                setValidationError(null);
+              }}
+              placeholder="12 цифр"
+              value={buyerBinIin}
+            />
+          </FormField>
+        ) : null}
 
         {cashlessRemainder || change ? (
           <div className="grid gap-3 sm:grid-cols-2">

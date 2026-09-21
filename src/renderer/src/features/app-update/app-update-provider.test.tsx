@@ -8,7 +8,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppUpdateState } from '../../../../main/app-updater';
+import type { AppUpdateState } from '../../../../shared/desktop-contracts';
 import { AppUpdateProvider } from './app-update-provider';
 
 const updateState = (

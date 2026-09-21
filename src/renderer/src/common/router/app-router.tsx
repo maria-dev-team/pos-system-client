@@ -1,5 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
-import { type QueryClient, useQuery } from '@tanstack/react-query';
+import {
+  type QueryClient,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   Outlet,
   createMemoryHistory,
@@ -8,13 +12,20 @@ import {
   createRouter,
   redirect,
   useNavigate,
+  useRouter,
   useRouterState,
 } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 
+import { syncCameraContext } from '@renderer/common/camera/camera-context';
 import { FullPageState } from '@renderer/common/components/full-page-state';
 import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
+import { queryKeys } from '@renderer/common/constants';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import {
+  connectLocalPos,
+  restoreLocalPos,
+} from '@renderer/common/lib/local-pos';
 import { receiptNumberSchema } from '@renderer/common/schemas/receipt-number.schema';
 import {
   LoginView,
@@ -28,6 +39,8 @@ import {
   currentCashierSessionQueryOptions,
 } from '@renderer/features/cashier-sessions';
 import { CheckoutView } from '@renderer/features/checkout';
+import { LocalPosSyncBar } from '@renderer/features/local-pos';
+import { LocalPosSyncProvider } from '@renderer/features/local-pos';
 import { organizationsQueryOptions } from '@renderer/features/organizations';
 import {
   RegisterShiftSelectionView,
@@ -66,20 +79,64 @@ function SessionRedirect(): null {
     }
   }, [accessToken, isInitialized, navigate, pathname]);
 
+  const cameraEnabled = useRouterState({
+    select: (state) =>
+      state.matches.some((match) =>
+        [
+          '/select-register-shift',
+          '/cashier-session',
+          '/checkout',
+          '/sales-history',
+          '/returns',
+        ].includes(match.pathname),
+      ),
+  });
+
+  const cameraRegisterId = useRouterState({
+    select: (state) => {
+      const match = state.matches.at(-1);
+      return match &&
+        match.pathname !== '/select-register-shift' &&
+        'registerId' in match.search &&
+        typeof match.search.registerId === 'string'
+        ? match.search.registerId
+        : null;
+    },
+  });
+
+  useEffect(() => {
+    syncCameraContext(cameraEnabled ? accessToken : null, cameraRegisterId);
+  }, [accessToken, cameraEnabled, cameraRegisterId]);
+
   return null;
 }
 
 function RootLayout() {
+  const accessToken = useAuthStore((state) => state.accessToken);
   return (
     <OnScreenKeyboardProvider>
-      <div className="flex h-svh flex-col overflow-hidden">
-        <StatusBar />
-        <div className="min-h-0 flex-1 overflow-auto">
-          <SessionRedirect />
-          <Outlet />
+      <LocalPosSyncProvider enabled={Boolean(accessToken)}>
+        <div className="flex h-svh flex-col overflow-hidden">
+          <StatusBar />
+          <LocalPosSyncBar />
+          <div className="min-h-0 flex-1 overflow-auto">
+            <SessionRedirect />
+            <Outlet />
+          </div>
         </div>
-      </div>
+      </LocalPosSyncProvider>
     </OnScreenKeyboardProvider>
+  );
+}
+
+function RouteError({ error }: { error: Error }) {
+  const router = useRouter();
+  return (
+    <FullPageState
+      title="Не удалось восстановить данные"
+      description={getHttpErrorMessage(error)}
+      onRetry={() => void router.invalidate()}
+    />
   );
 }
 
@@ -91,6 +148,16 @@ const indexRoute = createRoute({
   beforeLoad: async ({ context: { queryClient } }) => {
     await useAuthStore.getState().initialize();
     if (!useAuthStore.getState().accessToken) throw redirect({ to: '/login' });
+
+    const local = await restoreLocalPos(queryClient).catch(() => null);
+    if (local)
+      throw redirect({
+        to: '/checkout',
+        search: {
+          registerId: local.session.register_id,
+          registerShiftId: local.session.register_shift_id,
+        },
+      });
 
     const [context] = await Promise.all([
       queryClient.ensureQueryData(authContextQueryOptions()),
@@ -210,6 +277,7 @@ const cashierSessionRoute = createRoute({
 
 function CheckoutRouteComponent() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { registerId, registerShiftId } = checkoutRoute.useSearch();
   const cashierSession = useQuery(
     currentCashierSessionQueryOptions(registerId ?? ''),
@@ -227,6 +295,13 @@ function CheckoutRouteComponent() {
     retainedSession.register_id === registerId &&
     retainedSession.register_shift_id === registerShiftId,
   );
+  const refetchSession = async () => {
+    const result = await cashierSession.refetch();
+    queryClient.setQueryData(
+      queryKeys.cashierSessions.currentIncludingOthers(registerId ?? ''),
+      result.data ?? null,
+    );
+  };
 
   useEffect(() => {
     if (
@@ -263,7 +338,7 @@ function CheckoutRouteComponent() {
           cashierSession.error,
           'Не удалось проверить доступ к кассе.',
         )}
-        onRetry={() => void cashierSession.refetch()}
+        onRetry={() => void refetchSession()}
         title="Не удалось проверить доступ к кассе"
       />
     );
@@ -293,7 +368,7 @@ function CheckoutRouteComponent() {
           to: '/sales-history',
         })
       }
-      onRetrySession={() => void cashierSession.refetch()}
+      onRetrySession={() => void refetchSession()}
       onSessionEndedLocally={() => setLocallyEndedSession(session)}
       onSessionEnded={() =>
         void navigate({ replace: true, to: '/select-register-shift' })
@@ -327,6 +402,10 @@ const checkoutRoute = createRoute({
     const cashierSession = await queryClient.ensureQueryData(
       currentCashierSessionQueryOptions(search.registerId),
     );
+    // Starting a session seeds React Query directly, bypassing its queryFn.
+    // Desktop checkout must activate local storage even when the session is cached.
+    if (window.localPos && cashierSession?.status === 'ACTIVE')
+      await connectLocalPos(search.registerId);
     if (
       !cashierSession ||
       !['ACTIVE', 'LOCKED'].includes(cashierSession.status) ||
@@ -786,6 +865,7 @@ const routeTree = rootRoute.addChildren([
 export const createAppRouter = (queryClient: QueryClient) =>
   createRouter({
     context: { queryClient },
+    defaultErrorComponent: RouteError,
     defaultPendingComponent: () => (
       <FullPageState isLoading title="Загружаем данные" />
     ),

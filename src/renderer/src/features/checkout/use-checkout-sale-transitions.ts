@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 
 import {
+  type FiscalizationMode,
   type HeldSaleResponse,
   type SalePaymentPayload,
   type SaleResponse,
@@ -13,12 +14,14 @@ import {
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
+import { callLocalPos, localPosActive } from '@renderer/common/lib/local-pos';
 
-import { reportCancellation } from './report-cancellation';
+import { reportSaleAntiFraud } from '../anti-fraud';
 
 type TerminalCommand =
   | {
       buyerBinIin?: string;
+      fiscalizationMode: FiscalizationMode;
       payments: SalePaymentPayload[];
       type: 'checkout';
     }
@@ -69,10 +72,10 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
 
   const finishCommand = (sale: SaleResponse, command: TerminalCommand) => {
     if (hasExpectedStatus(sale, command)) {
-      if (command.type === 'cancel') {
-        reportCancellation(sale, command.reason);
-      }
       finishTerminal(sale);
+      if (command.type === 'cancel') {
+        void reportSaleAntiFraud(sale, command.reason);
+      }
     } else {
       adoptDraft(sale);
     }
@@ -86,6 +89,29 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
     }
 
     try {
+      if (localPosActive()) {
+        const result =
+          command.type === 'checkout'
+            ? await callLocalPos<SaleResponse>({
+                type: 'checkout',
+                saleId: sale.id,
+                total: sale.total,
+                fiscalizationMode: command.fiscalizationMode,
+                payments: command.payments,
+                ...(command.buyerBinIin
+                  ? { buyerBinIin: command.buyerBinIin }
+                  : {}),
+              })
+            : await callLocalPos<SaleResponse>({
+                type: 'transition',
+                saleId: sale.id,
+                action: command.type,
+                ...(command.type === 'cancel'
+                  ? { reason: command.reason }
+                  : {}),
+              });
+        return finishCommand(result, command);
+      }
       const result =
         command.type === 'checkout'
           ? await checkoutSale(sale.id, {
@@ -93,6 +119,7 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
                 ? { buyerBinIin: command.buyerBinIin }
                 : {}),
               expectedVersion: sale.version,
+              fiscalizationMode: command.fiscalizationMode,
               payments: command.payments,
             })
           : command.type === 'hold'
@@ -132,11 +159,19 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
   const checkout = useMutation({
     mutationFn: ({
       buyerBinIin,
+      fiscalizationMode = 'FISCAL',
       payments,
     }: {
       buyerBinIin?: string;
+      fiscalizationMode?: FiscalizationMode;
       payments: SalePaymentPayload[];
-    }) => runTerminal({ buyerBinIin, payments, type: 'checkout' }),
+    }) =>
+      runTerminal({
+        buyerBinIin,
+        fiscalizationMode,
+        payments,
+        type: 'checkout',
+      }),
     scope,
   });
 
@@ -146,9 +181,13 @@ export function useCheckoutSaleTransitions(cashierSessionId: string) {
       if (current?.status === 'DRAFT') {
         throw new Error('Finish the current sale before resuming another one');
       }
-      const sale = await resumeSale(held.id, {
-        expectedVersion: held.version,
-      });
+      const sale = localPosActive()
+        ? await callLocalPos<SaleResponse>({
+            type: 'transition',
+            saleId: held.id,
+            action: 'resume',
+          })
+        : await resumeSale(held.id, { expectedVersion: held.version });
       adoptDraft(sale);
       await queryClient.invalidateQueries({ queryKey: heldKey });
       return sale;

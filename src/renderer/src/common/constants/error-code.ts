@@ -1,4 +1,7 @@
 export const ErrorCode = {
+  CashMovementInsufficient: 'CASH_MOVEMENT_INSUFFICIENT',
+  CashMovementInvalid: 'CASH_MOVEMENT_INVALID',
+  CashMovementConflict: 'CASH_MOVEMENT_CONFLICT',
   CashierSessionForbidden: 'CASHIER_SESSION_FORBIDDEN',
   CashierSessionHasOpenSales: 'CASHIER_SESSION_HAS_OPEN_SALES',
   CashierSessionInvalidTransition: 'CASHIER_SESSION_INVALID_TRANSITION',

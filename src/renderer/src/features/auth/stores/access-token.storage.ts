@@ -1,32 +1,11 @@
+import { getTokenExpiration } from '@renderer/common/helpers/access-token';
+
 const ACCESS_TOKEN_STORAGE_KEY = 'maria.access-token';
 const EXPIRATION_LEEWAY_MS = 5_000;
 
 const getSessionStorage = (): Storage | null => {
   try {
     return typeof window === 'undefined' ? null : window.sessionStorage;
-  } catch {
-    return null;
-  }
-};
-
-const getTokenExpiration = (accessToken: string): number | null => {
-  try {
-    const encodedPayload = accessToken.split('.')[1];
-    if (!encodedPayload) return null;
-
-    const normalizedPayload = encodedPayload
-      .replace(/-/g, '+')
-      .replace(/_/g, '/');
-    const paddingLength = (4 - (normalizedPayload.length % 4)) % 4;
-    const payload = JSON.parse(
-      atob(
-        normalizedPayload.padEnd(normalizedPayload.length + paddingLength, '='),
-      ),
-    ) as {
-      exp?: unknown;
-    };
-
-    return typeof payload.exp === 'number' ? payload.exp * 1_000 : null;
   } catch {
     return null;
   }

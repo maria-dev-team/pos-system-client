@@ -68,6 +68,25 @@ const renderDialog = (
 afterEach(cleanup);
 
 describe('CheckoutPaymentDialog', () => {
+  it('lets the cashier choose a non-fiscal check in selective mode', async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = renderDialog({
+      fiscalizationPolicy: 'SELECTIVE',
+    });
+
+    await user.type(screen.getByLabelText('Получено наличными, ₸'), '100');
+    await user.click(screen.getByRole('radio', { name: 'Без фискализации' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить оплату' }),
+    );
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      [{ amount: '100.00', method: 'CASH', received: '100' }],
+      undefined,
+      'NON_FISCAL',
+    );
+  });
+
   it('submits exact cash payment and shows change', async () => {
     const user = userEvent.setup();
     const { onConfirm } = renderDialog();

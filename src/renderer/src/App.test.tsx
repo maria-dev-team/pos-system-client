@@ -56,7 +56,23 @@ const api = vi.hoisted(() => ({
   triggerAntiFraudEvent: vi.fn(),
 }));
 
-vi.mock('@renderer/common/api', () => api);
+vi.mock('@renderer/common/api', () => ({
+  ...api,
+  logout: async () => {
+    await api.logout();
+    useAuthStore.getState().commitAccessToken(null);
+  },
+  login: async (...args: unknown[]) => {
+    const result = await api.login(...args);
+    useAuthStore.getState().commitAccessToken(result.auth.access_token);
+    return result;
+  },
+  selectContext: async (...args: unknown[]) => {
+    const result = await api.selectContext(...args);
+    useAuthStore.getState().commitAccessToken(result.access_token);
+    return result;
+  },
+}));
 
 const userResponse = {
   created_at: '2026-08-23T00:00:00.000Z',
@@ -374,13 +390,20 @@ beforeEach(() => {
     }),
     retryDownload: vi.fn(),
   };
+  window.windowControls = {
+    minimize: vi.fn(),
+  };
   useAuthStore.setState({
     accessToken: null,
     isInitialized: false,
     isInitializing: false,
     isLoggingOut: false,
   });
-  api.refreshTokens.mockRejectedValue(new Error('No refresh session'));
+  api.refreshTokens.mockRejectedValue(
+    new AxiosError('No refresh session', undefined, undefined, undefined, {
+      status: 401,
+    } as never),
+  );
   api.getCurrentUser.mockResolvedValue(userResponse);
   api.getMyOrganizations.mockResolvedValue([membershipResponse]);
   api.getAuthContext.mockResolvedValue(contextResponse);
@@ -411,10 +434,33 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   delete window.appUpdates;
+  delete window.camera;
   delete window.receiptPrinter;
+  delete window.windowControls;
 });
 
 describe('DukenAI POS authorization flow', () => {
+  it('shows a retryable restoration error and resumes after the server recovers', async () => {
+    api.refreshTokens
+      .mockRejectedValueOnce(
+        new AxiosError('Unavailable', undefined, undefined, undefined, {
+          status: 503,
+        } as never),
+      )
+      .mockResolvedValue({ access_token: 'restored-token' });
+    renderApp();
+    expect(
+      await screen.findByText('Не удалось восстановить данные'),
+    ).toBeInTheDocument();
+    expect(useAuthStore.getState().isInitialized).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    expect(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    ).toBeInTheDocument();
+  });
+
   it('keeps daily actions in the sale panel and rare equipment settings in the header', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
@@ -697,6 +743,17 @@ describe('DukenAI POS authorization flow', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('lets a guest minimize the application from the status bar', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Свернуть приложение' }),
+    );
+
+    expect(window.windowControls?.minimize).toHaveBeenCalledOnce();
+  });
+
   it('requires explicit organization, store and register shift selection before checkout', async () => {
     const user = userEvent.setup();
     api.login.mockResolvedValue({
@@ -740,7 +797,14 @@ describe('DukenAI POS authorization flow', () => {
     expect(
       await screen.findByRole('heading', { name: 'Оформление продажи' }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Сканируйте или найдите товар')).toHaveFocus();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('main', { name: 'Рабочая зона продаж' }),
+      ).toHaveFocus(),
+    );
+    expect(
+      screen.getByLabelText('Сканируйте или найдите товар'),
+    ).not.toHaveFocus();
     expect(api.selectContext).toHaveBeenNthCalledWith(1, 'membership-1');
     expect(api.selectContext).toHaveBeenNthCalledWith(
       2,
@@ -763,6 +827,37 @@ describe('DukenAI POS authorization flow', () => {
     expect(screen.getByText('Кассир')).toBeInTheDocument();
     expect(screen.getByText('Maria · Main store')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Выйти' })).toHaveLength(1);
+  });
+
+  it('syncs the camera with direct register navigation and disables it outside POS routes', async () => {
+    const setContext = vi.fn();
+    window.camera = { setContext };
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    const { router } = renderApp();
+
+    await screen.findByRole('heading', { name: 'Выберите кассу' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'restored-token',
+        registerId: null,
+      }),
+    );
+
+    await router.navigate({
+      to: '/checkout',
+      search: { registerId: 'register-1', registerShiftId: 'register-shift-1' },
+    });
+    await screen.findByRole('heading', { name: 'Оформление продажи' });
+    await waitFor(() =>
+      expect(setContext).toHaveBeenLastCalledWith({
+        accessToken: 'restored-token',
+        registerId: 'register-1',
+      }),
+    );
+
+    await router.navigate({ to: '/select-organization' });
+    await screen.findByRole('heading', { name: 'Выберите организацию' });
+    await waitFor(() => expect(setContext).toHaveBeenLastCalledWith(null));
   });
 
   it('requests and prints a fresh X report from an open register shift', async () => {
@@ -1262,6 +1357,70 @@ describe('DukenAI POS authorization flow', () => {
     ).toBeInTheDocument();
     expect(api.getCurrentSale).toHaveBeenCalledOnce();
     expect(api.createSale).not.toHaveBeenCalled();
+  });
+
+  it('allows an authorized employee to reconcile and end another cashier session', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getAuthContext.mockResolvedValue({
+      ...contextResponse,
+      permissions: [
+        ...contextResponse.permissions,
+        'cashier_session.end_others',
+      ],
+    });
+    const otherCashierSession = {
+      ...cashierSessionResponse,
+      membership_id: 'membership-2',
+    };
+    api.getCurrentCashierSession.mockResolvedValue(otherCashierSession);
+    api.endCashierSession.mockResolvedValue({
+      ...endedCashierSessionResponse,
+      end_reason: 'ADMIN_TERMINATED',
+      membership_id: 'membership-2',
+    });
+    renderApp();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    );
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'На кассе работает другой кассир',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Оформление продажи' }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Завершить смену другого кассира',
+      }),
+    );
+    await user.type(
+      screen.getByLabelText('Фактические наличные в кассе, ₸'),
+      '4900',
+    );
+    await user.click(screen.getByRole('button', { name: 'Завершить смену' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Работа завершена' }),
+    ).toBeInTheDocument();
+    expect(api.endCashierSession).toHaveBeenCalledWith('cashier-session-1', {
+      actualCash: '4900',
+    });
+    expect(api.getCurrentSale).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole('button', { name: 'Перейти к своей смене' }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Начало работы' }),
+    ).toBeInTheDocument();
   });
 
   it('restores a locked cashier session without opening it again', async () => {

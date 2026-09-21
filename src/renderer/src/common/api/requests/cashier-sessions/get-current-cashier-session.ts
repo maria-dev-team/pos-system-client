@@ -1,11 +1,20 @@
+import { connectLocalPos, localPosProfile } from '../../../lib/local-pos';
 import { request } from '../../request';
 import type { CashierSessionResponse } from '../../responses/cashier-session.response';
 
 export const getCurrentCashierSession = async (
   registerId: string,
+  includeOther = false,
 ): Promise<CashierSessionResponse | null> => {
+  const local = localPosProfile();
+  if (local?.session.register_id === registerId)
+    return (await connectLocalPos(registerId)).session;
   const response = await request.get(
-    `/v1/registers/${registerId}/cashier-sessions/current`,
+    `/v1/registers/${registerId}/cashier-sessions/current${includeOther ? '?include_other=true' : ''}`,
   );
-  return response.data.data.cashier_session as CashierSessionResponse | null;
+  const session = response.data.data
+    .cashier_session as CashierSessionResponse | null;
+  if (!includeOther && window.localPos && session?.status === 'ACTIVE')
+    return (await connectLocalPos(registerId)).session;
+  return session;
 };

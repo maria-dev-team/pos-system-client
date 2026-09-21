@@ -1,12 +1,18 @@
 import axios from 'axios';
 import { toast } from 'sonner';
 
+import { PosError } from '../../../../shared/pos/contracts';
+import { fiscalErrorMessage } from '../../../../shared/pos/fiscal-error';
 import {
   ErrorCode,
   type ErrorCode as ErrorCodeValue,
 } from '../constants/error-code';
 
 const messages: Record<ErrorCodeValue, string> = {
+  [ErrorCode.CashMovementInsufficient]: 'Недостаточно наличных для изъятия.',
+  [ErrorCode.CashMovementInvalid]: 'Проверьте сумму и причину операции.',
+  [ErrorCode.CashMovementConflict]:
+    'Сохранённая операция имеет другие параметры. Нельзя повторить её с изменёнными данными.',
   [ErrorCode.CashierSessionForbidden]:
     'Вы не можете управлять сменой другого кассира.',
   [ErrorCode.CashierSessionHasOpenSales]:
@@ -122,6 +128,7 @@ const messages: Record<ErrorCodeValue, string> = {
 export const getHttpErrorCode = (
   error: unknown,
 ): ErrorCodeValue | undefined => {
+  if (error instanceof PosError) return error.code as ErrorCodeValue;
   if (!axios.isAxiosError(error)) return undefined;
   return error.response?.data?.error_code as ErrorCodeValue | undefined;
 };
@@ -130,6 +137,22 @@ export const getHttpErrorMessage = (
   error: unknown,
   fallback?: string,
 ): string => {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'AUTH_CONTEXT_CHANGED'
+  )
+    return error.message;
+  if (
+    axios.isAxiosError(error) &&
+    error.response?.data?.error_code === 'AUTH_STATE_CHANGED'
+  )
+    return 'Состояние входа изменилось. Данные обновлены; повторите действие.';
+  if (error instanceof PosError) return error.message;
+  if (axios.isAxiosError(error) && error.response?.data) {
+    const message = fiscalErrorMessage(error.response.data);
+    if (message) return message;
+  }
   const errorCode = getHttpErrorCode(error);
   if (errorCode && messages[errorCode]) return messages[errorCode];
   if (!axios.isAxiosError(error)) return fallback ?? 'Произошла ошибка.';

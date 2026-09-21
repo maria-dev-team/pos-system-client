@@ -20,6 +20,7 @@ export type {
   CreateSaleItemPayload,
   CreateSalePayload,
   CreateWithoutReceiptReturnPayload,
+  FiscalizationMode,
   OverrideSaleItemPricePayload,
   PaymentMethod,
   ReceiptsQueryPayload,

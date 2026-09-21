@@ -1,68 +1,25 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { AppUpdateState } from '../main/app-updater';
+import type { ReceiptPrinterBridge } from '../shared/desktop-contracts';
+import type { AppUpdateState } from '../shared/desktop-contracts';
+import type { LocalPosBridge } from '../shared/pos/contracts';
+import type { PrintableReceipt } from '../shared/printing/receipt-document';
+import type { PrintableShiftReport } from '../shared/printing/shift-report-document';
+
+const localPos: LocalPosBridge = {
+  request: (request) => ipcRenderer.invoke('pos:request', request),
+  onChange: (callback) => {
+    const listener = (): void => callback();
+    ipcRenderer.on('pos:changed', listener);
+    return () => ipcRenderer.removeListener('pos:changed', listener);
+  },
+};
+contextBridge.exposeInMainWorld('localPos', localPos);
 
 type CameraContext = {
   accessToken: string;
   registerId: string | null;
 };
-
-type PrintableReceipt = {
-  cashier: string;
-  completedAt: string;
-  currency: 'KZT';
-  discountAmount: string;
-  discountPercentage: string | null;
-  fiscal: {
-    address: string;
-    buyerBinIin: string | null;
-    cashboxUniqueNumber: string;
-    fiscalSign: string;
-    offline: boolean;
-    ofdName: string;
-    ofdWebsite: string;
-    qrUrl: string;
-    receiptNumber: string;
-    registrationNumber: string;
-    shiftNumber: string;
-    vatTotal: string;
-  };
-  isTest: boolean;
-  items: Array<{
-    discountAmount: string;
-    lineNumber: number;
-    lineSubtotal: string;
-    lineTotal: string;
-    markingCode: string | null;
-    name: string;
-    ntinCode: string | null;
-    quantity: string;
-    unitLabel: string;
-    unitPrice: string;
-    vatAmount: string;
-    vatRate: 'NONE' | '0' | '5' | '10' | '16';
-  }>;
-  localReceiptNumber: string;
-  operationType: 'SALE' | 'RETURN';
-  organization: {
-    binIin: string | null;
-    displayName: string;
-    legalName: string | null;
-  };
-  payments: Array<{
-    amount: string;
-    change: string | null;
-    method: 'CASH' | 'CASHLESS';
-    received: string | null;
-  }>;
-  store: { address: string | null; name: string };
-  subtotal: string;
-  timeZone: string;
-  total: string;
-};
-
-type PrintableShiftReport =
-  import('../main/receipt-printer/shift-report-document').PrintableShiftReport;
 
 contextBridge.exposeInMainWorld('camera', {
   setContext: (context: CameraContext | null) => {
@@ -89,7 +46,13 @@ contextBridge.exposeInMainWorld('appUpdates', {
     ipcRenderer.invoke('app-updater:retry-download'),
 });
 
-contextBridge.exposeInMainWorld('receiptPrinter', {
+contextBridge.exposeInMainWorld('windowControls', {
+  minimize: (): void => {
+    ipcRenderer.send('window-controls:minimize');
+  },
+});
+
+const receiptPrinter: ReceiptPrinterBridge = {
   getPrinters: () => ipcRenderer.invoke('receipt-printer:get-printers'),
   print: ({
     deviceName,
@@ -125,4 +88,5 @@ contextBridge.exposeInMainWorld('receiptPrinter', {
       rasterThreshold,
       report,
     }),
-});
+};
+contextBridge.exposeInMainWorld('receiptPrinter', receiptPrinter);

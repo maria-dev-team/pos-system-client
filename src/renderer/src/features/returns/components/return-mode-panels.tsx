@@ -411,8 +411,6 @@ export function WithoutReceiptReturnPanel({
                 className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={
                   product.retail_price === null ||
-                  !product.nkt?.ntin_code ||
-                  product.nkt.is_deactivated ||
                   (!product.nkt?.is_marked &&
                     lines.some((line) => line.product.id === product.id))
                 }
@@ -428,11 +426,6 @@ export function WithoutReceiptReturnPanel({
                   {!product.is_active ? (
                     <span className="mt-1 inline-block text-xs font-semibold text-amber-700">
                       Неактивен
-                    </span>
-                  ) : null}
-                  {!product.nkt?.ntin_code || product.nkt.is_deactivated ? (
-                    <span className="mt-1 inline-block text-xs font-semibold text-amber-700">
-                      Нужно сопоставить с НКТ
                     </span>
                   ) : null}
                 </span>

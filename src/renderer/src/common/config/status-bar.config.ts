@@ -5,7 +5,8 @@ export type StatusBarItem =
   | 'clock'
   | 'support'
   | 'settings'
-  | 'logout';
+  | 'logout'
+  | 'minimize';
 
 export type StatusBarConfig = {
   healthCheckIntervalMs: number;
@@ -25,5 +26,6 @@ export const statusBarConfig = {
     'support',
     'settings',
     'logout',
+    'minimize',
   ],
 } as const satisfies StatusBarConfig;

@@ -19,6 +19,11 @@
 src/
   main/                   # Electron main process: окна, lifecycle, IPC handlers
   preload/                # безопасный typed bridge между main и renderer
+  shared/
+    api/                  # общие backend-контракты, без renderer / Node.js
+    pos/                  # IPC-контракты и чистые правила продажи
+    printing/             # общие модели и HTML-шаблоны чеков/отчётов
+    desktop-contracts.ts  # типы bridge печати и обновлений
   renderer/
     index.html
     src/
@@ -67,15 +72,15 @@ Production renderer загружается с привилегированног
 
 ### Preload
 
-`src/preload` остаётся no-op, пока renderer не нужна конкретная системная операция.
-При появлении такой операции preload экспортирует минимальный API через
-`contextBridge`, а публичный контракт типизируется вместе с декларацией `Window`.
+`src/preload` экспортирует предметные API локальной кассы, печати, камеры,
+управления окном и обновлений через `contextBridge`. Общие контракты находятся
+в `shared`; preload и декларация `Window` используют один источник типов.
 Наружу не передаются `ipcRenderer`, Node.js API или произвольные каналы.
 
 ### Renderer
 
 `src/renderer/src` — обычное React-приложение. Доступ к ОС выполняется только через
-предметный типизированный preload bridge, когда он появится, а сетевые запросы —
+предметный типизированный preload bridge, а сетевые запросы —
 через общий API layer.
 
 Направление зависимостей:
@@ -83,6 +88,7 @@ Production renderer загружается с привилегированног
 ```text
 main -> Electron / Node.js
 preload -> Electron bridge
+main / preload / renderer -> shared
 renderer App -> common + features
 renderer features -> common
 common/router -> public features APIs
@@ -106,6 +112,30 @@ common -> features, кроме composition root в common/router
 feature A -> feature B internals
 component -> raw fetch / axios / ipcRenderer
 ```
+
+`src/architecture.test.ts` проверяет эти границы импортов в обычном `npm test`,
+включая публичные `index.ts` между фичами. Совместимые type-only re-export в
+`common/api/responses` сохраняют существующие frontend-импорты, но канонические
+POS response-типы принадлежат `shared/api`.
+
+## Локальные операции и подтверждения
+
+- `PosService` координирует работу worker; `PosDatabase` владеет SQLite.
+- `saveSaleWithClock` фиксирует чек и контрольное время одним durable commit.
+  Интерфейс получает подтверждение только после успешного сохранения.
+- `pos-authorization` проверяет связность организации, магазина, кассы, кассовой
+  и кассирской смен при входе и продлении доступа; privilege-флаги не приводятся
+  к boolean из строк.
+- `pos-payment-response` проверяет подтверждения до удаления сохранённого
+  платёжного намерения. Некорректный ответ не доказывает ни оплату, ни её отсутствие.
+- `shared/pos/product-policy` используется reducer продажи и браузерным сценарием
+  сканирования. `use-checkout-product-scan` выполняет поиск, проверку контекста
+  и команду добавления вне JSX-компонента.
+- Обновление истории после подтверждённого возврата — отдельная UI-операция.
+  Её задержка или ошибка не превращает возврат в неуспешный.
+
+Оставшиеся архитектурные ограничения и результаты проверок описаны в
+[POS_PRODUCTION_READINESS.md](./POS_PRODUCTION_READINESS.md).
 
 Если две фичи взаимодействуют, используйте route params, общий store, events,
 cache invalidation или небольшую common abstraction. Не импортируйте внутренности

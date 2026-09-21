@@ -12,6 +12,9 @@ describe('queryKeys', () => {
       'current',
       'register-1',
     ]);
+    expect(
+      queryKeys.cashierSessions.currentIncludingOthers('register-1'),
+    ).toEqual(['cashier-sessions', 'current', 'register-1', 'include-others']);
     expect(queryKeys.categories.tree('organization-1')).toEqual([
       'categories',
       'tree',

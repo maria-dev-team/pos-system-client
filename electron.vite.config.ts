@@ -4,7 +4,16 @@ import { defineConfig } from 'electron-vite';
 import { resolve } from 'path';
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          'pos-worker': resolve('src/main/pos/pos-worker.ts'),
+        },
+      },
+    },
+  },
   preload: {},
   renderer: {
     resolve: {

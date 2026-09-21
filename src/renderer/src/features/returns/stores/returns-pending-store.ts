@@ -22,7 +22,7 @@ export type PendingReturnCommand =
     };
 
 type ReturnsPendingStore = {
-  clearPending: (cashierSessionId: string) => void;
+  clearPending: (cashierSessionId: string, expectedKey?: string) => void;
   pendingBySession: Record<string, PendingReturnCommand>;
   setPending: (
     cashierSessionId: string,
@@ -35,8 +35,14 @@ export const returnsPendingStorageName = 'maria-pos-pending-returns';
 export const useReturnsPendingStore = create<ReturnsPendingStore>()(
   persist(
     (set, get) => ({
-      clearPending: (cashierSessionId) =>
+      clearPending: (cashierSessionId, expectedKey) =>
         set((state) => {
+          if (
+            expectedKey &&
+            state.pendingBySession[cashierSessionId]?.idempotencyKey !==
+              expectedKey
+          )
+            return state;
           const pendingBySession = { ...state.pendingBySession };
           delete pendingBySession[cashierSessionId];
           return { pendingBySession };

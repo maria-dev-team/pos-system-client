@@ -557,6 +557,7 @@ describe('ReturnsView', () => {
       deleted_at: null,
       id: 'product-1',
       is_active: false,
+      is_quick: false,
       name: 'Неактивный товар',
       nkt: {
         gtin: '001',
@@ -636,6 +637,7 @@ describe('ReturnsView', () => {
       deleted_at: null,
       id: 'product-marked',
       is_active: true,
+      is_quick: false,
       name: 'Маркированный товар',
       nkt: {
         gtin: '04870000000012',
@@ -709,6 +711,7 @@ describe('ReturnsView', () => {
       deleted_at: null,
       id: 'product-1',
       is_active: true,
+      is_quick: false,
       name: 'Кофе',
       nkt: {
         gtin: '001',

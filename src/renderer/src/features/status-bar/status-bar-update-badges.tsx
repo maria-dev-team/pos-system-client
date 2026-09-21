@@ -1,6 +1,6 @@
 import { Badge } from '@renderer/common/components/ui/badge';
 
-import type { AppUpdateState } from '../../../../main/app-updater';
+import type { AppUpdateState } from '../../../../shared/desktop-contracts';
 
 export function StatusBarUpdateBadges({ state }: { state: AppUpdateState }) {
   return (
