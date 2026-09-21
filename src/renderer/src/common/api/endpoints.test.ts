@@ -430,6 +430,11 @@ describe('API endpoints', () => {
       organizations: [membership],
       user,
     });
+    expect(JSON.parse(calls.at(0)?.data as string)).toEqual({
+      client_type: 'pos',
+      login: 'cashier@maria.kz',
+      password: 'pass word',
+    });
     await expect(selectContext('membership-1', 'store-1')).resolves.toEqual({
       access_token: 'context-token',
     });
