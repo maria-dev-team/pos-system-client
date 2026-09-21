@@ -11,7 +11,6 @@ jobs:
     runs-on: windows-latest
     env:
       VITE_API_URL: http://localhost:4004
-      MAIN_VITE_API_URL: http://localhost:4004
       FFMPEG_WINDOWS_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-8.1.zip
       FFMPEG_WINDOWS_SHA256: f6274bbd9c247f9e90c1bbed066b03ed4a3907cece2fb91be6dd352393936365
 
