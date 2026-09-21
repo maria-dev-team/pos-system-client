@@ -4,6 +4,7 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 
 import icon from '../../resources/icon.png?asset';
+import { apiConfig } from '../shared/api/config';
 import { registerAppUpdater } from './app-updater';
 import { registerCameraIpc } from './camera';
 import { registerPosIpc } from './pos/pos-ipc';
@@ -11,9 +12,7 @@ import { registerReceiptPrinterIpc } from './receipt-printer';
 import { resolveRendererFilePath } from './renderer-protocol';
 import { registerWindowControlsIpc } from './window-controls';
 
-const apiUrl = (
-  import.meta.env.MAIN_VITE_API_URL ?? 'http://localhost:4004'
-).replace(/\/+$/g, '');
+const { apiUrl } = apiConfig;
 
 protocol.registerSchemesAsPrivileged([
   {
