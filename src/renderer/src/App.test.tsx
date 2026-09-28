@@ -461,7 +461,7 @@ describe('DukenAI POS authorization flow', () => {
     ).toBeInTheDocument();
   });
 
-  it('keeps daily actions in the sale panel and rare equipment settings in the header', async () => {
+  it('keeps reports in operations and equipment settings in the header', async () => {
     const user = userEvent.setup();
     api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
     api.getRegisterShifts.mockResolvedValue([
@@ -476,8 +476,11 @@ describe('DukenAI POS authorization flow', () => {
     expect(screen.queryByText('Касса и отчёты')).not.toBeInTheDocument();
 
     await user.click(startRegister);
-    expect(await screen.findByText('Касса и отчёты')).toBeInTheDocument();
-    expect(screen.getAllByRole('complementary')).toHaveLength(1);
+    await user.click(await screen.findByRole('button', { name: 'Операции' }));
+    expect(
+      screen.getByRole('dialog', { name: 'Операции с кассой' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Касса и отчёты')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Печать X-отчёта' }),
     ).toBeInTheDocument();
@@ -489,6 +492,7 @@ describe('DukenAI POS authorization flow', () => {
     expect(
       screen.queryByRole('button', { name: 'Принтер чеков и отчётов' }),
     ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
     expect(
       screen.getByRole('button', { name: 'Техническая поддержка' }),
     ).toBeInTheDocument();
@@ -1607,6 +1611,7 @@ describe('DukenAI POS authorization flow', () => {
         name: 'Начать работу на кассе Основная касса',
       }),
     );
+    await user.click(await screen.findByRole('button', { name: 'Операции' }));
     await user.click(
       await screen.findByRole('button', { name: 'Завершить работу на кассе' }),
     );

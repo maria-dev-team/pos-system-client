@@ -114,7 +114,7 @@ export function StatusBar() {
             >
               {initials}
             </span>
-            <span className="min-w-0 max-w-52 leading-tight">
+            <span className="min-w-0 max-w-32 leading-tight xl:max-w-52">
               <span className="block truncate text-sm font-semibold text-foreground">
                 {fullName}
               </span>
@@ -156,7 +156,7 @@ export function StatusBar() {
             ) : (
               <Wifi aria-hidden="true" className="size-4" />
             )}
-            <span className="hidden lg:inline">{label}</span>
+            <span className="hidden xl:inline">{label}</span>
           </span>
         );
       }
@@ -225,12 +225,12 @@ export function StatusBar() {
   return (
     <header
       aria-label="Статус приложения"
-      className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-card px-4 sm:px-5"
+      className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border/70 bg-card px-3"
     >
       <div className="flex min-w-0 items-center">
         {statusBarConfig.leftItems.map(renderItem)}
       </div>
-      <div className="flex min-w-0 items-center justify-end gap-3 sm:gap-4">
+      <div className="flex min-w-0 items-center justify-end gap-1 lg:gap-3">
         {statusBarConfig.rightItems.map(renderItem)}
       </div>
     </header>

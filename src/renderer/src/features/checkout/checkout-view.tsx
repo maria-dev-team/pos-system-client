@@ -6,7 +6,9 @@ import {
   History,
   LoaderCircle,
   Minus,
+  MoreHorizontal,
   PackageSearch,
+  Pause,
   Pencil,
   Plus,
   ReceiptText,
@@ -16,6 +18,7 @@ import {
   Star,
   Tags,
   Trash2,
+  X,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -234,6 +237,7 @@ function ActiveCheckout({
   const [search, setSearch] = useState('');
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [priceCheckOpen, setPriceCheckOpen] = useState(false);
+  const [operationsOpen, setOperationsOpen] = useState(false);
   const [cashMovementType, setCashMovementType] = useState<
     'DEPOSIT' | 'WITHDRAWAL' | null
   >(null);
@@ -461,6 +465,7 @@ function ActiveCheckout({
       !discountOpen &&
       !categoryPickerOpen &&
       !priceCheckOpen &&
+      !operationsOpen &&
       !cashMovementType &&
       !quantityItem &&
       !removeItem &&
@@ -847,10 +852,13 @@ function ActiveCheckout({
       ref={workspaceRef}
       tabIndex={-1}
       aria-label="Рабочая зона продаж"
-      className="flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden bg-workspace p-4 outline-none sm:p-5"
+      className="flex h-full min-h-0 w-full flex-col gap-2 overflow-hidden bg-workspace p-2 outline-none sm:p-3"
     >
       <LocalPosStatus sessionId={cashierSession.id} />
-      <section className="shrink-0 rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
+      <section
+        aria-label="Поиск товаров"
+        className="relative z-20 shrink-0 rounded-xl border border-border/80 bg-card p-2 shadow-[var(--shadow-surface)]"
+      >
         <div className="flex flex-wrap gap-2">
           <div className="relative min-w-0 flex-1 basis-full sm:basis-0">
             <ScanLine
@@ -859,12 +867,13 @@ function ActiveCheckout({
             />
             <Input
               aria-describedby={scanIssue ? 'scan-issue' : undefined}
-              className="h-15 border-border bg-muted/35 pl-13 pr-4 text-lg shadow-none md:text-lg"
+              className="h-12 border-border bg-muted/35 pl-12 pr-14 text-base shadow-none md:text-base"
               disabled={!canSearch || !canAddProduct || scannerBlocked}
               id="checkout-search"
               maxLength={512}
               onChange={(event) => setSearch(event.target.value)}
               onKeyDown={(event) => {
+                if (event.key === 'Escape') setSearch('');
                 if (event.key === 'Enter') {
                   event.preventDefault();
                   submitScan();
@@ -874,13 +883,28 @@ function ActiveCheckout({
               ref={inputRef}
               value={search}
             />
+            {search ? (
+              <Button
+                aria-label="Очистить поиск"
+                className="absolute right-1 top-1/2 size-11 min-h-11 -translate-y-1/2 p-0 active:translate-y-[-50%]"
+                onClick={() => {
+                  setSearch('');
+                  refocus();
+                }}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <X aria-hidden="true" className="size-4" />
+              </Button>
+            ) : null}
             <Label className="sr-only" htmlFor="checkout-search">
               Сканируйте или найдите товар
             </Label>
           </div>
           {canSearch ? (
             <Button
-              className="min-h-15 shrink-0 border-border px-4"
+              className="h-12 shrink-0 border-border px-3 text-sm"
               disabled={scannerBlocked}
               onClick={() => setPriceCheckOpen(true)}
               type="button"
@@ -892,7 +916,7 @@ function ActiveCheckout({
           ) : null}
           {canBrowseCategories ? (
             <Button
-              className="min-h-15 shrink-0 px-4"
+              className="h-12 shrink-0 px-3 text-sm"
               disabled={!canAddProduct || scannerBlocked}
               onClick={() => setCategoryPickerOpen(true)}
               type="button"
@@ -939,7 +963,10 @@ function ActiveCheckout({
             Обновляем результаты поиска…
           </p>
         ) : null}
-        <div className="mt-2 max-h-52 overflow-auto" aria-live="polite">
+        <div
+          className="absolute inset-x-0 top-full mt-1 max-h-[45svh] overflow-auto rounded-xl border-border bg-card shadow-xl empty:hidden [&:not(:empty)]:border [&:not(:empty)]:p-2"
+          aria-live="polite"
+        >
           {!canSearch ? (
             <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
               Нет права искать и сканировать товары.
@@ -1021,28 +1048,25 @@ function ActiveCheckout({
         </p>
       ) : null}
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="min-h-0 overflow-auto rounded-2xl border border-border/80 bg-card shadow-[var(--shadow-surface)]">
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-border/70 bg-card/95 px-4 py-4 backdrop-blur">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                <ShoppingBasket aria-hidden="true" className="size-5" />
-              </span>
-              <div>
-                <h1 className="text-lg font-bold tracking-[-0.02em]">
-                  Оформление продажи
-                </h1>
-                <p className="text-xs text-muted-foreground">
-                  Товары текущего чека
-                </p>
-              </div>
-            </div>
-            <span className="rounded-full bg-muted px-3 py-1.5 text-xs font-semibold text-muted-foreground">
-              {rows.length} {rows.length === 1 ? 'позиция' : 'позиций'}
-            </span>
+      <section
+        aria-label="Текущий чек"
+        className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-[var(--shadow-surface)]"
+      >
+        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3">
+          <div className="flex items-center gap-2">
+            <ShoppingBasket
+              aria-hidden="true"
+              className="size-4 text-primary"
+            />
+            <h1 className="text-sm font-bold">Оформление продажи</h1>
           </div>
+          <span className="text-xs font-medium tabular-nums text-muted-foreground">
+            Позиций: {rows.length}
+          </span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
           {rows.length === 0 ? (
-            <div className="grid min-h-72 place-items-center p-8 text-center text-muted-foreground">
+            <div className="grid h-full min-h-40 place-items-center p-4 text-center text-muted-foreground">
               <div>
                 <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-muted">
                   <PackageSearch aria-hidden="true" className="size-8" />
@@ -1057,19 +1081,31 @@ function ActiveCheckout({
               </div>
             </div>
           ) : (
-            <table className="w-full table-fixed border-collapse text-sm">
+            <table className="w-full min-w-[640px] table-fixed border-collapse text-sm">
               <colgroup>
                 <col />
-                <col className="w-[210px]" />
+                <col className="w-[196px]" />
                 <col className="w-[120px]" />
-                <col className="w-[140px]" />
+                <col className="w-[132px]" />
+                <col className="w-[56px]" />
               </colgroup>
-              <thead className="sticky top-[73px] z-[5] bg-muted/95 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground backdrop-blur">
+              <thead className="sticky top-0 z-[5] bg-muted/95 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground backdrop-blur">
                 <tr>
-                  <th className="px-4 py-3">Товар</th>
-                  <th className="px-3 py-3">Количество</th>
-                  <th className="px-3 py-3 text-right">Цена</th>
-                  <th className="px-4 py-3 text-right">Сумма</th>
+                  <th scope="col" className="px-3 py-2">
+                    Товар
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-center">
+                    Количество
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-right">
+                    Цена
+                  </th>
+                  <th scope="col" className="px-2 py-2 text-right">
+                    Сумма
+                  </th>
+                  <th scope="col">
+                    <span className="sr-only">Действия</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1078,10 +1114,10 @@ function ActiveCheckout({
                   const isOverridden = rowIsOverridden(row);
                   return (
                     <tr
-                      className="border-b border-border/70 align-top transition-colors last:border-b-0 hover:bg-primary/[0.018]"
+                      className="border-b border-border/70 align-middle transition-colors last:border-b-0 hover:bg-primary/[0.018]"
                       key={row.item.id}
                     >
-                      <td className="min-w-0 px-4 py-4">
+                      <td className="min-w-0 px-3 py-2">
                         <p className="break-words font-semibold leading-snug [overflow-wrap:anywhere]">
                           {name}
                         </p>
@@ -1089,101 +1125,88 @@ function ActiveCheckout({
                           {row.item.barcode}
                         </p>
                         {isOverridden ? (
-                          <span className="mt-2 inline-flex rounded-full bg-warning-muted px-2 py-1 text-xs font-semibold text-warning">
+                          <span className="mt-1 mr-1 inline-flex rounded-full bg-warning-muted px-2 py-0.5 text-xs font-semibold text-warning">
                             Цена изменена
                           </span>
                         ) : null}
                         {row.item.is_marked ? (
-                          <span className="mt-2 inline-flex rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
+                          <span className="mt-1 mr-1 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
                             Data Matrix считан
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-3 py-4">
-                        <p className="mb-2 font-bold tabular-nums">
-                          {formatQuantity(row.item.quantity, rowUnit(row))}
-                        </p>
-                        <div className="flex flex-nowrap gap-2">
+                      <td className="px-2 py-1">
+                        <div className="flex items-center justify-center rounded-lg border border-border bg-background">
                           <Button
                             aria-label={`Уменьшить ${name}`}
-                            className="size-10 shrink-0 border-border bg-background"
+                            className="size-11 min-h-11 rounded-r-none p-0"
                             disabled={isBusy || row.item.is_marked}
                             onClick={() => adjustQuantity(row, -1)}
                             size="icon"
                             type="button"
                             variant="ghost"
                           >
-                            <Minus aria-hidden="true" />
+                            <Minus aria-hidden="true" className="size-4" />
+                          </Button>
+                          <Button
+                            aria-label={`Изменить количество ${name}`}
+                            className="h-11 min-h-11 flex-1 rounded-none px-1 py-0 text-sm tabular-nums text-foreground"
+                            disabled={isBusy || row.item.is_marked}
+                            onClick={() => openQuantity(row)}
+                            type="button"
+                            variant="ghost"
+                          >
+                            {formatQuantity(row.item.quantity, rowUnit(row))}
                           </Button>
                           <Button
                             aria-label={`Увеличить ${name}`}
-                            className="size-10 shrink-0 border-border bg-background"
+                            className="size-11 min-h-11 rounded-l-none p-0"
                             disabled={isBusy || row.item.is_marked}
                             onClick={() => adjustQuantity(row, 1)}
                             size="icon"
                             type="button"
                             variant="ghost"
                           >
-                            <Plus aria-hidden="true" />
-                          </Button>
-                          <Button
-                            aria-label={`Изменить количество ${name}`}
-                            className="size-10 shrink-0 border-border bg-background"
-                            disabled={isBusy || row.item.is_marked}
-                            onClick={() => openQuantity(row)}
-                            size="icon"
-                            type="button"
-                            variant="ghost"
-                          >
-                            <Pencil aria-hidden="true" />
-                          </Button>
-                          <Button
-                            aria-label={`Удалить ${name}`}
-                            className="size-10 shrink-0 border-border bg-background text-destructive hover:text-destructive"
-                            disabled={isBusy}
-                            onClick={() => openRemove(row)}
-                            size="icon"
-                            type="button"
-                            variant="ghost"
-                          >
-                            <Trash2 aria-hidden="true" />
+                            <Plus aria-hidden="true" className="size-4" />
                           </Button>
                         </div>
                       </td>
-                      <td className="px-3 py-4 text-right">
-                        <p className="font-semibold tabular-nums">
-                          {formatCash(rowUnitPrice(row))}
-                        </p>
+                      <td className="px-2 py-1 text-right">
                         {canOverridePrice ? (
-                          <div className="mt-2 flex justify-end gap-2">
-                            <Button
-                              aria-label={`Изменить цену ${name}`}
-                              className="min-h-10 min-w-10 border-border bg-background"
-                              disabled={isBusy}
-                              onClick={() => openPrice(row)}
-                              size="icon"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <Pencil aria-hidden="true" />
-                            </Button>
-                            {isOverridden ? (
-                              <Button
-                                aria-label={`Сбросить цену ${name}`}
-                                className="min-h-10 min-w-10 border-border bg-background"
-                                disabled={isBusy}
-                                onClick={() => resetPrice(row)}
-                                size="icon"
-                                type="button"
-                                variant="ghost"
-                              >
-                                <RotateCcw aria-hidden="true" />
-                              </Button>
-                            ) : null}
-                          </div>
+                          <Button
+                            aria-label={`Изменить цену ${name}`}
+                            className="h-11 min-h-11 w-full justify-end gap-1 px-1 py-0 text-sm tabular-nums text-foreground"
+                            disabled={isBusy}
+                            onClick={() => openPrice(row)}
+                            type="button"
+                            variant="ghost"
+                          >
+                            <Pencil
+                              aria-hidden="true"
+                              className="size-3 text-muted-foreground"
+                            />
+                            {formatCash(rowUnitPrice(row))}
+                          </Button>
+                        ) : (
+                          <span className="font-semibold tabular-nums">
+                            {formatCash(rowUnitPrice(row))}
+                          </span>
+                        )}
+                        {canOverridePrice && isOverridden ? (
+                          <Button
+                            aria-label={`Сбросить цену ${name}`}
+                            className="h-11 min-h-11 w-full justify-end gap-1 px-1 py-0 text-xs"
+                            disabled={isBusy}
+                            onClick={() => resetPrice(row)}
+                            type="button"
+                            variant="ghost"
+                          >
+                            <RotateCcw aria-hidden="true" className="size-3" />{' '}
+                            Сбросить
+                          </Button>
                         ) : null}
                       </td>
-                      <td className="px-4 py-4 text-right tabular-nums">
+                      <td className="px-2 py-2 text-right tabular-nums">
                         {row.item.discount_amount !== '0.00' ? (
                           <>
                             <p className="text-sm text-muted-foreground line-through">
@@ -1198,243 +1221,247 @@ function ActiveCheckout({
                           {formatCash(rowLineTotal(row))}
                         </p>
                       </td>
+                      <td className="px-1 py-1">
+                        <Button
+                          aria-label={`Удалить ${name}`}
+                          className="size-11 min-h-11 p-0 text-muted-foreground hover:bg-destructive/5 hover:text-destructive"
+                          disabled={isBusy}
+                          onClick={() => openRemove(row)}
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Trash2 aria-hidden="true" className="size-4" />
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           )}
-        </section>
+        </div>
+      </section>
 
-        <aside className="flex min-h-0 flex-col overflow-x-hidden overflow-y-auto rounded-2xl border border-border/80 bg-card p-4 shadow-[var(--shadow-surface)]">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
-              <ReceiptText aria-hidden="true" className="size-5" />
-            </span>
-            <div className="min-w-0">
-              <p className="font-bold">Текущий чек</p>
-              <p className="text-xs text-muted-foreground">
-                {rows.length === 0
-                  ? 'Добавьте первый товар'
-                  : `${rows.length} ${rows.length === 1 ? 'позиция' : 'позиций'}`}
-              </p>
+      <footer
+        aria-label="Итог и оплата"
+        className="grid shrink-0 gap-3 rounded-xl border border-border/80 bg-card p-3 shadow-[var(--shadow-surface)] sm:grid-cols-[minmax(160px,0.85fr)_minmax(0,3fr)] lg:grid-cols-[minmax(200px,1fr)_minmax(0,3fr)]"
+      >
+        <div className="flex min-w-0 flex-col justify-between gap-2 sm:border-r sm:border-border/70 sm:pr-3">
+          <dl className="space-y-1 text-xs tabular-nums">
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">Подытог</dt>
+              <dd className="font-semibold">
+                {formatCash(sale?.subtotal ?? '0.00')}
+              </dd>
             </div>
-          </div>
-
-          <div className="mt-4 min-w-0 rounded-xl border border-primary/15 bg-primary/[0.045] p-4">
-            {sale?.discount_percentage ? (
-              <div className="mb-4 space-y-2 border-b border-primary/10 pb-4 text-sm">
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">Подытог</span>
-                  <span className="font-semibold tabular-nums">
-                    {formatCash(sale.subtotal)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <span className="text-muted-foreground">
-                    Скидка{' '}
-                    {Number(sale.discount_percentage).toLocaleString('ru-RU', {
-                      maximumFractionDigits: 2,
-                    })}
-                    %
-                  </span>
-                  <span className="font-semibold tabular-nums text-destructive">
-                    −{formatCash(sale.discount_amount)}
-                  </span>
-                </div>
-                {sale.discount_reason ? (
-                  <p className="break-words text-xs text-muted-foreground">
-                    {sale.discount_reason}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Итого
-            </p>
-            <p className="mt-2 break-all text-3xl font-extrabold leading-none tracking-[-0.04em] tabular-nums text-primary">
+            <div
+              className="flex justify-between gap-2"
+              title={sale?.discount_reason ?? undefined}
+            >
+              <dt className="text-muted-foreground">
+                Скидка
+                {sale?.discount_percentage
+                  ? ` ${Number(sale.discount_percentage).toLocaleString('ru-RU')}%`
+                  : ''}
+              </dt>
+              <dd
+                className={
+                  sale?.discount_percentage
+                    ? 'font-semibold text-destructive'
+                    : 'text-muted-foreground'
+                }
+              >
+                {sale?.discount_percentage ? '−' : ''}
+                {formatCash(sale?.discount_amount ?? '0.00')}
+              </dd>
+            </div>
+          </dl>
+          <div className="border-t border-border/70 pt-2">
+            <p className="text-xs font-medium text-muted-foreground">Итого</p>
+            <p className="break-words text-2xl font-extrabold tracking-tight tabular-nums text-primary">
               {formatCash(sale?.total ?? '0.00')}
             </p>
           </div>
+        </div>
+        <div
+          aria-label="Действия с чеком"
+          className="grid min-w-0 grid-cols-3 gap-2 sm:grid-cols-4"
+        >
+          {canOverridePrice ? (
+            <Button
+              className="h-auto min-h-13 gap-2 whitespace-normal border-border bg-muted/45 px-2 py-2 text-sm leading-tight text-foreground"
+              disabled={!sale || rows.length === 0 || isBusy}
+              onClick={openDiscount}
+              type="button"
+              variant="ghost"
+            >
+              <Tags aria-hidden="true" className="size-4" />
+              {sale?.discount_percentage ? 'Изменить скидку' : 'Скидка на чек'}
+            </Button>
+          ) : null}
+          {hasPermission('sales.hold') ? (
+            <Button
+              className="h-auto min-h-13 gap-2 whitespace-normal border-warning/20 bg-warning-muted px-2 py-2 text-sm leading-tight text-warning hover:border-warning/30 hover:bg-warning-muted/70 hover:text-warning"
+              disabled={!canHold || rows.length === 0 || isBusy}
+              onClick={() => void holdCurrent()}
+              type="button"
+              variant="ghost"
+            >
+              <Pause aria-hidden="true" className="size-4" /> Отложить чек
+            </Button>
+          ) : null}
+          {canCancel ? (
+            <Button
+              className="h-auto min-h-13 gap-2 whitespace-normal border-destructive/20 bg-destructive/5 px-2 py-2 text-sm leading-tight text-destructive hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+              disabled={!canCancelCurrent || isBusy}
+              onClick={openCancel}
+              type="button"
+              variant="ghost"
+            >
+              <Ban aria-hidden="true" className="size-4" /> Отменить чек
+            </Button>
+          ) : null}
+          <Button
+            className="h-auto min-h-13 gap-2 whitespace-normal border-border bg-muted/45 px-2 py-2 text-sm leading-tight text-foreground"
+            disabled={isBusy}
+            onClick={() => setHeldOpen(true)}
+            type="button"
+            variant="ghost"
+          >
+            <ReceiptText aria-hidden="true" className="size-4" /> Отложенные
+            чеки
+          </Button>
+          {canOpenReceipts ? (
+            <Button
+              className="h-auto min-h-13 gap-2 whitespace-normal border-border bg-muted/45 px-2 py-2 text-sm leading-tight text-foreground"
+              disabled={isBusy}
+              onClick={canOpenSalesHistory ? onOpenSalesHistory : onOpenReturns}
+              type="button"
+              variant="ghost"
+            >
+              <History aria-hidden="true" className="size-4" /> Чеки и возвраты
+            </Button>
+          ) : null}
+          <Button
+            aria-haspopup="dialog"
+            className="h-auto min-h-13 gap-2 whitespace-normal border-border bg-muted/45 px-2 py-2 text-sm leading-tight text-foreground"
+            disabled={isBusy}
+            onClick={() => setOperationsOpen(true)}
+            type="button"
+            variant="ghost"
+          >
+            <MoreHorizontal aria-hidden="true" className="size-4" /> Операции
+          </Button>
+          <Button
+            className="col-span-3 h-auto min-h-14 flex-col gap-2 px-3 py-3 text-base shadow-md shadow-primary/20 sm:col-span-1 sm:col-start-4 sm:row-span-2 sm:row-start-1"
+            disabled={!canPay || rows.length === 0 || isBusy}
+            onClick={openPayment}
+            type="button"
+          >
+            <CreditCard aria-hidden="true" className="size-6" /> Оплатить
+          </Button>
+        </div>
+      </footer>
 
-          <div className="space-y-4 pt-4">
-            {rows.length > 0 && canOverridePrice ? (
-              <div className="grid gap-2">
+      <Dialog open={operationsOpen} onOpenChange={setOperationsOpen}>
+        <DialogContent
+          className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            refocus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Операции с кассой</DialogTitle>
+            <DialogDescription>
+              Внесение, изъятие и отчёты по смене
+            </DialogDescription>
+          </DialogHeader>
+          <section className="border-t border-border/70 pt-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+              Касса и отчёты
+            </p>
+            {hasPermission('cash_movement.create') ? (
+              <div className="mb-2 grid grid-cols-2 gap-2">
                 <Button
-                  className="min-h-12 w-full"
-                  disabled={isBusy}
-                  onClick={openDiscount}
-                  type="button"
+                  className="min-h-14 border-border text-sm"
                   variant="ghost"
+                  disabled={isBusy}
+                  onClick={() => {
+                    setOperationsOpen(false);
+                    setCashMovementType('DEPOSIT');
+                  }}
                 >
-                  {sale?.discount_percentage
-                    ? 'Изменить скидку'
-                    : 'Скидка на чек'}
+                  Внесение
                 </Button>
-                {sale?.discount_percentage ? (
-                  <Button
-                    className="min-h-12 w-full"
-                    disabled={isBusy}
-                    onClick={resetDiscount}
-                    type="button"
-                    variant="ghost"
-                  >
-                    Сбросить скидку
-                  </Button>
-                ) : null}
+                <Button
+                  className="min-h-14 border-border text-sm"
+                  variant="ghost"
+                  disabled={isBusy}
+                  onClick={() => {
+                    setOperationsOpen(false);
+                    setCashMovementType('WITHDRAWAL');
+                  }}
+                >
+                  Изъятие
+                </Button>
               </div>
             ) : null}
-            {rows.length > 0 && canPay ? (
-              <Button
-                className="min-h-14 w-full text-base shadow-md shadow-primary/20"
-                disabled={isBusy}
-                onClick={() => void openPayment()}
-                type="button"
-              >
-                <CreditCard aria-hidden="true" className="size-5" />
-                Оплатить
-              </Button>
-            ) : null}
-            {rows.length > 0 && canHold ? (
-              <section className="border-t border-border/70 pt-4">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                  Текущий чек
-                </p>
-                <div className="grid gap-2">
-                  <Button
-                    className="min-h-11 w-full whitespace-normal border-border bg-background px-3 text-sm leading-tight"
-                    disabled={isBusy}
-                    onClick={() => void holdCurrent()}
-                    type="button"
-                    variant="ghost"
-                  >
-                    Отложить чек
-                  </Button>
-                  {sale && canCancelCurrent ? (
-                    <Button
-                      className="min-h-11 w-full whitespace-normal px-3 text-sm leading-tight text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
-                      disabled={isBusy}
-                      onClick={openCancel}
-                      type="button"
-                      variant="ghost"
-                    >
-                      <Ban aria-hidden="true" />
-                      Отменить чек
-                    </Button>
-                  ) : null}
-                </div>
-              </section>
-            ) : sale && canCancelCurrent ? (
-              <Button
-                className="min-h-11 w-full whitespace-normal text-sm leading-tight text-destructive hover:border-destructive/20 hover:bg-destructive/5 hover:text-destructive"
-                disabled={isBusy}
-                onClick={openCancel}
-                type="button"
-                variant="ghost"
-              >
-                <Ban aria-hidden="true" />
-                Отменить чек
-              </Button>
-            ) : null}
-
-            <section className="border-t border-border/70 pt-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                Операции
-              </p>
-              <div
-                className={`grid gap-2 ${canOpenReceipts ? 'grid-cols-2' : ''}`}
-              >
-                <Button
-                  className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                  disabled={isBusy}
-                  onClick={() => setHeldOpen(true)}
-                  type="button"
-                  variant="ghost"
+            <div className="grid grid-cols-2 gap-2">
+              {canReadShift ? (
+                <XReportPrintButton
+                  className="min-h-14 w-full justify-start gap-3 whitespace-normal border-border bg-background px-4 py-3 text-left text-sm leading-tight"
+                  registerShiftId={cashierSession.register_shift_id}
+                  timeZone={timeZone}
+                />
+              ) : null}
+              {lastClosedShift ? (
+                <LastZReportPrintButton
+                  className="min-h-14 w-full justify-start gap-3 whitespace-normal border-border bg-background px-4 py-3 text-left text-sm leading-tight"
+                  registerShiftId={lastClosedShift.id}
+                  timeZone={timeZone}
+                />
+              ) : (
+                <div
+                  aria-label="Z-отчёт пока недоступен"
+                  className="flex min-h-18 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/35 px-2 py-3 text-center text-xs leading-tight text-muted-foreground"
                 >
                   <ReceiptText aria-hidden="true" className="size-5" />
-                  Отложенные чеки
-                </Button>
-                {canOpenReceipts ? (
-                  <Button
-                    className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                    disabled={isBusy}
-                    onClick={
-                      canOpenSalesHistory ? onOpenSalesHistory : onOpenReturns
-                    }
-                    type="button"
-                    variant="ghost"
-                  >
-                    <History aria-hidden="true" className="size-5" />
-                    Чеки и возвраты
-                  </Button>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="border-t border-border/70 pt-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                Касса и отчёты
-              </p>
-              {hasPermission('cash_movement.create') ? (
-                <div className="mb-2 grid grid-cols-2 gap-2">
-                  <Button
-                    className="min-h-14 border-border text-sm"
-                    variant="ghost"
-                    disabled={isBusy}
-                    onClick={() => setCashMovementType('DEPOSIT')}
-                  >
-                    Внесение
-                  </Button>
-                  <Button
-                    className="min-h-14 border-border text-sm"
-                    variant="ghost"
-                    disabled={isBusy}
-                    onClick={() => setCashMovementType('WITHDRAWAL')}
-                  >
-                    Изъятие
-                  </Button>
+                  Z-отчёт после закрытия
                 </div>
-              ) : null}
-              <div className="grid grid-cols-2 gap-2">
-                {canReadShift ? (
-                  <XReportPrintButton
-                    className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                    registerShiftId={cashierSession.register_shift_id}
-                    timeZone={timeZone}
-                  />
-                ) : null}
-                {lastClosedShift ? (
-                  <LastZReportPrintButton
-                    className="h-full min-h-18 w-full flex-col gap-2 whitespace-normal border-border bg-background px-2 py-3 text-center text-xs leading-tight"
-                    registerShiftId={lastClosedShift.id}
-                    timeZone={timeZone}
-                  />
-                ) : (
-                  <div
-                    aria-label="Z-отчёт пока недоступен"
-                    className="flex min-h-18 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/35 px-2 py-3 text-center text-xs leading-tight text-muted-foreground"
-                  >
-                    <ReceiptText aria-hidden="true" className="size-5" />
-                    Z-отчёт после закрытия
-                  </div>
-                )}
+              )}
+            </div>
+            {canEndSession ? (
+              <div className="mt-3">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Завершение работы и сверка наличных
+                </p>
+                <SessionEndAction
+                  cashierSession={cashierSession}
+                  onSessionEndedLocally={onSessionEndedLocally}
+                  onSessionEnded={onSessionEnded}
+                />
               </div>
-              {canEndSession ? (
-                <div className="mt-3">
-                  <p className="mb-2 text-xs text-muted-foreground">
-                    Завершение работы и сверка наличных
-                  </p>
-                  <SessionEndAction
-                    cashierSession={cashierSession}
-                    onSessionEndedLocally={onSessionEndedLocally}
-                    onSessionEnded={onSessionEnded}
-                  />
-                </div>
-              ) : null}
-            </section>
-          </div>
-        </aside>
-      </div>
+            ) : null}
+          </section>
+          {sale?.discount_percentage && canOverridePrice ? (
+            <Button
+              className="min-h-12 border-border text-sm"
+              disabled={isBusy}
+              onClick={() => {
+                setOperationsOpen(false);
+                resetDiscount();
+              }}
+              type="button"
+              variant="ghost"
+            >
+              <RotateCcw aria-hidden="true" className="size-4" /> Сбросить
+              скидку
+            </Button>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {cashMovementType && hasPermission('cash_movement.create') ? (
         <CashMovementsDialog
