@@ -1,0 +1,139 @@
+// @vitest-environment node
+import { type ChildProcess, spawn } from 'child_process';
+import { EventEmitter } from 'events';
+import { promises as fs } from 'fs';
+import { PassThrough } from 'stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { RollingCameraBuffer } from './rolling-camera-buffer';
+
+vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('fs', () => ({
+  promises: {
+    mkdir: vi.fn(),
+    readdir: vi.fn(),
+    stat: vi.fn(),
+    unlink: vi.fn(),
+    writeFile: vi.fn(),
+  },
+}));
+const processes: ChildProcess[] = [];
+const status = vi.fn();
+let buffer: RollingCameraBuffer;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.clearAllMocks();
+  processes.length = 0;
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+  vi.mocked(fs.readdir).mockResolvedValue([]);
+  vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+  vi.mocked(fs.unlink).mockResolvedValue(undefined);
+  vi.mocked(spawn).mockImplementation(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stderr: new PassThrough(),
+      killed: false,
+      kill: vi.fn(() => true),
+    }) as unknown as ChildProcess;
+    processes.push(child);
+    return child;
+  });
+  buffer = new RollingCameraBuffer({
+    camera: {
+      id: 'camera',
+      host: '192.168.0.214',
+      rtsp_port: 554,
+      username: 'admin',
+      password: 'secret',
+      stream_path: '/Streaming/Channels/101',
+    },
+    ffmpegPath: 'ffmpeg',
+    rootDirectory: '/buffer',
+    onStatus: status,
+  });
+});
+afterEach(async () => {
+  await buffer.stop();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+const fail = (message: string): void => {
+  processes.at(-1)!.stderr!.emit('data', Buffer.from(message));
+  processes.at(-1)!.emit('close', 1, null);
+};
+
+describe('RollingCameraBuffer failures', () => {
+  it('reports only an error code without writing or printing diagnostics', async () => {
+    await buffer.start();
+    fail(
+      'method DESCRIBE failed: 401 Unauthorized\nError opening rtsp://admin:secret@192.168.0.214:554/live\n',
+    );
+    expect(status).toHaveBeenCalledWith('error', 'camera_auth_failed');
+    expect(fs.writeFile).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(spawn).mock.calls[1][1]).toContain('tcp');
+  });
+
+  it('retries using UDP only when the camera explicitly rejects TCP', async () => {
+    await buffer.start();
+    fail('method SETUP failed: 461 Unsupported transport\n');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(vi.mocked(spawn).mock.calls[1][1]).toContain('udp');
+    fail('Connection timed out\n');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(vi.mocked(spawn).mock.calls[2][1]).toContain('udp');
+  });
+
+  it('does not replace a process start error or schedule two restarts', async () => {
+    await buffer.start();
+    processes[0].emit('error', new Error('spawn ffmpeg ENOENT'));
+    processes[0].emit('close', -2, null);
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(status).toHaveBeenCalledWith('error', 'ffmpeg_start_failed');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not mark an empty segment as online', async () => {
+    await buffer.start();
+    vi.mocked(fs.readdir).mockResolvedValue(['segment.ts'] as never);
+    vi.mocked(fs.stat).mockResolvedValue({
+      mtimeMs: Date.now(),
+      size: 0,
+    } as never);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(status).not.toHaveBeenCalledWith('online');
+  });
+
+  it('ignores a segment inspection completed after FFmpeg has exited', async () => {
+    await buffer.start();
+    vi.mocked(fs.readdir).mockResolvedValue(['segment.ts'] as never);
+    let finishStat!: (stat: unknown) => void;
+    vi.mocked(fs.stat).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStat = resolve;
+        }) as never,
+    );
+    await vi.advanceTimersByTimeAsync(2000);
+    fail('Connection refused\n');
+    finishStat({ mtimeMs: Date.now(), size: 100 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(status).not.toHaveBeenCalledWith('online');
+    expect(status).toHaveBeenLastCalledWith('error', 'camera_unreachable');
+  });
+
+  it('does not report normal shutdown as a camera error', async () => {
+    await buffer.start();
+    await buffer.stop();
+    processes[0].emit('close', 0, null);
+    expect(status).not.toHaveBeenCalled();
+    expect(fs.writeFile).not.toHaveBeenCalled();
+  });
+});

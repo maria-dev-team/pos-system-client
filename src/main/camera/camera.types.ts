@@ -3,6 +3,13 @@ export type CameraStatus = 'online' | 'offline' | 'error';
 export type CameraErrorCode =
   | 'ffmpeg_start_failed'
   | 'ffmpeg_exited'
+  | 'camera_auth_failed'
+  | 'camera_unreachable'
+  | 'camera_stream_not_found'
+  | 'camera_transport_unsupported'
+  | 'ffmpeg_options_unsupported'
+  | 'stream_invalid_timestamps'
+  | 'camera_no_video'
   | 'stream_stalled'
   | 'filesystem_error';
 
