@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 
+import type { CameraDiscoveryJob, DiscoveredCamera } from './camera-discovery';
 import type {
   CameraConfig,
   CameraErrorCode,
@@ -33,6 +34,55 @@ export class CameraConfigRateLimitError extends Error {
 
 export class CameraApiClient {
   constructor(private readonly apiUrl: string) {}
+
+  async claimDiscovery(
+    accessToken: string,
+    registerId: string | null,
+    signal: AbortSignal,
+  ): Promise<CameraDiscoveryJob | null> {
+    const response = await fetch(
+      new URL('/v1/cameras/discovery/claim', this.apiUrl),
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(registerId ? { register_id: registerId } : {}),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      },
+    );
+    if (!response.ok)
+      throw new Error(`Discovery request failed: ${response.status}`);
+    return (
+      (await response.json()) as { data: { job: CameraDiscoveryJob | null } }
+    ).data.job;
+  }
+
+  async completeDiscovery(
+    accessToken: string,
+    job: CameraDiscoveryJob,
+    result: { cameras: DiscoveredCamera[]; error?: 'network_error' },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(
+      new URL(
+        `/v1/cameras/discovery/${encodeURIComponent(job.id)}/complete`,
+        this.apiUrl,
+      ),
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ claim_token: job.claim_token, ...result }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      },
+    );
+    if (!response.ok)
+      throw new Error(`Discovery result failed: ${response.status}`);
+  }
 
   async getConfig(
     accessToken: string,
