@@ -8,6 +8,7 @@ import type {
   CameraStatus,
   ClaimedCaptureJob,
 } from './camera.types';
+import { FfmpegErrorParser } from './ffmpeg-error';
 import { buildRtspUrl } from './rtsp-url';
 
 const SEGMENT_SECONDS = 5;
@@ -29,6 +30,7 @@ export class RollingCameraBuffer {
   private restartTimer: NodeJS.Timeout | null = null;
   private restartAttempt = 0;
   private inspecting = false;
+  private transport: 'tcp' | 'udp' = 'tcp';
   private runId = 0;
   private startedAt = 0;
   private stopped = true;
@@ -250,14 +252,17 @@ export class RollingCameraBuffer {
     const currentRun = ++this.runId;
     this.startedAt = Date.now();
     const outputPattern = join(this.directory, 'segment-%Y%m%d-%H%M%S.ts');
+    const errors = new FfmpegErrorParser();
     const args = [
       '-hide_banner',
       '-loglevel',
       'warning',
       '-rtsp_transport',
-      'tcp',
+      this.transport,
       '-timeout',
       '15000000',
+      '-fflags',
+      '+genpts',
       '-i',
       buildRtspUrl(this.options.camera),
       '-map',
@@ -285,11 +290,11 @@ export class RollingCameraBuffer {
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     this.child = child;
-    child.stderr?.resume();
+    child.stderr?.on('data', (chunk: Buffer) => errors.append(chunk));
     child.once('error', () =>
       this.handleExit(currentRun, 'ffmpeg_start_failed'),
     );
-    child.once('close', () => this.handleExit(currentRun, 'ffmpeg_exited'));
+    child.once('close', () => this.handleExit(currentRun, errors.finish()));
   }
 
   private handleExit(runId: number, errorCode: CameraErrorCode): void {
@@ -297,6 +302,12 @@ export class RollingCameraBuffer {
     this.runId += 1;
     this.child = null;
     this.options.onStatus('error', errorCode);
+    if (
+      errorCode === 'camera_transport_unsupported' &&
+      this.transport === 'tcp'
+    ) {
+      this.transport = 'udp';
+    }
     const delay = Math.min(
       1_000 * 2 ** this.restartAttempt,
       MAX_RESTART_DELAY_MS,
@@ -306,10 +317,12 @@ export class RollingCameraBuffer {
   }
 
   private async inspectSegments(): Promise<void> {
-    if (this.inspecting || this.stopped) return;
+    if (this.inspecting || this.stopped || !this.child) return;
+    const currentRun = this.runId;
     this.inspecting = true;
     try {
       const recent = await this.cleanup();
+      if (this.stopped || currentRun !== this.runId || !this.child) return;
       const newestSegmentAt = recent.length ? Math.max(...recent) : 0;
       if (
         newestSegmentAt >= this.startedAt &&
@@ -321,7 +334,8 @@ export class RollingCameraBuffer {
         this.restartStalledProcess();
       }
     } catch {
-      this.options.onStatus('error', 'filesystem_error');
+      if (!this.stopped && currentRun === this.runId)
+        this.options.onStatus('error', 'filesystem_error');
     } finally {
       this.inspecting = false;
     }
@@ -344,11 +358,12 @@ export class RollingCameraBuffer {
         .map(async (name) => {
           const path = join(this.directory, name);
           const stat = await fs.stat(path).catch(() => null);
-          return stat ? { path, mtime: stat.mtimeMs } : null;
+          return stat ? { path, mtime: stat.mtimeMs, size: stat.size } : null;
         }),
     );
     const existingSegments = segments.filter(
-      (segment): segment is { path: string; mtime: number } => segment !== null,
+      (segment): segment is { path: string; mtime: number; size: number } =>
+        segment !== null,
     );
     await Promise.all(
       existingSegments
@@ -356,7 +371,7 @@ export class RollingCameraBuffer {
         .map(({ path }) => fs.unlink(path).catch(() => undefined)),
     );
     return existingSegments
-      .filter(({ mtime }) => mtime >= cutoff)
+      .filter(({ mtime, size }) => mtime >= cutoff && size > 0)
       .map(({ mtime }) => mtime);
   }
 }
