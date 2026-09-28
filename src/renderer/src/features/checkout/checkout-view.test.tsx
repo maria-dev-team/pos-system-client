@@ -631,24 +631,57 @@ describe('server-authoritative checkout', () => {
     );
   });
 
-  it('keeps all quantity actions in one aligned row', async () => {
+  it('opens quantity editing from the quantity value', async () => {
+    const user = userEvent.setup();
+    vi.mocked(getCurrentSale).mockResolvedValue(
+      saleFixture({
+        items: [itemFixture({ quantity: '3' })],
+        total: '1950.00',
+      }),
+    );
+    renderCheckout();
+    const quantity = await screen.findByRole('button', {
+      name: 'Изменить количество Молоко',
+    });
+    expect(quantity).toHaveTextContent('3 шт.');
+    await user.click(quantity);
+    expect(
+      screen.getByRole('dialog', { name: 'Количество товара' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Количество Молоко, шт.')).toHaveValue('3');
+  });
+
+  it('keeps cancellation on the main screen and restores scanner focus after operations', async () => {
+    const user = userEvent.setup();
     vi.mocked(getCurrentSale).mockResolvedValue(
       saleFixture({ items: [itemFixture()], total: '650.00' }),
     );
     renderCheckout();
-
-    const decrement = await screen.findByRole('button', {
-      name: 'Уменьшить Молоко',
+    const operations = await screen.findByRole('button', {
+      name: 'Операции',
     });
-    const actions = [
-      decrement,
-      screen.getByRole('button', { name: 'Увеличить Молоко' }),
-      screen.getByRole('button', { name: 'Изменить количество Молоко' }),
-      screen.getByRole('button', { name: 'Удалить Молоко' }),
-    ];
-
-    expect(decrement.parentElement).toHaveClass('flex-nowrap');
-    actions.forEach((action) => expect(action).toHaveClass('size-10'));
+    expect(screen.getByRole('button', { name: 'Отменить чек' })).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Отложенные чеки' }),
+    ).toBeEnabled();
+    await user.click(operations);
+    expect(
+      screen.getByRole('dialog', { name: 'Операции с кассой' }),
+    ).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(
+        screen.getByRole('main', { name: 'Рабочая зона продаж' }),
+      ).toHaveFocus(),
+    );
+    await user.click(screen.getByRole('button', { name: 'Отменить чек' }));
+    expect(
+      screen.queryByRole('dialog', { name: 'Операции с кассой' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('dialog', { name: 'Отменить чек?' }),
+    ).toBeInTheDocument();
+    expect(cancelSale).not.toHaveBeenCalled();
   });
 
   it('removes a non-last item through the backend command', async () => {
@@ -804,10 +837,9 @@ describe('server-authoritative checkout', () => {
         reason: 'Постоянный покупатель',
       }),
     );
-    expect(screen.getByText('Подытог')).toBeInTheDocument();
     expect(screen.getByText('Скидка 10,5%')).toBeInTheDocument();
-    expect(screen.getByText('Постоянный покупатель')).toBeInTheDocument();
     expect(screen.getAllByText('−68,25 ₸')).toHaveLength(2);
+    expect(screen.getByTitle('Постоянный покупатель')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Изменить скидку' }));
     expect(screen.getByLabelText('Скидка, %')).toHaveValue('10.50');
@@ -817,6 +849,7 @@ describe('server-authoritative checkout', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Назад' }));
     await user.click(screen.getByRole('button', { name: 'Отмена' }));
+    await user.click(screen.getByRole('button', { name: 'Операции' }));
     await user.click(screen.getByRole('button', { name: 'Сбросить скидку' }));
 
     await waitFor(() =>
@@ -1071,7 +1104,9 @@ describe('price checking before receipt changes', () => {
 
 it('exposes cash movements only with the dedicated permission and isolates scans while the dialog is open', async () => {
   renderCheckout();
-  await screen.findByLabelText('Сканируйте или найдите товар');
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Операции' }),
+  );
   expect(
     screen.queryByRole('button', { name: 'Внесение' }),
   ).not.toBeInTheDocument();
@@ -1087,6 +1122,9 @@ it('exposes cash movements only with the dedicated permission and isolates scans
     meta: { total: 0, limit: 20, offset: 0, has_more: false },
   });
   renderCheckout();
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Операции' }),
+  );
   await userEvent.click(
     await screen.findByRole('button', { name: 'Внесение' }),
   );

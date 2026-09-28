@@ -1,4 +1,5 @@
-import { Banknote, CreditCard, LoaderCircle, Split } from 'lucide-react';
+import Decimal from 'decimal.js';
+import { Banknote, Check, CreditCard, LoaderCircle, Split } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 
 import type {
@@ -51,6 +52,113 @@ const modes = [
   { icon: Split, label: 'Смешанная', value: 'MIXED' },
 ] as const;
 
+const banknotes = [1000, 2000, 5000, 10000] as const;
+
+function BanknoteButtons({
+  value,
+  onChange,
+  pending,
+  forCashAmount = false,
+  compact = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  pending: boolean;
+  forCashAmount?: boolean;
+  compact?: boolean;
+}) {
+  const current = value.trim() === '' ? '0.00' : getCashChange(value, '0');
+  return banknotes.map((amount) => (
+    <Button
+      aria-label={
+        forCashAmount
+          ? `Добавить ${amount} ₸ к наличной части`
+          : `Добавить купюру ${amount} ₸`
+      }
+      className={`h-auto ${compact ? 'min-h-13' : 'min-h-16'} flex-col gap-1 rounded-lg border-2 border-primary/15 bg-secondary/60 px-1 py-2 text-primary hover:border-primary/40 hover:bg-secondary hover:text-primary`}
+      disabled={pending || current === null}
+      key={amount}
+      onClick={() => {
+        if (current !== null)
+          onChange(new Decimal(current).plus(amount).toFixed(2));
+      }}
+      type="button"
+      variant="ghost"
+    >
+      <Banknote
+        aria-hidden="true"
+        className={compact ? 'size-4 opacity-70' : 'size-5 opacity-70'}
+      />
+      <span
+        className={`${compact ? 'text-xs' : 'text-sm'} font-bold tabular-nums`}
+      >
+        +{amount.toLocaleString('ru-RU')}
+        {compact ? '' : ' ₸'}
+      </span>
+    </Button>
+  ));
+}
+
+function CashReceivedShortcuts({
+  exactAmount,
+  mixed,
+  onChange,
+  pending,
+  received,
+}: {
+  exactAmount: string | null;
+  mixed: boolean;
+  onChange: (value: string) => void;
+  pending: boolean;
+  received: string;
+}) {
+  return (
+    <div aria-label="Быстрый ввод наличных" role="group" className="space-y-2">
+      <div
+        className={
+          mixed
+            ? 'grid'
+            : 'grid grid-cols-2 gap-2 sm:grid-cols-[2fr_repeat(4,minmax(0,1fr))]'
+        }
+      >
+        <Button
+          aria-label={mixed ? 'Получено ровно наличную часть' : 'Без сдачи'}
+          className="col-span-2 h-auto min-h-16 gap-2 whitespace-normal px-3 py-2 shadow-md shadow-primary/20 sm:col-span-1"
+          disabled={pending || exactAmount === null}
+          onClick={() => {
+            if (exactAmount !== null) onChange(exactAmount);
+          }}
+          type="button"
+        >
+          <Check aria-hidden="true" className="size-5" />
+          <span className="min-w-0 text-left">
+            <span className="block text-sm font-bold leading-tight">
+              {mixed ? 'Ровно наличную часть' : 'Без сдачи'}
+            </span>
+            <span className="mt-1 block text-sm font-bold tabular-nums">
+              {exactAmount === null
+                ? 'Укажите наличную часть'
+                : formatCash(exactAmount)}
+            </span>
+          </span>
+        </Button>
+        {!mixed ? (
+          <BanknoteButtons
+            value={received}
+            onChange={onChange}
+            pending={pending}
+          />
+        ) : null}
+      </div>
+      {!mixed ? (
+        <p className="text-xs text-muted-foreground">
+          Каждое нажатие на купюру добавляет её к полученной сумме.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function PaymentForm({
   fiscalizationEnabled = true,
   fiscalizationPolicy = 'ALWAYS',
@@ -95,9 +203,13 @@ function PaymentForm({
       : mode === 'MIXED'
         ? getCashChange(cashReceived, cashAmount)
         : null;
+  const mixedSplit =
+    mode === 'MIXED'
+      ? createMixedPayments(sale.total, cashAmount, cashAmount)
+      : null;
   const cashlessRemainder =
     mode === 'MIXED'
-      ? (payments?.find((payment) => payment.method === 'CASHLESS')?.amount ??
+      ? (mixedSplit?.find((payment) => payment.method === 'CASHLESS')?.amount ??
         null)
       : null;
   const visibleServerError =
@@ -161,25 +273,25 @@ function PaymentForm({
       <DialogHeader>
         <DialogTitle>Оплата чека</DialogTitle>
         <DialogDescription>
-          Итог с сервера является окончательной суммой оплаты.
+          Выберите способ оплаты и укажите полученную сумму.
         </DialogDescription>
       </DialogHeader>
 
       <div>
         <div
           aria-label="Сумма на сервере"
-          className="rounded-2xl border border-primary/15 bg-primary/5 p-5"
+          className="flex items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 p-3"
         >
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             К оплате
           </p>
-          <p className="mt-2 text-3xl font-extrabold tracking-[-0.04em] tabular-nums text-primary">
+          <p className="text-3xl font-extrabold tracking-[-0.04em] tabular-nums text-primary">
             {formatCash(sale.total)}
           </p>
         </div>
       </div>
 
-      <form className="space-y-5" onSubmit={submit}>
+      <form className="space-y-3" onSubmit={submit}>
         <div
           aria-label="Способ оплаты"
           className="grid grid-cols-3 gap-3"
@@ -275,20 +387,11 @@ function PaymentForm({
               placeholder="0.00"
               value={cashReceived}
             />
-            <Button
-              className="min-h-11 border-border bg-background"
-              disabled={pending}
-              onClick={() => edit(setCashReceived, sale.total)}
-              type="button"
-              variant="ghost"
-            >
-              Без сдачи · {formatCash(sale.total)}
-            </Button>
           </FormField>
         ) : null}
 
         {mode === 'MIXED' ? (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid items-start gap-4 sm:grid-cols-2">
             <FormField>
               <Label htmlFor="checkout-mixed-cash">Наличная часть, ₸</Label>
               <Input
@@ -302,6 +405,19 @@ function PaymentForm({
                 placeholder="0.00"
                 value={cashAmount}
               />
+              <div
+                aria-label="Купюры для наличной части"
+                role="group"
+                className="grid grid-cols-4 gap-2"
+              >
+                <BanknoteButtons
+                  value={cashAmount}
+                  onChange={(value) => edit(setCashAmount, value)}
+                  pending={pending}
+                  forCashAmount
+                  compact
+                />
+              </div>
             </FormField>
             <FormField>
               <Label htmlFor="checkout-mixed-received">
@@ -317,8 +433,32 @@ function PaymentForm({
                 placeholder="0.00"
                 value={cashReceived}
               />
+              <div
+                aria-label="Купюры для полученной суммы"
+                role="group"
+                className="grid grid-cols-4 gap-2"
+              >
+                <BanknoteButtons
+                  value={cashReceived}
+                  onChange={(value) => edit(setCashReceived, value)}
+                  pending={pending}
+                  compact
+                />
+              </div>
             </FormField>
           </div>
+        ) : null}
+
+        {mode !== 'CASHLESS' ? (
+          <CashReceivedShortcuts
+            exactAmount={
+              mode === 'CASH' ? sale.total : mixedSplit ? cashAmount : null
+            }
+            mixed={mode === 'MIXED'}
+            onChange={(value) => edit(setCashReceived, value)}
+            pending={pending}
+            received={cashReceived}
+          />
         ) : null}
 
         {fiscalizationMode === 'FISCAL' ? (
@@ -374,7 +514,7 @@ function PaymentForm({
           </p>
         ) : null}
 
-        <DialogFooter>
+        <DialogFooter className="sticky -bottom-6 z-10 -mb-6 border-t border-border bg-card pb-6 pt-3">
           <Button
             className="min-h-12"
             disabled={pending}
