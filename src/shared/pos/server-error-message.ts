@@ -22,6 +22,10 @@ const messages: Readonly<Record<string, string>> = {
   PAYMENT_AMOUNT_INVALID: 'Указана некорректная сумма оплаты.',
   PAYMENT_AMOUNT_MISMATCH: 'Сумма оплат должна совпадать с суммой продажи.',
   PAYMENT_DETAILS_INVALID: 'Указаны некорректные данные оплаты.',
+  PRODUCT_NOT_FOUND:
+    'Один из товаров больше недоступен. Для продажи проверьте состав чека и каталог магазина.',
+  PRODUCT_NOT_ACTIVE: 'Один из товаров отключён в каталоге магазина.',
+  PRODUCT_NOT_SELLABLE: 'Один из товаров недоступен для продажи.',
   REGISTER_SHIFT_NOT_OPEN: 'Кассовая смена уже закрыта.',
   SALE_EMPTY: 'Продажа пуста. Добавьте хотя бы один товар.',
   SALE_NOT_EDITABLE: 'Эту продажу нельзя изменить.',

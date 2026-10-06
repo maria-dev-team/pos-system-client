@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query';
 import { LoaderCircle, Printer, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -20,8 +19,6 @@ import {
 } from '@renderer/common/components/ui/dialog';
 import { FormField } from '@renderer/common/components/ui/form-field';
 import { Label } from '@renderer/common/components/ui/label';
-import { organizationsQueryOptions } from '@renderer/features/organizations';
-import { currentUserQueryOptions } from '@renderer/features/user';
 
 import {
   receiptPaperProfiles,
@@ -32,6 +29,7 @@ import {
   writeReceiptPrinterSettings,
 } from './printer-settings';
 import { buildPrintableReceipt } from './receipt-data';
+import { useReceiptMetadata } from './use-receipt-metadata';
 
 type PrinterInfo = Awaited<
   ReturnType<NonNullable<Window['receiptPrinter']>['getPrinters']>
@@ -390,18 +388,7 @@ export function ReceiptPrintButton({
 }) {
   const [isPrinting, setIsPrinting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const user = useQuery(currentUserQueryOptions());
-  const organizations = useQuery(organizationsQueryOptions());
-  const organization = organizations.data?.find(
-    (membership) => membership.organization?.id === sale.organization_id,
-  )?.organization;
-  const store = context.storeScope.stores.find(
-    (candidate) => candidate.id === sale.store_id,
-  );
-  const cashierName = user.data
-    ? [user.data.first_name, user.data.last_name].filter(Boolean).join(' ') ||
-      user.data.email
-    : null;
+  const metadata = useReceiptMetadata(context, cashierSession);
 
   const print = async () => {
     const bridge = window.receiptPrinter;
@@ -417,11 +404,7 @@ export function ReceiptPrintButton({
     }
     const receipt = buildPrintableReceipt(sale, {
       cashierName: historicalCashierName,
-      currentCashier: cashierName
-        ? { id: cashierSession.membership_id, name: cashierName }
-        : null,
-      organization,
-      store,
+      ...metadata,
     });
     if (!receipt) {
       toast.error('Данные этого чека нельзя напечатать.');

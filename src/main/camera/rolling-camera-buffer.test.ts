@@ -67,6 +67,20 @@ const fail = (message: string): void => {
 };
 
 describe('RollingCameraBuffer failures', () => {
+  it('kills a stuck clip encoder at its deadline and allows the next clip', async () => {
+    const clip = buffer as unknown as {
+      runClipFfmpeg: (input: string, output: string) => Promise<void>;
+    };
+    const pending = clip.runClipFfmpeg('/list', '/clip');
+    const failed = expect(pending).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failed;
+    expect(processes[0].kill).toHaveBeenCalledWith('SIGKILL');
+    const next = clip.runClipFfmpeg('/list2', '/clip2');
+    processes[1].emit('close', 0);
+    await next;
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('reports only an error code without writing or printing diagnostics', async () => {
     await buffer.start();
     fail(

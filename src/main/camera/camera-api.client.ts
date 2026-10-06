@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { openAsBlob } from 'node:fs';
 
 import type { CameraDiscoveryJob, DiscoveredCamera } from './camera-discovery';
 import type {
@@ -165,13 +166,12 @@ export class CameraApiClient {
     eventId: string,
     filePath: string,
   ): Promise<void> {
-    const bytes = await fs.readFile(filePath);
+    const stat = await fs.stat(filePath);
+    if (stat.size > 64 * 1024 * 1024)
+      throw new Error('Capture clip exceeds 64 MiB');
+    const blob = await openAsBlob(filePath, { type: 'video/mp4' });
     const form = new FormData();
-    form.append(
-      'file',
-      new Blob([bytes], { type: 'video/mp4' }),
-      `${eventId}.mp4`,
-    );
+    form.append('file', blob, `${eventId}.mp4`);
     const response = await fetch(
       new URL(
         `/v1/anti-fraud/capture-jobs/${encodeURIComponent(eventId)}/upload`,

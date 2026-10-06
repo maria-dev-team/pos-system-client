@@ -36,7 +36,7 @@ export const createReceiptReturn = async (
   const response = await request.post(
     `/v1/returns/receipts/${receiptNumber}`,
     payload,
-    { headers: idempotencyHeaders(idempotencyKey) },
+    { headers: idempotencyHeaders(idempotencyKey), timeout: 75_000 },
   );
   return response.data.data.return as SaleResponse;
 };
@@ -47,6 +47,7 @@ export const createWithoutReceiptReturn = async (
 ): Promise<SaleResponse> => {
   const response = await request.post('/v1/returns/without-receipt', payload, {
     headers: idempotencyHeaders(idempotencyKey),
+    timeout: 75_000,
   });
   return response.data.data.return as SaleResponse;
 };

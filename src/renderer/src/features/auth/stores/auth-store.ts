@@ -8,8 +8,13 @@ import {
 } from '@renderer/common/api';
 import { contextChanged } from '@renderer/common/api/request';
 import { effectiveAuthContext } from '@renderer/common/helpers/access-token';
-import { disconnectLocalPos } from '@renderer/common/lib/local-pos';
+import {
+  callLocalPos,
+  disconnectLocalPos,
+} from '@renderer/common/lib/local-pos';
+import { assertNoPendingReturns } from '@renderer/features/returns';
 
+import type { OfflineCredentials } from '../../../../../shared/pos/contracts';
 import {
   readStoredAccessToken,
   removeStoredAccessToken,
@@ -61,6 +66,19 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     set({ isInitializing: true });
     initialization = (async () => {
       try {
+        // The OS-protected grant is time-bound independently of JWT lifetime.
+        // It restores only this device's previously verified shift, never grants new access.
+        if (window.localPos) {
+          const saved = await callLocalPos<OfflineCredentials | null>({
+            type: 'restoreCredentials',
+          });
+          if (get().authGeneration !== generation) throw contextChanged();
+          if (saved) {
+            get().setAccessToken(saved.accessToken, true);
+            set({ isInitialized: true });
+            return;
+          }
+        }
         const auth = await refreshTokens();
         if (get().authGeneration !== generation) throw contextChanged();
         get().setAccessToken(auth.access_token, true);
@@ -86,6 +104,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const generation = get().authGeneration;
     set({ isLoggingOut: true });
     try {
+      assertNoPendingReturns();
       await disconnectLocalPos();
       if (get().authGeneration !== generation) throw contextChanged();
       await logoutRequest();

@@ -82,6 +82,7 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
   let failed = false;
   let closed = false;
   let activeWorker: Worker | undefined;
+  let workerGeneration = 0;
   const fail = (): void => {
     failed = true;
     for (const resolve of pending.values()) resolve(unavailable);
@@ -90,35 +91,54 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
   // Subscribe before the first await: a window can close during key/storage initialization.
   window.once('closed', () => {
     closed = true;
+    workerGeneration++;
     fail();
     if (activeWorker) void activeWorker.terminate();
     ipcMain.removeHandler('pos:request');
   });
-  const workerReady = (async () => {
-    const directory = join(app.getPath('userData'), 'pos');
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const key = await deviceKey(directory);
-    if (closed) throw new Error('POS window closed during startup');
-    const worker = new Worker(join(__dirname, 'pos-worker.js'), {
-      workerData: { databasePath: join(directory, 'pos.sqlite'), key, apiUrl },
-    });
-    activeWorker = worker;
-    worker.on('error', fail);
-    worker.on('exit', fail);
-    worker.on(
-      'message',
-      (message: { changed?: boolean; id: number; reply: PosReply }) => {
-        if (message.changed) {
-          if (!window.isDestroyed()) window.webContents.send('pos:changed');
-        } else {
-          pending.get(message.id)?.(message.reply);
-          pending.delete(message.id);
-        }
-      },
-    );
-    return worker;
-  })();
-  void workerReady.catch(fail);
+  const startWorker = async (): Promise<Worker> => {
+    const generation = ++workerGeneration;
+    try {
+      const directory = join(app.getPath('userData'), 'pos');
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const key = await deviceKey(directory);
+      if (closed || generation !== workerGeneration)
+        throw new Error('POS worker startup superseded');
+      const worker = new Worker(join(__dirname, 'pos-worker.js'), {
+        workerData: {
+          databasePath: join(directory, 'pos.sqlite'),
+          key,
+          apiUrl,
+        },
+      });
+      activeWorker = worker;
+      worker.on('error', () => {
+        if (activeWorker === worker) fail();
+      });
+      worker.on('exit', () => {
+        if (activeWorker === worker) fail();
+      });
+      worker.on(
+        'message',
+        (message: { changed?: boolean; id: number; reply: PosReply }) => {
+          if (activeWorker !== worker) return;
+          if (message.changed) {
+            if (!window.isDestroyed()) window.webContents.send('pos:changed');
+          } else {
+            pending.get(message.id)?.(message.reply);
+            pending.delete(message.id);
+          }
+        },
+      );
+      return worker;
+    } catch (error) {
+      if (generation === workerGeneration) fail();
+      throw error;
+    }
+  };
+  let workerReady = startWorker();
+  let restarting = false;
+  void workerReady.catch(() => undefined);
   ipcMain.handle(
     'pos:request',
     async (event, input: unknown): Promise<PosReply> => {
@@ -136,6 +156,27 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
           message: 'Некорректные параметры операции.',
         };
       try {
+        if (parsed.data.type === 'restartWorker') {
+          if (closed || restarting) return unavailable;
+          restarting = true;
+          workerGeneration++;
+          // Never replay pending mutations. Their durable state is read after restart.
+          fail();
+          const previous = activeWorker;
+          activeWorker = undefined;
+          try {
+            if (previous) await previous.terminate();
+            failed = false;
+            workerReady = startWorker();
+            await workerReady;
+            return { ok: true, value: null };
+          } catch {
+            fail();
+            return unavailable;
+          } finally {
+            restarting = false;
+          }
+        }
         // Reserve capacity before awaiting startup, not only after it finishes.
         if (failed || closed || pending.size >= 512) return unavailable;
         return await new Promise<PosReply>((resolve) => {
@@ -152,7 +193,11 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
           pending.set(id, finish);
           // Only read-only status requests time out. Never treat an elapsed UI
           // deadline as a failed sale/payment, cancel one, or send it again.
-          if (parsed.data.type === 'status')
+          if (
+            ['status', 'diagnostics', 'restoreCredentials'].includes(
+              parsed.data.type,
+            )
+          )
             timer = setTimeout(
               () =>
                 finish({

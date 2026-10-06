@@ -56,11 +56,52 @@ const completedReturn: SaleResponse = {
   discount_reason: null,
   fiscal_receipt: null,
   held_at: null,
-  id: 'return-1',
-  items: [],
+  id: idempotencyKey,
+  fiscalization_mode: 'NON_FISCAL',
+  items: [
+    {
+      barcode: '123',
+      base_unit_price: '450.00',
+      id: 'returned-item',
+      is_marked: false,
+      line_subtotal: '450.00',
+      discount_amount: '0.00',
+      line_number: 1,
+      line_total: '450.00',
+      name: 'Товар',
+      marking_code: null,
+      nkt_name: null,
+      ntin_code: null,
+      gtin: null,
+      price_override_reason: null,
+      price_overridden_by_membership_id: null,
+      product_id: 'product-1',
+      quantity: '1.000',
+      return_disposition: 'RESTOCK',
+      sku: null,
+      source_sale_item_id: 'sale-item-1',
+      unit_code: 'pcs',
+      unit_price: '450.00',
+      vat_amount: '0.00',
+      vat_rate: 'NONE',
+    },
+  ],
   organization_id: 'organization-1',
   original_sale_id: 'sale-1',
-  payments: [],
+  payments: [
+    {
+      amount: '450.00',
+      change: null,
+      completed_at: '2026-08-27T10:00:00.000Z',
+      created_at: '2026-08-27T10:00:00.000Z',
+      direction: 'OUTGOING',
+      id: 'payment-1',
+      method: 'CASH',
+      received: null,
+      status: 'COMPLETED',
+      updated_at: '2026-08-27T10:00:00.000Z',
+    },
+  ],
   receipt_number: '43',
   register_id: 'register-1',
   register_shift_id: 'shift-1',
@@ -106,6 +147,66 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('return submission recovery', () => {
+  it('retains the same intent when cleanup storage fails after a confirmed refund', async () => {
+    vi.mocked(createReceiptReturn).mockImplementation(async () => {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      return completedReturn;
+    });
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(queryClient()) },
+    );
+    try {
+      await expect(
+        act(() =>
+          result.current.submit.mutateAsync({
+            type: 'receipt',
+            receiptNumber: '42',
+            payload,
+          }),
+        ),
+      ).resolves.toEqual(completedReturn);
+      expect(result.current.pendingCommand?.idempotencyKey).toBe(
+        idempotencyKey,
+      );
+      await expect(
+        act(() =>
+          result.current.submit.mutateAsync({
+            type: 'receipt',
+            receiptNumber: '42',
+            payload,
+          }),
+        ),
+      ).rejects.toThrow('Pending return');
+      expect(createReceiptReturn).toHaveBeenCalledOnce();
+    } finally {
+      vi.mocked(Storage.prototype.setItem).mockRestore();
+    }
+  });
+  it.each([
+    {},
+    { ...completedReturn, id: 'another-return' },
+    { ...completedReturn, fiscalization_mode: 'FISCAL' },
+    { ...completedReturn, payments: [] },
+  ])('keeps intent for an invalid successful response', async (response) => {
+    vi.mocked(createReceiptReturn).mockResolvedValue(response as SaleResponse);
+    const { result } = renderHook(
+      () => useReturnSubmission(cashierSessionId, organizationId, storeId),
+      { wrapper: wrapperFor(queryClient()) },
+    );
+    await expect(
+      act(() =>
+        result.current.submit.mutateAsync({
+          type: 'receipt',
+          receiptNumber: '42',
+          payload,
+        }),
+      ),
+    ).rejects.toThrow();
+    expect(result.current.pendingCommand?.idempotencyKey).toBe(idempotencyKey);
+  });
   it.each([
     new Error('Authorization changed while retrying'),
     responseError('INVALID_TOKEN', 401),
@@ -328,7 +429,7 @@ describe('return submission recovery', () => {
     );
     expect(globalThis.crypto.randomUUID).toHaveBeenCalledOnce();
     expect(triggerAntiFraudEvent).toHaveBeenCalledExactlyOnceWith({
-      externalEventId: 'sale-refund:return-1',
+      externalEventId: `sale-refund:${idempotencyKey}`,
       occurredAt: completedReturn.completed_at,
       postBufferSeconds: 15,
       preBufferSeconds: 15,

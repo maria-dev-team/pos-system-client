@@ -371,6 +371,12 @@ function PaymentForm({
           </p>
         ) : null}
 
+        {fiscalizationMode === 'NON_FISCAL' ? (
+          <p className="text-sm text-muted-foreground">
+            Нефискальный чек. В приложении POS продажа сохраняется на кассе,
+            передаётся в учёт при наличии связи и не отправляется в Webkassa.
+          </p>
+        ) : null}
         {mode === 'CASH' ? (
           <FormField>
             <Label htmlFor="checkout-cash-received">

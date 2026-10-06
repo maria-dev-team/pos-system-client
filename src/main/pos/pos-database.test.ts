@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { LocalSale } from '../../shared/pos/contracts';
+import type { ArchivedLocalSale, LocalSale } from '../../shared/pos/contracts';
 import { newSale } from '../../shared/pos/sale';
 import {
   ids,
@@ -37,6 +37,97 @@ const receipt = (): LocalSale => ({
   error: null,
 });
 describe('durable local database', () => {
+  it('completes a partially upgraded history schema without deleting local data', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-schema-recovery-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const raw = new DatabaseSync(path);
+    raw.exec(
+      'CREATE TABLE local_sales(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, sequence INTEGER NOT NULL, value BLOB NOT NULL, active INTEGER NOT NULL DEFAULT 1)',
+    );
+    raw.close();
+    const db = open(path);
+    const record = receipt();
+    db.save(record);
+    expect(db.sale(ids.session, record.sale.id)).toEqual(record);
+  });
+  it('keeps acknowledged history out of the working set and prunes only old confirmed receipts', async () => {
+    const db = open();
+    const old = new Date(Date.now() - 91 * 86400000).toISOString();
+    const confirmed = receipt();
+    confirmed.sale.status = 'COMPLETED';
+    confirmed.sale.completed_at = old;
+    confirmed.syncedRevision = confirmed.revision;
+    db.save(confirmed);
+    const pending = {
+      ...confirmed,
+      sale: { ...confirmed.sale, id: ids.shift },
+      syncedRevision: 0,
+    };
+    db.save(pending);
+    expect(db.workingSales(ids.session).map((r) => r.sale.id)).toEqual([
+      ids.shift,
+    ]);
+    db.pruneHistory();
+    expect(db.sale(ids.session, confirmed.sale.id)).toBeNull();
+    expect(db.sale(ids.session, pending.sale.id)).toEqual(pending);
+    expect(await db.diagnostics()).toMatchObject({
+      workingReceipts: 1,
+      historyReceipts: 0,
+    });
+  });
+  it('keeps an archived cancelled receipt across restart without restoring its queue entry', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-archive-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const key = randomBytes(32);
+    const db = open(path, key);
+    const record = receipt();
+    record.sale.status = 'CANCELLED';
+    const other = { ...receipt(), sale: { ...receipt().sale, id: ids.shift } };
+    db.save(record);
+    db.save(other);
+    const archive: ArchivedLocalSale = {
+      record,
+      archivedAt: new Date().toISOString(),
+      archivedByMembershipId: ids.membership,
+      serverSale: null,
+    };
+    db.archiveSale(archive);
+    db.close();
+    databases.splice(databases.indexOf(db), 1);
+    const reopened = open(path, key);
+    expect(reopened.sale(ids.session, record.sale.id)).toBeNull();
+    expect(reopened.sale(ids.session, other.sale.id)).toEqual(other);
+    expect(
+      reopened.get(`sale-archive:${ids.session}:${record.sale.id}`),
+    ).toEqual(archive);
+  });
+  it('rolls back archival and preserves the queue when removing its entry fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-archive-failure-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const db = open(path);
+    const record = receipt();
+    record.sale.status = 'CANCELLED';
+    db.saveSaleWithClock(record, 100);
+    const connection = new DatabaseSync(path);
+    connection.exec(
+      "CREATE TRIGGER fail_archive BEFORE DELETE ON local_sales BEGIN SELECT RAISE(ABORT, 'simulated archive failure'); END",
+    );
+    connection.close();
+    expect(() =>
+      db.archiveSale({
+        record,
+        archivedAt: new Date().toISOString(),
+        archivedByMembershipId: ids.membership,
+        serverSale: null,
+      }),
+    ).toThrow('simulated archive failure');
+    expect(db.sale(ids.session, record.sale.id)).toEqual(record);
+    expect(db.get(`sale-archive:${ids.session}:${record.sale.id}`)).toBeNull();
+    expect(db.get('clock')).toBe(100);
+  });
   it('commits the receipt and clock together and never rolls the clock back', () => {
     const db = open();
     const record = receipt();

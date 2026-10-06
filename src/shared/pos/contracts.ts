@@ -13,6 +13,10 @@ import type {
   HeldSaleResponse,
   SaleResponse,
 } from '../api/responses/sale.response';
+import {
+  type PendingReturnCommand,
+  pendingReturnSchema,
+} from './return-command';
 
 export type { ProductResponse, SaleResponse };
 
@@ -62,6 +66,25 @@ export const saleCommandSchema = z.discriminatedUnion('type', [
 
 export type SaleCommand = z.infer<typeof saleCommandSchema>;
 export const posRequestSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('restoreCredentials') }).strict(),
+  z.object({ type: z.literal('restartWorker') }).strict(),
+  z.object({ type: z.literal('diagnostics') }).strict(),
+  z.object({ type: z.literal('pendingReturn'), sessionId: id }).strict(),
+  z
+    .object({
+      type: z.literal('savePendingReturn'),
+      sessionId: id,
+      command: pendingReturnSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('clearPendingReturn'),
+      sessionId: id,
+      commandId: id,
+    })
+    .strict(),
+  z.object({ type: z.literal('archiveCancelledSale'), saleId: id }).strict(),
   z.object({ type: z.literal('retrySale'), saleId: id }).strict(),
   z.object({ type: z.literal('deferPayment'), saleId: id }).strict(),
   z.object({ type: z.literal('resumePayment'), saleId: id }).strict(),
@@ -122,6 +145,12 @@ export const posRequestSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('status') }).strict(),
+  z
+    .object({
+      type: z.literal('localReceipts'),
+      offset: z.number().int().min(0).optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('retry') }).strict(),
   z.object({ type: z.literal('flush') }).strict(),
   z.object({ type: z.literal('prepareCashMovement') }).strict(),
@@ -166,6 +195,7 @@ export type PosProfile = {
 export type PosStatus = {
   outbox?: Array<{
     saleId: string;
+    saleStatus?: SaleResponse['status'];
     total: string;
     stage: SyncStage;
     code: string | null;
@@ -173,6 +203,7 @@ export type PosStatus = {
     attempts: number;
     nextAttemptAt: number | null;
     retryable: boolean;
+    archivable?: boolean;
   }>;
   sessionId?: string | null;
   syncing?: boolean;
@@ -206,7 +237,19 @@ export type PosStatus = {
   authorizationRequired: boolean;
   fiscalShiftExpired: boolean;
 };
+export type OfflineCredentials = { accessToken: string; registerId: string };
+export type PosDiagnostics = {
+  databaseBytes: number;
+  freeDiskBytes: number | null;
+  workingReceipts: number;
+  historyReceipts: number;
+  heapBytes: number;
+  uptimeSeconds: number;
+};
 export type PosResult =
+  | PosDiagnostics
+  | OfflineCredentials
+  | PendingReturnCommand
   | PosConflict
   | PosProfile
   | SaleResponse
@@ -227,6 +270,14 @@ export type LocalPosBridge = {
 
 /** Durable local aggregate and its last server version; these revisions are independent. */
 export type LocalSale = {
+  nonFiscalCompletion?: {
+    commandId: string;
+    request: Extract<PosRequest, { type: 'checkout' }>;
+    snapshotSignature: string;
+    payload?: Record<string, unknown>;
+    synced?: boolean;
+    serverSale?: SaleResponse;
+  };
   syncFailures?: Partial<Record<SyncStage, SyncFailure>>;
   sale: SaleResponse;
   revision: number;
@@ -248,7 +299,13 @@ export type LocalSale = {
   error: string | null;
 };
 
-export type SyncStage = 'draft' | 'defer';
+export type SyncStage = 'draft' | 'defer' | 'nonFiscal';
+export type ArchivedLocalSale = {
+  record: LocalSale;
+  archivedAt: string;
+  archivedByMembershipId: string;
+  serverSale: SaleResponse | null;
+};
 export type SyncFailure = {
   code: string;
   message: string;

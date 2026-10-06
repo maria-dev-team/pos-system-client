@@ -66,7 +66,7 @@ export class CameraManager {
       return;
     }
     this.authContext = context;
-    void this.pruneBufferRoot();
+    void this.pruneBufferRoot().catch(() => undefined);
     const generation = this.refreshGeneration;
     void this.refresh(generation);
     this.captureTimer = setInterval(
@@ -131,7 +131,7 @@ export class CameraManager {
           delay,
         );
       }
-      void this.pruneBufferRoot();
+      void this.pruneBufferRoot().catch(() => undefined);
       void this.flushStatus();
     }
   }
@@ -249,13 +249,15 @@ export class CameraManager {
       }
     } finally {
       if (eventId) {
-        await fs.rm(join(this.clipsRoot, eventId), {
-          recursive: true,
-          force: true,
-        });
+        await fs
+          .rm(join(this.clipsRoot, eventId), {
+            recursive: true,
+            force: true,
+          })
+          .catch(() => undefined);
       }
       this.processingCapture = false;
-      void this.pruneClipsRoot();
+      void this.pruneClipsRoot().catch(() => undefined);
     }
   }
 

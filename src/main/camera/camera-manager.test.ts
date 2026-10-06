@@ -1,3 +1,4 @@
+import { promises as fs } from 'fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CameraApiClient } from './camera-api.client';
@@ -24,6 +25,40 @@ type CameraManagerInternals = {
 };
 
 describe('CameraManager', () => {
+  it('releases the capture latch even when cleaning up a finished clip fails', async () => {
+    const api = {
+      claimCaptureJob: vi.fn().mockResolvedValue({ job: { id: 'event' } }),
+      uploadCaptureClip: vi.fn().mockResolvedValue(undefined),
+    };
+    const manager = new CameraManager(api as unknown as CameraApiClient);
+    const internal = manager as unknown as {
+      authContext: unknown;
+      camera: unknown;
+      buffer: unknown;
+      refreshGeneration: number;
+      processingCapture: boolean;
+      pollCaptureJob: (generation: number) => Promise<void>;
+      pruneClipsRoot: () => Promise<void>;
+    };
+    internal.authContext = { accessToken: 'token', registerId: 'register' };
+    internal.camera = camera;
+    internal.buffer = { createEventClip: vi.fn().mockResolvedValue('/clip') };
+    const rm = vi
+      .spyOn(fs, 'rm')
+      .mockRejectedValue(new Error('disk unavailable'));
+    const prune = vi
+      .spyOn(internal, 'pruneClipsRoot')
+      .mockResolvedValue(undefined);
+    try {
+      await internal.pollCaptureJob(internal.refreshGeneration);
+      expect(internal.processingCapture).toBe(false);
+      await internal.pollCaptureJob(internal.refreshGeneration);
+      expect(api.claimCaptureJob).toHaveBeenCalledTimes(2);
+    } finally {
+      rm.mockRestore();
+      prune.mockRestore();
+    }
+  });
   it('retries exactly after backoff when a request fails between minute ticks', async () => {
     vi.useFakeTimers();
     const getConfig = vi
