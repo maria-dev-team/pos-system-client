@@ -3,6 +3,7 @@ import { formatCash } from '@renderer/common/helpers/format-cash';
 import { SyncIndicator } from '@renderer/features/local-pos';
 import { syncAlerts } from '@renderer/features/local-pos';
 
+import { ArchiveQueuedSaleAction } from './archive-queued-sale-action';
 import { LocalConflictDialog } from './local-conflict-dialog';
 import { useLocalPosStatus } from './use-local-pos-status';
 
@@ -18,7 +19,7 @@ const outboxFailureMessage = (code: string): string =>
   'Не удалось отправить чек. Повторите попытку или обратитесь за помощью.';
 
 export function LocalPosStatus({ sessionId }: { sessionId: string }) {
-  const { state, busy, refresh, review, retrySale, active } =
+  const { state, busy, refresh, review, retrySale, archiveSale, active } =
     useLocalPosStatus(sessionId);
   if (!active || !state) return null;
   const reviews = state.paymentReviews ?? [];
@@ -98,15 +99,26 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
               <li key={item.saleId} className="rounded-lg bg-workspace p-2">
                 <p>
                   {formatCash(item.total)} ·{' '}
-                  {item.stage === 'draft'
-                    ? 'Изменения чека'
-                    : item.stage === 'defer'
-                      ? 'Перенос оплаты на проверку'
-                      : 'Событие отмены'}
+                  {item.saleStatus === 'COMPLETED'
+                    ? 'Нефискальная продажа — передача в учёт'
+                    : item.stage === 'draft'
+                      ? item.saleStatus === 'CANCELLED'
+                        ? 'Отмена чека'
+                        : item.saleStatus === 'HELD'
+                          ? 'Отложенный чек'
+                          : 'Изменения чека'
+                      : item.stage === 'defer'
+                        ? 'Перенос оплаты на проверку'
+                        : 'Событие отмены'}
+                </p>
+                <p className="break-all text-xs text-muted-foreground">
+                  ID чека: {item.saleId}
                 </p>
                 {item.code ? (
                   <p className="text-warning">
-                    {outboxFailureMessage(item.code)}
+                    {outboxFailureMessages[item.code] ??
+                      item.message ??
+                      outboxFailureMessage(item.code)}
                   </p>
                 ) : (
                   <p>Ожидает отправки</p>
@@ -124,8 +136,17 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
                     disabled={busy.includes(item.saleId)}
                     onClick={() => void retrySale(item.saleId)}
                   >
-                    Повторить отправку чека
+                    {busy.includes(item.saleId)
+                      ? 'Отправляем…'
+                      : 'Повторить отправку чека'}
                   </Button>
+                ) : null}
+                {item.archivable ? (
+                  <ArchiveQueuedSaleAction
+                    busy={busy.includes(item.saleId)}
+                    total={item.total}
+                    onArchive={() => archiveSale(item.saleId)}
+                  />
                 ) : null}
               </li>
             ))}

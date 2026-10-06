@@ -100,6 +100,8 @@ export class RollingCameraBuffer {
     const pinned = await this.pinCompletedSegments(eventDirectory, rangeStart);
 
     const waitMs = captureEnd + (SEGMENT_SECONDS + 1) * 1_000 - Date.now();
+    if (waitMs > 120_000)
+      throw new Error('Capture window exceeds the local limit');
     if (waitMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
@@ -233,14 +235,29 @@ export class RollingCameraBuffer {
           stdio: ['ignore', 'ignore', 'pipe'],
         },
       );
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        error ? reject(error) : resolve();
+      };
+      const deadline = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* still settle the failed job */
+        }
+        finish(new Error('Clip FFmpeg timed out'));
+      }, 30_000);
       child.stderr?.resume();
       child.once('error', () =>
-        reject(new Error('Unable to start clip FFmpeg')),
+        finish(new Error('Unable to start clip FFmpeg')),
       );
       child.once('close', (code) => {
-        if (code === 0) resolve();
+        if (code === 0) finish();
         else
-          reject(
+          finish(
             new Error(`Clip FFmpeg exited with code ${code ?? 'unknown'}`),
           );
       });

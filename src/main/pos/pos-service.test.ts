@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { PosStatus, SaleResponse } from '../../shared/pos/contracts';
+import type {
+  ArchivedLocalSale,
+  PosStatus,
+  SaleResponse,
+} from '../../shared/pos/contracts';
+import { newSale } from '../../shared/pos/sale';
 import {
   fiscalReceiptFixture,
   ids,
@@ -30,6 +35,7 @@ async function fixture(
   handler?: (path: string, body: Record<string, unknown>) => Promise<Response>,
   path = ':memory:',
   key = randomBytes(32),
+  history = 0,
 ): Promise<{
   service: PosService;
   db: PosDatabase;
@@ -72,6 +78,21 @@ async function fixture(
       throw new TypeError('offline');
     },
   );
+  for (let index = 0; index < history; index++) {
+    const sale = newSale(profile, randomUUID(), new Date().toISOString());
+    sale.status = 'COMPLETED';
+    sale.completed_at = new Date().toISOString();
+    db.save({
+      sale,
+      sequence: index + 1,
+      revision: 1,
+      syncedRevision: 1,
+      serverVersion: 1,
+      inFlight: null,
+      payment: null,
+      error: null,
+    });
+  }
   const service = new PosService(
     db,
     'https://api.test',
@@ -85,6 +106,495 @@ async function fixture(
 }
 
 describe('local POS application service', () => {
+  it.skipIf(process.env.POS_BENCHMARK !== '1')(
+    'measures full durable scans with 0/1000/3000/10000 historical receipts',
+    async () => {
+      const results: unknown[] = [];
+      for (const history of [0, 1000, 3000, 10000]) {
+        const directory = mkdtempSync(join(tmpdir(), 'pos-shift-benchmark-'));
+        directories.push(directory);
+        const { service, db } = await fixture(
+          undefined,
+          join(directory, 'pos.sqlite'),
+          randomBytes(32),
+          history,
+        );
+        const samples: number[] = [];
+        for (let i = 0; i < 200; i++) {
+          const start = performance.now();
+          await service.handle({
+            type: 'execute',
+            command: { type: 'scan', barcode: productFixture().barcode },
+          });
+          samples.push(performance.now() - start);
+        }
+        samples.sort((a, b) => a - b);
+        expect(db.workingSales(ids.session)).toHaveLength(1);
+        results.push({
+          history,
+          p50: samples[100],
+          p95: samples[190],
+          p99: samples[198],
+          max: samples[199],
+        });
+      }
+      console.log(JSON.stringify({ durableScanMs: results }));
+    },
+    60_000,
+  );
+  it('probes a recovered connection for foreground checkout without waiting for global backoff', async () => {
+    let online = false;
+    let drafts = 0;
+    const { service, db } = await fixture(async (path, body) => {
+      if (path === '/v1/sales/local-draft') {
+        drafts++;
+        if (!online) throw new TypeError('offline');
+        return response({
+          sale: {
+            ...db.sale(ids.session, String(body.sale_id))!.sale,
+            version: Number(body.expected_version) + 1,
+          },
+        });
+      }
+      if (path.endsWith('/checkout')) {
+        const record = db.sale(ids.session, path.split('/')[3])!;
+        return response({
+          sale: {
+            ...record.sale,
+            status: 'COMPLETED',
+            version: record.serverVersion + 1,
+            fiscal_receipt: fiscalReceiptFixture(record.sale.total),
+          },
+        });
+      }
+      throw new TypeError('offline');
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await tick();
+    expect(db.get<number>(`outbox-retry:${ids.session}`)).toBeGreaterThan(
+      Date.now(),
+    );
+    const before = drafts;
+    online = true;
+    await expect(
+      service.handle({
+        type: 'checkout',
+        saleId: sale.id,
+        total: sale.total,
+        payments: [{ method: 'CASH', amount: sale.total }],
+      }),
+    ).resolves.toMatchObject({ status: 'COMPLETED' });
+    expect(drafts).toBe(before + 1);
+  });
+  it('contains a storage error while persisting a background access revocation', async () => {
+    const { service, db, fetcher } = await fixture();
+    vi.useFakeTimers();
+    fetcher.mockResolvedValue(
+      new Response(JSON.stringify({ error_code: 'FORBIDDEN' }), {
+        status: 403,
+      }),
+    );
+    const write = db.set.bind(db);
+    vi.spyOn(db, 'set').mockImplementation((key, value) => {
+      if (key.startsWith('revoked:')) throw new Error('disk full');
+      write(key, value);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(45_000);
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        authorizationRequired: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('restores OS-protected credentials offline and rejects expired or revoked grants', async () => {
+    const { service, db, fetcher } = await fixture();
+    fetcher.mockClear();
+    expect(await service.handle({ type: 'restoreCredentials' })).toEqual({
+      accessToken: 'token',
+      registerId: ids.register,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    db.set(`revoked:${ids.session}`, true);
+    expect(await service.handle({ type: 'restoreCredentials' })).toBeNull();
+    db.set(`revoked:${ids.session}`, false);
+    const key = `profile:${createHash('sha256').update('token').digest('hex')}:${ids.register}`;
+    db.set(key, { ...profileFixture(), expiresAt: Date.now() - 1 });
+    expect(await service.handle({ type: 'restoreCredentials' })).toBeNull();
+  });
+  it('persists refund intent and blocks disconnect until the same command is cleared', async () => {
+    const { service, db } = await fixture();
+    const command = {
+      type: 'receipt' as const,
+      receiptNumber: '42',
+      endpoint: '/v1/returns/receipts/42',
+      idempotencyKey: randomUUID(),
+      payload: {
+        reason: 'Возврат',
+        payments: [{ amount: '10.00', method: 'CASH' as const }],
+        items: [
+          {
+            saleItemId: randomUUID(),
+            quantity: '1',
+            returnDisposition: 'RESTOCK' as const,
+          },
+        ],
+      },
+    };
+    await service.handle({
+      type: 'savePendingReturn',
+      sessionId: ids.session,
+      command,
+    });
+    expect(db.get(`pending-return:${ids.session}`)).toEqual(command);
+    await expect(service.handle({ type: 'disconnect' })).rejects.toMatchObject({
+      code: 'RETURN_PENDING',
+    });
+    await expect(
+      service.handle({
+        type: 'savePendingReturn',
+        sessionId: ids.session,
+        command: { ...command, idempotencyKey: randomUUID() },
+      }),
+    ).rejects.toThrow();
+    await service.handle({
+      type: 'clearPendingReturn',
+      sessionId: ids.session,
+      commandId: command.idempotencyKey,
+    });
+    expect(
+      await service.handle({ type: 'pendingReturn', sessionId: ids.session }),
+    ).toBeNull();
+  });
+  it.each(['synced', 'pending', 'edited-in-flight'] as const)(
+    'checkout waits only for its own latest draft (%s), not a slow cancelled receipt',
+    async (mode) => {
+      let releaseDraft!: () => void;
+      let releaseCancellation!: () => void;
+      const draftGate = new Promise<void>((resolve) => {
+        releaseDraft = resolve;
+      });
+      const cancellationGate = new Promise<void>((resolve) => {
+        releaseCancellation = resolve;
+      });
+      let currentId: string | undefined;
+      let blockDraft = false;
+      let cancellationStarted = false;
+      let paymentStarted = false;
+      const { service, db } = await fixture(async (path, body) => {
+        if (path === '/v1/sales/local-draft') {
+          const id = String(body.sale_id);
+          const snapshot = structuredClone(db.sale(ids.session, id)!.sale);
+          if (body.status === 'CANCELLED') {
+            cancellationStarted = true;
+            await cancellationGate;
+          } else if (blockDraft && body.status === 'DRAFT') {
+            blockDraft = false;
+            currentId = id;
+            await draftGate;
+          }
+          return response({
+            sale: { ...snapshot, version: Number(body.expected_version) + 1 },
+          });
+        }
+        if (path.endsWith('/checkout')) {
+          paymentStarted = true;
+          const record = db.sale(ids.session, path.split('/')[3])!;
+          expect(record.revision).toBe(record.syncedRevision);
+          expect(record.sale.total).toBe(
+            mode === 'edited-in-flight' ? '1300.00' : '650.00',
+          );
+          return response({
+            sale: {
+              ...record.sale,
+              status: 'COMPLETED',
+              version: record.serverVersion + 1,
+              fiscal_receipt: fiscalReceiptFixture(record.sale.total),
+            },
+          });
+        }
+        throw new TypeError('offline');
+      });
+      const first = (await service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      })) as SaleResponse;
+      await service.handle({ type: 'retry' });
+      await service.handle({
+        type: 'transition',
+        action: 'hold',
+        saleId: first.id,
+      });
+      await service.handle({ type: 'retry' });
+      blockDraft = mode !== 'synced';
+      let current = (await service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      })) as SaleResponse;
+      if (mode === 'synced') await service.handle({ type: 'retry' });
+      else await vi.waitFor(() => expect(currentId).toBe(current.id));
+      await service.handle({
+        type: 'transition',
+        action: 'cancel',
+        saleId: first.id,
+        reason: 'Покупатель передумал',
+      });
+      if (mode === 'synced')
+        await vi.waitFor(() => expect(cancellationStarted).toBe(true));
+      if (mode === 'edited-in-flight')
+        current = (await service.handle({
+          type: 'execute',
+          command: {
+            type: 'setQuantity',
+            itemId: current.items[0].id,
+            quantity: '2',
+          },
+        })) as SaleResponse;
+      const checkout = service.handle({
+        type: 'checkout',
+        saleId: current.id,
+        total: current.total,
+        payments: [{ method: 'CASH', amount: current.total }],
+      });
+      try {
+        if (mode !== 'synced') {
+          await tick();
+          expect(paymentStarted).toBe(false);
+          releaseDraft();
+        }
+        await vi.waitFor(() => expect(paymentStarted).toBe(true));
+        await expect(checkout).resolves.toMatchObject({
+          status: 'COMPLETED',
+          id: current.id,
+        });
+        expect(db.sale(ids.session, first.id)!.syncedRevision).toBeLessThan(
+          db.sale(ids.session, first.id)!.revision,
+        );
+      } finally {
+        releaseDraft();
+        releaseCancellation();
+        await checkout.catch(() => undefined);
+        await service.handle({ type: 'flush' });
+      }
+    },
+  );
+  it('allows a new receipt to be paid and preserves it when archiving an older rejected cancellation', async () => {
+    let rejectedId: string | undefined;
+    const { service, db } = await fixture(async (path, body) => {
+      if (path === '/v1/sales/local-draft') {
+        const id = String(body.sale_id);
+        rejectedId ??= id;
+        if (id === rejectedId)
+          return new Response(
+            JSON.stringify({ error_code: 'PRODUCT_NOT_FOUND' }),
+            { status: 404 },
+          );
+        return response({
+          sale: {
+            ...db.sale(ids.session, id)!.sale,
+            version: Number(body.expected_version) + 1,
+          },
+        });
+      }
+      if (path.endsWith('/checkout')) {
+        const sale = db.sale(ids.session, path.split('/')[3])!.sale;
+        return response({
+          sale: {
+            ...sale,
+            status: 'COMPLETED',
+            version: 2,
+            fiscal_receipt: fiscalReceiptFixture(sale.total),
+          },
+        });
+      }
+      if (path === `/v1/sales/${rejectedId}`)
+        return new Response(JSON.stringify({ error_code: 'SALE_NOT_FOUND' }), {
+          status: 404,
+        });
+      throw new TypeError('offline');
+    });
+    const first = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, first.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+    );
+    await service.handle({
+      type: 'transition',
+      action: 'cancel',
+      saleId: first.id,
+      reason: 'Покупатель передумал',
+    });
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, first.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+    );
+    const second = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, second.id)?.syncedRevision).toBe(1),
+    );
+    await expect(
+      service.handle({
+        type: 'checkout',
+        saleId: second.id,
+        total: second.total,
+        payments: [{ method: 'CASH', amount: second.total }],
+      }),
+    ).resolves.toMatchObject({ status: 'COMPLETED' });
+    const completed = db.sale(ids.session, second.id);
+    await service.handle({ type: 'archiveCancelledSale', saleId: first.id });
+    expect(db.sale(ids.session, second.id)).toEqual(completed);
+    await expect(service.handle({ type: 'flush' })).resolves.toBeNull();
+  });
+  it.each(['absent', 'DRAFT', 'HELD', 'CANCELLED'] as const)(
+    'archives only the cancelled receipt after checking the server (%s)',
+    async (remoteStatus) => {
+      const { service, db, fetcher } = await fixture(async (path) => {
+        if (path === '/v1/sales/local-draft')
+          return new Response(
+            JSON.stringify({ error_code: 'PRODUCT_NOT_FOUND' }),
+            { status: 404 },
+          );
+        const id = path.split('/')[3];
+        const record = db.sale(ids.session, id);
+        if (!record) throw new TypeError('offline');
+        if (path.endsWith('/cancel'))
+          return response({ sale: { ...record.sale, version: 2 } });
+        if (remoteStatus === 'absent')
+          return new Response(
+            JSON.stringify({ error_code: 'SALE_NOT_FOUND' }),
+            { status: 404 },
+          );
+        return response({
+          sale: { ...record.sale, status: remoteStatus, version: 1 },
+        });
+      });
+      const sale = (await service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      })) as SaleResponse;
+      await vi.waitFor(() =>
+        expect(db.sale(ids.session, sale.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+      );
+      await service.handle({
+        type: 'transition',
+        action: 'cancel',
+        saleId: sale.id,
+        reason: 'Покупатель передумал',
+      });
+      await vi.waitFor(() =>
+        expect(db.sale(ids.session, sale.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+      );
+      const before = db.sale(ids.session, sale.id)!;
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        outbox: [{ archivable: true }],
+      });
+      await expect(
+        service.handle({ type: 'archiveCancelledSale', saleId: sale.id }),
+      ).resolves.toMatchObject({ pending: 0, outbox: [] });
+      expect(db.sale(ids.session, sale.id)).toBeNull();
+      expect(
+        db.get<ArchivedLocalSale>(`sale-archive:${ids.session}:${sale.id}`),
+      ).toMatchObject({
+        record: before,
+        archivedByMembershipId: profileFixture().session.membership_id,
+        serverSale: remoteStatus === 'absent' ? null : { status: 'CANCELLED' },
+      });
+      const cancellations = fetcher.mock.calls.filter(([url]) =>
+        String(url).endsWith('/cancel'),
+      );
+      expect(cancellations).toHaveLength(
+        ['DRAFT', 'HELD'].includes(remoteStatus) ? 1 : 0,
+      );
+      if (cancellations.length)
+        expect(JSON.parse(cancellations[0][1]!.body as string)).toEqual({
+          expected_version: 1,
+          reason: 'Покупатель передумал',
+        });
+      const count = fetcher.mock.calls.length;
+      await service.handle({ type: 'archiveCancelledSale', saleId: sale.id });
+      expect(fetcher.mock.calls).toHaveLength(count);
+      await expect(service.handle({ type: 'flush' })).resolves.toBeNull();
+    },
+  );
+
+  it.each(['offline', 'proxy404', 'COMPLETED', 'cancel-uncertain'] as const)(
+    'keeps the cancelled receipt when archival is not confirmed (%s)',
+    async (mode) => {
+      const { service, db } = await fixture(async (path) => {
+        if (path === '/v1/sales/local-draft')
+          return new Response(
+            JSON.stringify({ error_code: 'PRODUCT_NOT_FOUND' }),
+            { status: 404 },
+          );
+        if (mode === 'offline' || path.endsWith('/cancel'))
+          throw new TypeError('offline');
+        if (mode === 'proxy404')
+          return new Response('Not found', { status: 404 });
+        const record = db.sale(ids.session, path.split('/')[3]);
+        if (!record) throw new TypeError('offline');
+        return response({
+          sale: {
+            ...record.sale,
+            version: 1,
+            status: mode === 'COMPLETED' ? 'COMPLETED' : 'DRAFT',
+          },
+        });
+      });
+      const sale = (await service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      })) as SaleResponse;
+      await vi.waitFor(() =>
+        expect(db.sale(ids.session, sale.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+      );
+      await service.handle({
+        type: 'transition',
+        action: 'cancel',
+        saleId: sale.id,
+        reason: 'Покупатель передумал',
+      });
+      await vi.waitFor(() =>
+        expect(db.sale(ids.session, sale.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+      );
+      await expect(
+        service.handle({ type: 'archiveCancelledSale', saleId: sale.id }),
+      ).rejects.toThrow();
+      expect(db.sale(ids.session, sale.id)?.sale.status).toBe('CANCELLED');
+      expect(db.get(`sale-archive:${ids.session}:${sale.id}`)).toBeNull();
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        pending: 1,
+      });
+    },
+  );
+
+  it('does not allow archiving an active receipt or its uncertain in-flight command', async () => {
+    const { service, db } = await fixture();
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await expect(
+      service.handle({ type: 'archiveCancelledSale', saleId: sale.id }),
+    ).rejects.toMatchObject({ code: 'SALE_NOT_ARCHIVABLE' });
+    await service.handle({
+      type: 'transition',
+      action: 'cancel',
+      saleId: sale.id,
+      reason: 'Покупатель передумал',
+    });
+    await expect(
+      service.handle({ type: 'archiveCancelledSale', saleId: sale.id }),
+    ).rejects.toMatchObject({ code: 'SALE_NOT_ARCHIVABLE' });
+    expect(db.sale(ids.session, sale.id)?.inFlight).not.toBeNull();
+  });
   it('requires synchronization before cash movements but permits an already synchronized draft', async () => {
     const { service, db } = await fixture(async (path, body) => {
       if (path === '/v1/sales/local-draft')
@@ -401,6 +911,113 @@ describe('local POS application service', () => {
     await service.handle({ type: 'retrySale', saleId: first.id });
     expect(db.sale(ids.session, first.id)?.syncedRevision).toBe(2);
     expect(db.sale(ids.session, first.id)?.error).toBeNull();
+  });
+  it.each([false, true])(
+    'synchronizes cancellation after a catalog rejection (cancel during request=%s)',
+    async (duringRequest) => {
+      let rejectDraft!: (value: Response) => void;
+      const missing = (): Response =>
+        new Response(JSON.stringify({ error_code: 'PRODUCT_NOT_FOUND' }), {
+          status: 404,
+        });
+      const { service, db } = await fixture(async (path, body) => {
+        if (path !== '/v1/sales/local-draft') throw new TypeError('offline');
+        if (body.status === 'DRAFT')
+          return duringRequest
+            ? new Promise((resolve) => {
+                rejectDraft = resolve;
+              })
+            : missing();
+        return response({
+          sale: {
+            ...db.sale(ids.session, String(body.sale_id))!.sale,
+            version: Number(body.expected_version) + 1,
+          },
+        });
+      });
+      const sale = (await service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: productFixture().barcode },
+      })) as SaleResponse;
+      if (duringRequest) await tick();
+      else
+        await vi.waitFor(() =>
+          expect(db.sale(ids.session, sale.id)?.error).toBe(
+            'PRODUCT_NOT_FOUND',
+          ),
+        );
+      await service.handle({
+        type: 'transition',
+        action: 'cancel',
+        saleId: sale.id,
+        reason: 'Покупатель передумал',
+      });
+      if (duringRequest) rejectDraft(missing());
+      await vi.waitFor(() =>
+        expect(db.sale(ids.session, sale.id)?.syncedRevision).toBe(2),
+      );
+      expect(db.sale(ids.session, sale.id)).toMatchObject({
+        error: null,
+        inFlight: null,
+        sale: {
+          status: 'CANCELLED',
+          cancellation_reason: 'Покупатель передумал',
+        },
+      });
+      expect(await service.handle({ type: 'current' })).toBeNull();
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        pending: 0,
+      });
+    },
+  );
+  it('retries an already cancelled catalog rejection from the general recovery button', async () => {
+    let fixed = false;
+    let cancellations = 0;
+    const { service, db, fetcher } = await fixture(async (path, body) => {
+      if (path !== '/v1/sales/local-draft') throw new TypeError('offline');
+      if (body.status === 'CANCELLED') cancellations++;
+      if (!fixed)
+        return new Response(
+          JSON.stringify({ error_code: 'PRODUCT_NOT_FOUND' }),
+          { status: 404 },
+        );
+      return response({
+        sale: {
+          ...db.sale(ids.session, String(body.sale_id))!.sale,
+          version: 1,
+        },
+      });
+    });
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: productFixture().barcode },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.error).toBe('PRODUCT_NOT_FOUND'),
+    );
+    await service.handle({
+      type: 'transition',
+      action: 'cancel',
+      saleId: sale.id,
+      reason: 'Покупатель передумал',
+    });
+    await vi.waitFor(() => {
+      expect(cancellations).toBe(1);
+      expect(db.sale(ids.session, sale.id)?.error).toBe('PRODUCT_NOT_FOUND');
+    });
+    expect(await service.handle({ type: 'status' })).toMatchObject({
+      outbox: [
+        { saleId: sale.id, saleStatus: 'CANCELLED', code: 'PRODUCT_NOT_FOUND' },
+      ],
+    });
+    fixed = true;
+    expect(await service.handle({ type: 'retry' })).toMatchObject({
+      pending: 0,
+    });
+    expect(cancellations).toBe(2);
+    expect(
+      fetcher.mock.calls.some(([url]) => String(url).endsWith('/checkout')),
+    ).toBe(false);
   });
   it.each([false, true])(
     'reports active outbox work separately from its durable queue (failure=%s)',

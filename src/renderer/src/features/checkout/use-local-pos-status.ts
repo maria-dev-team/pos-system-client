@@ -14,7 +14,31 @@ import {
   useLocalPosSync,
 } from '@renderer/features/local-pos';
 
-import type { SaleResponse } from '../../../../shared/pos/contracts';
+import type { PosStatus, SaleResponse } from '../../../../shared/pos/contracts';
+
+function reportRetry(result: PosStatus | null, saleId?: string) {
+  if (!result) return;
+  const item = saleId
+    ? result.outbox?.find((entry) => entry.saleId === saleId)
+    : result.outbox?.find((entry) => entry.code);
+  if (result.authorizationRequired) {
+    toast.warning('Для отправки чеков подтвердите доступ к кассе.');
+  } else if (item?.nextAttemptAt && item.nextAttemptAt > Date.now()) {
+    toast.info(
+      `Чек сохранён. Следующая попытка отправки — после ${new Date(item.nextAttemptAt).toLocaleTimeString('ru-RU')}.`,
+    );
+  } else if (item?.code) {
+    toast.warning(
+      item.message ?? 'Чек не отправлен. Проверьте причину в очереди отправки.',
+    );
+  } else if (result.pending === 0) {
+    toast.success('Все изменения чеков отправлены.');
+  } else if (saleId && !item && result.outbox && result.outbox.length < 50) {
+    toast.success('Изменения чека отправлены.');
+  } else {
+    toast.info('Чеки сохранены. Отправка продолжается в фоне.');
+  }
+}
 
 export function useLocalPosStatus(sessionId: string) {
   const client = useQueryClient();
@@ -41,13 +65,15 @@ export function useLocalPosStatus(sessionId: string) {
   }, [client]);
   const run = useCallback(
     async (key: string, operation: () => Promise<void>) => {
-      if (jobs.current.has(key)) return;
+      if (jobs.current.has(key)) return false;
       jobs.current.add(key);
       setBusy([...jobs.current]);
       try {
         await operation();
+        return true;
       } catch (error) {
         toast.error(getHttpErrorMessage(error));
+        return false;
       } finally {
         jobs.current.delete(key);
         setBusy([...jobs.current]);
@@ -71,7 +97,7 @@ export function useLocalPosStatus(sessionId: string) {
   const refresh = () =>
     run('refresh', async () => {
       if (status.data?.authorizationRequired) await authorize();
-      await callLocalPos({ type: 'retry' });
+      reportRetry(await callLocalPos<PosStatus>({ type: 'retry' }));
     });
   const review = (
     type: 'deferPayment' | 'resumePayment' | 'reconcilePayment',
@@ -95,10 +121,21 @@ export function useLocalPosStatus(sessionId: string) {
     busy,
     refresh,
     review,
+    archiveSale: (saleId: string) =>
+      run(saleId, async () => {
+        if (status.data?.authorizationRequired) await authorize();
+        await callLocalPos({ type: 'archiveCancelledSale', saleId });
+        toast.success(
+          'Отменённый чек убран из очереди. Копия сохранена на кассе.',
+        );
+      }),
     retrySale: (saleId: string) =>
       run(saleId, async () => {
         if (status.data?.authorizationRequired) await authorize();
-        await callLocalPos({ type: 'retrySale', saleId });
+        reportRetry(
+          await callLocalPos<PosStatus>({ type: 'retrySale', saleId }),
+          saleId,
+        );
       }),
     active: snapshot.active,
   };

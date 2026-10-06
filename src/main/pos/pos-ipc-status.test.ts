@@ -204,3 +204,33 @@ it('finishes probes immediately when the worker fails and clears their timers', 
   });
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('recovers from a worker failure without resending an unresolved mutation', async () => {
+  const request = setup();
+  const command = request({
+    type: 'execute',
+    command: { type: 'scan', barcode: '123' },
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  const old = mocks.worker;
+  old.emit('error', new Error('crash'));
+  expect(await command).toMatchObject({
+    ok: false,
+    code: 'LOCAL_STORAGE_ERROR',
+  });
+  mocks.worker = Object.assign(new EventEmitter(), {
+    postMessage: vi.fn(),
+    terminate: vi.fn(),
+  });
+  expect(await request({ type: 'restartWorker' })).toEqual({
+    ok: true,
+    value: null,
+  });
+  expect(old.terminate).toHaveBeenCalledTimes(1);
+  expect(mocks.worker.postMessage).not.toHaveBeenCalled();
+  const status = request({ type: 'status' });
+  await vi.advanceTimersByTimeAsync(0);
+  respond({ pending: 1 });
+  expect(await status).toEqual({ ok: true, value: { pending: 1 } });
+  mocks.close();
+});

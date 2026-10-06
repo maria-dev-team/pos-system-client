@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CreateReceiptReturnPayload } from '@renderer/common/api';
 
@@ -23,12 +23,9 @@ let persisted = new Map<string, string>();
 
 beforeEach(() => {
   persisted = new Map();
-  useReturnsPendingStore.persist.setOptions({
-    storage: {
-      getItem: () => null,
-      removeItem: (key) => persisted.delete(key),
-      setItem: (key, value) => persisted.set(key, JSON.stringify(value)),
-    },
+  vi.restoreAllMocks();
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
+    persisted.set(key, value);
   });
   useReturnsPendingStore.setState({ pendingBySession: {} });
 });

@@ -9,6 +9,7 @@ import {
   buildEscPosReceipt,
   encodeRasterBand,
 } from './escpos-raster';
+import { printDeadline, queuePrint } from './print-job';
 import { DefaultPrinterNotFoundError, sendRawReceipt } from './raw-printer';
 import {
   type PrintableReceipt,
@@ -283,6 +284,9 @@ const printHtmlDocument = async (
   let printWindow: ElectronBrowserWindow | undefined;
 
   try {
+    const deadlineAt = Date.now() + 20_000;
+    const bounded = <T>(operation: Promise<T>): Promise<T> =>
+      printDeadline(operation, deadlineAt - Date.now());
     const profile = receiptPaperProfiles[request.paperWidthMm];
     const rasterScale = profile.printWidthDots / profile.layoutWidthCss;
     const sourceBandHeight = Math.floor(
@@ -301,12 +305,16 @@ const printHtmlDocument = async (
       },
       width: profile.layoutWidthCss,
     });
-    await printWindow.loadURL(
-      `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`,
+    await bounded(
+      printWindow.loadURL(
+        `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`,
+      ),
     );
-    const contentHeight = await printWindow.webContents.executeJavaScript(
-      'document.fonts.ready.then(() => Math.ceil(document.documentElement.scrollHeight))',
-      true,
+    const contentHeight = await bounded(
+      printWindow.webContents.executeJavaScript(
+        'document.fonts.ready.then(() => Math.ceil(document.documentElement.scrollHeight))',
+        true,
+      ),
     );
     if (
       typeof contentHeight !== 'number' ||
@@ -322,9 +330,11 @@ const printHtmlDocument = async (
         ok: false,
       };
     }
-    const contentWidth = await printWindow.webContents.executeJavaScript(
-      'document.documentElement.clientWidth',
-      true,
+    const contentWidth = await bounded(
+      printWindow.webContents.executeJavaScript(
+        'document.documentElement.clientWidth',
+        true,
+      ),
     );
     if (contentWidth !== profile.layoutWidthCss) {
       throw new Error('Invalid receipt content width');
@@ -333,9 +343,11 @@ const printHtmlDocument = async (
     const bands: Buffer[] = [];
     for (let y = 0; y < contentHeight; y += sourceBandHeight) {
       const sourceHeight = Math.min(sourceBandHeight, contentHeight - y);
-      const actualScrollY = await printWindow.webContents.executeJavaScript(
-        `new Promise((resolve) => { scrollTo(0, ${y}); requestAnimationFrame(() => resolve(window.scrollY)); })`,
-        true,
+      const actualScrollY = await bounded(
+        printWindow.webContents.executeJavaScript(
+          `new Promise((resolve) => { scrollTo(0, ${y}); requestAnimationFrame(() => resolve(window.scrollY)); })`,
+          true,
+        ),
       );
       if (
         typeof actualScrollY !== 'number' ||
@@ -355,14 +367,16 @@ const printHtmlDocument = async (
       if (outputHeight <= 0 || outputHeight > MAX_RASTER_BAND_HEIGHT_DOTS) {
         throw new Error('Invalid receipt raster height');
       }
-      const captured = await printWindow.webContents.capturePage(
-        {
-          height: sourceHeight,
-          width: profile.layoutWidthCss,
-          x: 0,
-          y: captureY,
-        },
-        { stayHidden: true },
+      const captured = await bounded(
+        printWindow.webContents.capturePage(
+          {
+            height: sourceHeight,
+            width: profile.layoutWidthCss,
+            x: 0,
+            y: captureY,
+          },
+          { stayHidden: true },
+        ),
       );
       const bitmap = captured
         .resize({ height: outputHeight, width: profile.printWidthDots })
@@ -421,7 +435,10 @@ const printDocument = async (
   html: string,
   documentType: 'receipt' | 'report',
 ): Promise<PrintResult> => {
-  const printers = await mainWindow.webContents.getPrintersAsync();
+  const printers = await printDeadline(
+    mainWindow.webContents.getPrintersAsync(),
+    5000,
+  );
   if (printers.length === 0) {
     return {
       code: 'NO_PRINTER',
@@ -447,7 +464,10 @@ export const registerReceiptPrinterIpc = (
 ): void => {
   ipcMain.handle(GET_PRINTERS_CHANNEL, async (event) => {
     assertSender(event.sender, mainWindow);
-    const printers = await mainWindow.webContents.getPrintersAsync();
+    const printers = await printDeadline(
+      mainWindow.webContents.getPrintersAsync(),
+      5000,
+    );
     return printers.map(({ description, displayName, name }) => ({
       description,
       displayName,
@@ -464,11 +484,21 @@ export const registerReceiptPrinterIpc = (
         ok: false,
       } satisfies PrintResult;
     }
-    return printDocument(
-      mainWindow,
-      request,
-      renderReceiptDocument(request.receipt),
-      'receipt',
+    return queuePrint(() =>
+      printDocument(
+        mainWindow,
+        request,
+        renderReceiptDocument(request.receipt),
+        'receipt',
+      ),
+    ).catch(
+      () =>
+        ({
+          ok: false,
+          code: 'PRINT_FAILED',
+          message:
+            'Печать недоступна или очередь занята. Повторите проверку принтера.',
+        }) satisfies PrintResult,
     );
   });
 
@@ -483,11 +513,21 @@ export const registerReceiptPrinterIpc = (
           ok: false,
         } satisfies PrintResult;
       }
-      return printDocument(
-        mainWindow,
-        request,
-        renderShiftReportDocument(request.report),
-        'report',
+      return queuePrint(() =>
+        printDocument(
+          mainWindow,
+          request,
+          renderShiftReportDocument(request.report),
+          'report',
+        ),
+      ).catch(
+        () =>
+          ({
+            ok: false,
+            code: 'PRINT_FAILED',
+            message:
+              'Печать недоступна или очередь занята. Повторите проверку принтера.',
+          }) satisfies PrintResult,
       );
     },
   );

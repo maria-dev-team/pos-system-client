@@ -5,19 +5,27 @@ import {
   randomBytes,
   randomUUID,
 } from 'node:crypto';
+import { stat, statfs } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
 import type { ProductSearchResponse } from '../../shared/api/responses/product.response';
-import type { LocalSale, ProductResponse } from '../../shared/pos/contracts';
+import type {
+  ArchivedLocalSale,
+  LocalSale,
+  PosDiagnostics,
+  ProductResponse,
+} from '../../shared/pos/contracts';
 import { PosError } from '../../shared/pos/contracts';
 import { productMatchesBarcode } from '../../shared/pos/product-policy';
+import { isWorkingSale } from './pos-outbox';
 
 /** This connection lives exclusively in the POS worker, never on the UI thread. */
 export class PosDatabase {
   private readonly db: DatabaseSync;
   private readonly statements = new Map<string, StatementSync>();
   constructor(
-    path: string,
+    private readonly path: string,
     private readonly key: Buffer,
   ) {
     this.db = new DatabaseSync(path);
@@ -77,6 +85,26 @@ export class PosDatabase {
         throw error;
       }
     }
+    const saleColumns = this.statement('PRAGMA table_info(local_sales)').all();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const [name, definition] of [
+        ['active', 'INTEGER NOT NULL DEFAULT 1'],
+        ['completed_at', 'TEXT'],
+        ['non_fiscal', 'INTEGER NOT NULL DEFAULT 0'],
+      ])
+        if (!saleColumns.some((row) => row.name === name))
+          this.db.exec(
+            `ALTER TABLE local_sales ADD COLUMN ${name} ${definition}`,
+          );
+      this.db.exec(
+        'CREATE INDEX IF NOT EXISTS sales_active ON local_sales(session_id,active,sequence); CREATE INDEX IF NOT EXISTS sales_history ON local_sales(session_id,non_fiscal,completed_at DESC);',
+      );
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
   /** Reuse hot parameterized queries; keep even future dynamic SQL shapes bounded. */
   private statement(sql: string): StatementSync {
@@ -130,6 +158,15 @@ export class PosDatabase {
       sale.sequence,
       this.seal(sale, `sale:${sale.sale.cashier_session_id}:${sale.sale.id}`),
     );
+    if (Number(saved.changes) === 1)
+      this.statement(
+        'UPDATE local_sales SET active=?,completed_at=?,non_fiscal=? WHERE id=?',
+      ).run(
+        Number(isWorkingSale(sale)),
+        sale.sale.completed_at ?? sale.sale.cancelled_at ?? null,
+        Number(!!sale.nonFiscalCompletion),
+        sale.sale.id,
+      );
     if (Number(saved.changes) !== 1)
       throw new PosError(
         'LOCAL_CONTEXT_CHANGED',
@@ -141,6 +178,15 @@ export class PosDatabase {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.set('clock', Math.max(now, this.get<number>('clock') ?? 0));
+      const sequenceKey = `sale-sequence:${sale.sale.cashier_session_id}`;
+      this.set(
+        sequenceKey,
+        Math.max(
+          sale.sequence,
+          sale.sale.local_revision ?? 0,
+          this.get<number>(sequenceKey) ?? 0,
+        ),
+      );
       this.save(sale);
       this.db.exec('COMMIT');
     } catch (error) {
@@ -159,6 +205,116 @@ export class PosDatabase {
           `sale:${sessionId}:${row.id}`,
         ),
       );
+  }
+  sequence(sessionId: string): number {
+    return Math.max(
+      this.get<number>(`sale-sequence:${sessionId}`) ?? 0,
+      Number(
+        this.statement(
+          'SELECT MAX(sequence) AS value FROM local_sales WHERE session_id=?',
+        ).get(sessionId)?.value ?? 0,
+      ) + 1,
+    );
+  }
+  workingSales(sessionId: string): LocalSale[] {
+    const result: LocalSale[] = [];
+    // Bounded reads also lazily classify receipts from pre-index installations.
+    let after = -1;
+    while (true) {
+      const rows = this.statement(
+        'SELECT rowid,id,value FROM local_sales WHERE session_id=? AND active=1 AND rowid>? ORDER BY rowid LIMIT 100',
+      ).all(sessionId, after);
+      if (!rows.length) break;
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of rows) {
+          const record = this.open<LocalSale>(
+            row.value as Uint8Array,
+            `sale:${sessionId}:${row.id}`,
+          );
+          if (isWorkingSale(record)) result.push(record);
+          else
+            this.statement(
+              'UPDATE local_sales SET active=0,completed_at=?,non_fiscal=? WHERE id=?',
+            ).run(
+              record.sale.completed_at ?? record.sale.cancelled_at,
+              Number(!!record.nonFiscalCompletion),
+              record.sale.id,
+            );
+        }
+        this.db.exec('COMMIT');
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+      after = Number(rows.at(-1)!.rowid);
+    }
+    return result.sort((a, b) => a.sequence - b.sequence);
+  }
+  localReceipts(sessionId: string, offset: number): LocalSale[] {
+    return this.statement(
+      'SELECT id,value FROM local_sales WHERE session_id=? AND non_fiscal=1 ORDER BY completed_at DESC,id LIMIT 25 OFFSET ?',
+    )
+      .all(sessionId, offset)
+      .map((row) =>
+        this.open<LocalSale>(
+          row.value as Uint8Array,
+          `sale:${sessionId}:${row.id}`,
+        ),
+      );
+  }
+  async diagnostics(): Promise<PosDiagnostics> {
+    const files = await Promise.all(
+      [this.path, `${this.path}-wal`].map((path) =>
+        stat(path).then(
+          (value) => value.size,
+          () => 0,
+        ),
+      ),
+    );
+    const disk = await statfs(dirname(this.path)).catch(() => null);
+    return {
+      databaseBytes: files.reduce((sum, size) => sum + size, 0),
+      freeDiskBytes: disk ? disk.bavail * disk.bsize : null,
+      workingReceipts: Number(
+        this.statement(
+          'SELECT count(*) AS count FROM local_sales WHERE active=1',
+        ).get()?.count ?? 0,
+      ),
+      historyReceipts: Number(
+        this.statement(
+          'SELECT count(*) AS count FROM local_sales WHERE active=0',
+        ).get()?.count ?? 0,
+      ),
+      heapBytes: process.memoryUsage().heapUsed,
+      uptimeSeconds: Math.round(process.uptime()),
+    };
+  }
+  pruneHistory(now = Date.now()): void {
+    // Only acknowledged final receipts are eligible; never erase an outbox intent.
+    const cutoff = new Date(now - 90 * 86400_000).toISOString();
+    this.statement(
+      'DELETE FROM local_sales WHERE id IN (SELECT id FROM local_sales WHERE active=0 AND completed_at<? LIMIT 100)',
+    ).run(cutoff);
+  }
+  /** Preserve the complete rejected snapshot before removing only its queue entry. */
+  archiveSale(archive: ArchivedLocalSale): void {
+    const { record } = archive;
+    const sessionId = record.sale.cashier_session_id;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.set(`sale-archive:${sessionId}:${record.sale.id}`, archive);
+      this.set('clock', Math.max(Date.now(), this.get<number>('clock') ?? 0));
+      const removed = this.statement(
+        'DELETE FROM local_sales WHERE id = ? AND session_id = ?',
+      ).run(record.sale.id, sessionId);
+      if (Number(removed.changes) !== 1)
+        throw new PosError('SALE_NOT_FOUND', 'Чек отсутствует в очереди.');
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
   sale(sessionId: string, id: string): LocalSale | null {
     const row = this.statement(

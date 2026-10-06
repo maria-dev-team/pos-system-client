@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
+import { useEffect } from 'react';
 
 import {
   type CreateReceiptReturnPayload,
@@ -9,7 +10,9 @@ import {
 } from '@renderer/common/api';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
+import { callLocalPos } from '@renderer/common/lib/local-pos';
 
+import { assertCompletedReturn } from '../../../../../shared/pos/return-response';
 import { reportSaleAntiFraud } from '../../anti-fraud';
 import {
   type PendingReturnCommand,
@@ -48,6 +51,52 @@ export function useReturnSubmission(
   );
   const store = () => useReturnsPendingStore.getState();
 
+  const loadPending = async () => {
+    if (store().storageError) throw store().storageError;
+    if (!window.localPos) return store().pendingBySession[cashierSessionId];
+    const saved = await callLocalPos<PendingReturnCommand | null>({
+      type: 'pendingReturn',
+      sessionId: cashierSessionId,
+    });
+    const legacy = store().pendingBySession[cashierSessionId];
+    // Copy legacy commands to SQLite before sending or clearing their old copy.
+    const command = saved ?? legacy;
+    if (command && !saved)
+      await callLocalPos({
+        type: 'savePendingReturn',
+        sessionId: cashierSessionId,
+        command,
+      });
+    if (command) store().publishPending(cashierSessionId, command);
+    return command;
+  };
+  useEffect(() => {
+    void loadPending().catch(() => {
+      /* Submission retries this read before accepting a new command. */
+    });
+    // Session identity, not render closures, owns restoration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cashierSessionId]);
+
+  const clearPending = async (command: PendingReturnCommand) => {
+    // Clear the legacy copy first. On failure retain both copies and the same UUID.
+    store().clearPending(cashierSessionId, command.idempotencyKey);
+    if (window.localPos) {
+      try {
+        await callLocalPos({
+          type: 'clearPendingReturn',
+          sessionId: cashierSessionId,
+          commandId: command.idempotencyKey,
+        });
+      } catch (error) {
+        const newer = store().pendingBySession[cashierSessionId];
+        if (!newer || newer.idempotencyKey === command.idempotencyKey)
+          store().publishPending(cashierSessionId, command);
+        throw error;
+      }
+    }
+  };
+
   const finish = async (command: PendingReturnCommand) => {
     await queryClient.invalidateQueries({
       queryKey: queryKeys.sales.receiptPages(),
@@ -84,8 +133,11 @@ export function useReturnSubmission(
               command.idempotencyKey,
               command.payload,
             );
+      assertCompletedReturn(result, command, organizationId, storeId);
       void reportSaleAntiFraud(result, command.payload.reason);
-      store().clearPending(cashierSessionId, command.idempotencyKey);
+      // A confirmed refund remains successful even when housekeeping fails.
+      // The retained intent prevents a fresh UUID; retry safely replays this command.
+      await clearPending(command).catch(() => undefined);
       // Cache refresh is not part of the fiscal transaction and cannot turn a
       // confirmed refund into an error or hold its completion UI indefinitely.
       void finish(command).catch(() => undefined);
@@ -96,7 +148,7 @@ export function useReturnSubmission(
       const errorCode = getHttpErrorCode(error);
       if (errorCode === ErrorCode.ReturnIdempotencyConflict) throw error;
 
-      store().clearPending(cashierSessionId, command.idempotencyKey);
+      await clearPending(command);
       if (
         errorCode === ErrorCode.ReturnQuantityExceeded &&
         command.type === 'receipt'
@@ -116,7 +168,7 @@ export function useReturnSubmission(
 
   const submit = useMutation({
     mutationFn: async (draft: ReturnDraft) => {
-      if (store().pendingBySession[cashierSessionId]) {
+      if (await loadPending()) {
         throw new Error('Pending return command requires recovery');
       }
       const idempotencyKey = crypto.randomUUID();
@@ -132,7 +184,14 @@ export function useReturnSubmission(
               endpoint: '/v1/returns/without-receipt',
               idempotencyKey,
             };
-      if (!store().setPending(cashierSessionId, command)) {
+      if (window.localPos) {
+        await callLocalPos({
+          type: 'savePendingReturn',
+          sessionId: cashierSessionId,
+          command,
+        });
+        store().publishPending(cashierSessionId, command);
+      } else if (!store().setPending(cashierSessionId, command)) {
         throw new Error('Pending return command requires recovery');
       }
       return send(command);
@@ -142,7 +201,7 @@ export function useReturnSubmission(
 
   const retry = useMutation({
     mutationFn: async () => {
-      const command = store().pendingBySession[cashierSessionId];
+      const command = await loadPending();
       if (!command) throw new Error('No pending return command');
       return send(command);
     },

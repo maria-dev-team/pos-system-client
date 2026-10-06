@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Decimal from 'decimal.js';
 import {
   Ban,
   CheckCircle2,
@@ -93,6 +94,7 @@ import {
   heldSalesQueryOptions,
 } from './checkout-query-options';
 import { LocalPosStatus } from './local-pos-status';
+import { LocalReceiptsButton } from './local-receipts-button';
 import {
   focusCheckoutWorkspace,
   useCheckoutBarcodeScanner,
@@ -528,6 +530,19 @@ function ActiveCheckout({
   );
   const canOpenReceipts = canOpenSalesHistory || canOpenReturns;
   const rows: CheckoutRow[] = sale?.items.map((item) => ({ item })) ?? [];
+  const quantitiesByUnit = new Map<SaleItemResponse['unit_code'], Decimal>();
+  for (const { item } of rows) {
+    quantitiesByUnit.set(
+      item.unit_code,
+      (quantitiesByUnit.get(item.unit_code) ?? new Decimal(0)).plus(
+        item.quantity,
+      ),
+    );
+  }
+  const totalQuantity =
+    Array.from(quantitiesByUnit, ([unit, quantity]) =>
+      formatQuantity(quantity.toFixed(), unit),
+    ).join(' · ') || formatQuantity('0', 'pcs');
   const isBusy = command.isPending || transitionPending;
   const canResume = hasPermission('sales.hold') && !sale && !transitionPending;
   const canEndSession = !sale && !isBusy;
@@ -852,7 +867,7 @@ function ActiveCheckout({
       ref={workspaceRef}
       tabIndex={-1}
       aria-label="Рабочая зона продаж"
-      className="flex h-full min-h-0 w-full flex-col gap-2 overflow-hidden bg-workspace p-2 outline-none sm:p-3"
+      className="flex h-full min-h-0 w-full flex-col gap-1.5 overflow-hidden bg-workspace px-2 pb-2 pt-1 outline-none sm:px-3"
     >
       <LocalPosStatus sessionId={cashierSession.id} />
       <section
@@ -1052,7 +1067,7 @@ function ActiveCheckout({
         aria-label="Текущий чек"
         className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-[var(--shadow-surface)]"
       >
-        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-3">
+        <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border/70 px-3 py-1">
           <div className="flex items-center gap-2">
             <ShoppingBasket
               aria-hidden="true"
@@ -1060,9 +1075,14 @@ function ActiveCheckout({
             />
             <h1 className="text-sm font-bold">Оформление продажи</h1>
           </div>
-          <span className="text-xs font-medium tabular-nums text-muted-foreground">
-            Позиций: {rows.length}
-          </span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium tabular-nums text-muted-foreground">
+            <span>Позиций: {rows.length}</span>
+            <span>Всего товаров: {totalQuantity}</span>
+            <LocalReceiptsButton
+              context={context.data}
+              cashierSession={cashierSession}
+            />
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
           {rows.length === 0 ? (
@@ -1081,8 +1101,9 @@ function ActiveCheckout({
               </div>
             </div>
           ) : (
-            <table className="w-full min-w-[640px] table-fixed border-collapse text-sm">
+            <table className="w-full min-w-[688px] table-fixed border-collapse text-sm">
               <colgroup>
+                <col className="w-[48px]" />
                 <col />
                 <col className="w-[196px]" />
                 <col className="w-[120px]" />
@@ -1091,6 +1112,9 @@ function ActiveCheckout({
               </colgroup>
               <thead className="sticky top-0 z-[5] bg-muted/95 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground backdrop-blur">
                 <tr>
+                  <th scope="col" className="px-2 py-2 text-center">
+                    №
+                  </th>
                   <th scope="col" className="px-3 py-2">
                     Товар
                   </th>
@@ -1109,7 +1133,7 @@ function ActiveCheckout({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {rows.map((row, index) => {
                   const name = row.item.name;
                   const isOverridden = rowIsOverridden(row);
                   return (
@@ -1117,6 +1141,9 @@ function ActiveCheckout({
                       className="border-b border-border/70 align-middle transition-colors last:border-b-0 hover:bg-primary/[0.018]"
                       key={row.item.id}
                     >
+                      <td className="px-2 py-2 text-center tabular-nums text-muted-foreground">
+                        {index + 1}
+                      </td>
                       <td className="min-w-0 px-3 py-2">
                         <p className="break-words font-semibold leading-snug [overflow-wrap:anywhere]">
                           {name}

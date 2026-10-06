@@ -36,6 +36,8 @@ export function assertSaleAcknowledgement(
 }
 
 export function pendingStage(record: LocalSale): SyncStage | null {
+  if (record.nonFiscalCompletion && !record.nonFiscalCompletion.synced)
+    return record.inFlight ? 'draft' : 'nonFiscal';
   if (record.deferredPayment && !record.deferSynced) return 'defer';
   if (record.revision > record.syncedRevision) return 'draft';
   return null;
@@ -77,4 +79,17 @@ export function syncFailure(
         ? error.message
         : 'Не удалось отправить изменения. Чек сохранён на кассе.',
   };
+}
+
+/** Completed, acknowledged receipts belong to history, never to the hot queue. */
+export function isWorkingSale(record: LocalSale): boolean {
+  return (
+    !['COMPLETED', 'CANCELLED'].includes(record.sale.status) ||
+    !!record.payment ||
+    !!record.fiscalBlocked ||
+    !!record.deferredPayment ||
+    !!record.inFlight ||
+    record.revision > record.syncedRevision ||
+    !!(record.nonFiscalCompletion && !record.nonFiscalCompletion.synced)
+  );
 }

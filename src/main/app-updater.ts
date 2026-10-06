@@ -71,6 +71,8 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   if (registeredWindows.has(mainWindow)) return;
 
   let active = true;
+  let startupSkipped = false;
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let resolveRetry: (() => void) | undefined;
@@ -84,7 +86,25 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     mainWindow.webContents.send(STATE_CHANGED_CHANNEL, getState());
   };
   const setState = (next: Partial<AppUpdateState>): void => {
+    if (
+      startupSkipped &&
+      next.status &&
+      !['outdated', 'unchecked'].includes(next.status)
+    )
+      return;
     state = { ...state, ...next };
+    if (
+      [
+        'current',
+        'unchecked',
+        'outdated',
+        'restarting',
+        'download-failed',
+      ].includes(state.status)
+    ) {
+      clearTimeout(startupTimer);
+      startupTimer = undefined;
+    }
     publish();
   };
   const authorize = (sender: Electron.WebContents): void => {
@@ -137,6 +157,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     if (!active) removeErrorListener();
   };
   const scheduleRestart = (): void => {
+    if (startupSkipped) return;
     const restartAt = Date.now() + RESTART_DELAY_MS;
     setState({ status: 'restarting', restartAt });
     restartTimer = setTimeout(() => {
@@ -187,13 +208,18 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
   });
   ipcMain.handle(CONTINUE_CHANNEL, async (event) => {
     authorize(event.sender);
-    if (active && !operationInFlight && state.status === 'download-failed') {
-      setState({ status: 'outdated' });
+    if (active && state.status !== 'restarting') {
+      startupSkipped = true;
+      setState({
+        status: state.availableVersion ? 'outdated' : 'unchecked',
+        restartAt: null,
+      });
     }
   });
 
   const cleanup = (): void => {
     active = false;
+    clearTimeout(startupTimer);
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = undefined;
     resolveRetry?.();
@@ -240,7 +266,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
       });
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (!active) return;
+        if (!active || startupSkipped) return;
         if (!result?.isUpdateAvailable) {
           setState({ status: 'current' });
           return;
@@ -260,6 +286,14 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     }
   };
 
+  startupTimer = setTimeout(() => {
+    if (!active || state.status === 'restarting') return;
+    startupSkipped = true;
+    setState({
+      status: state.availableVersion ? 'outdated' : 'unchecked',
+      restartAt: null,
+    });
+  }, 10_000);
   operationInFlight = true;
   void checkForUpdate().finally(finishOperation);
 };

@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { CategoryResponse } from '../../shared/api/responses/category.response';
 import type {
+  ArchivedLocalSale,
   LocalSale,
+  OfflineCredentials,
   PosConflict,
   PosProfile,
   PosRequest,
@@ -15,6 +17,12 @@ import type {
 import { PosError } from '../../shared/pos/contracts';
 import type { SyncStage } from '../../shared/pos/contracts';
 import { parseGs1DataMatrix } from '../../shared/pos/gs1-data-matrix';
+import {
+  completeNonFiscalSale,
+  nonFiscalAllowed,
+  nonFiscalSignature,
+} from '../../shared/pos/non-fiscal-sale';
+import type { PendingReturnCommand } from '../../shared/pos/return-command';
 import {
   applyCommand,
   draftPayload,
@@ -36,6 +44,7 @@ import { PosDatabase } from './pos-database';
 import {
   assertSaleAcknowledgement,
   canSync,
+  isWorkingSale,
   pendingStage,
   syncFailure,
 } from './pos-outbox';
@@ -77,11 +86,15 @@ export class PosService {
   private deferredRestoreJob: Promise<void> | null = null;
   private pendingCheckJob: Promise<void> | null = null;
   private readonly resuming = new Set<string>();
+  private readonly archiving = new Set<string>();
   private syncJob: Promise<void> | null = null;
+  private readonly draftSyncWaiters = new Set<() => void>();
   private syncingEpoch: number | null = null;
   private readonly catalog: PosCatalog;
   private categoriesJob: Promise<void> | null = null;
   private outboxRetryAt = 0;
+  private outboxHardRetryAt = 0;
+  private checkoutProbeAt = 0;
   private workspaceRevision = 0;
   private readonly sending = new Set<string>();
   private readonly reconciliations = new Map<
@@ -89,6 +102,7 @@ export class PosService {
     Promise<SaleResponse | null>
   >();
   private verification: Promise<void> | null = null;
+  private lastMaintenanceAt = 0;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(
@@ -103,11 +117,25 @@ export class PosService {
       changed,
     );
     this.timer = setInterval(() => {
+      if (Date.now() - this.lastMaintenanceAt > 60_000) {
+        this.lastMaintenanceAt = Date.now();
+        try {
+          this.db.pruneHistory();
+        } catch {
+          this.lastError =
+            'Не удалось обслужить локальную историю. Проверьте свободное место на диске.';
+          this.changed();
+        }
+      }
       if (this.profile && this.initialized) {
         void this.synchronize();
         void this.refreshCatalog();
         void this.refreshCategories();
-        void this.verifyAuthorization();
+        void this.verifyAuthorization().catch(() => {
+          this.lastError =
+            'Ошибка локального хранилища при проверке доступа. Не удаляйте данные кассы.';
+          this.changed();
+        });
         void this.checkPendingPayments();
       }
     }, 15_000);
@@ -146,7 +174,9 @@ export class PosService {
       record.syncFailures = { ...record.syncFailures, draft: undefined };
     record.sale = { ...record.sale, local_revision: ++this.sequence };
     this.db.saveSaleWithClock(record, Date.now()); // Publish only after the durable commit succeeds.
-    this.records.set(record.sale.id, record);
+    if (isWorkingSale(record)) this.records.set(record.sale.id, record);
+    else this.records.delete(record.sale.id);
+    for (const notify of this.draftSyncWaiters) notify();
     this.changed();
   }
   private async api<T>(
@@ -319,6 +349,15 @@ export class PosService {
     if (
       this.profile &&
       this.profile.session.id !== profile.session.id &&
+      this.db.get(`pending-return:${this.profile.session.id}`)
+    )
+      throw new PosError(
+        'RETURN_PENDING',
+        'Сначала проверьте возврат предыдущей смены.',
+      );
+    if (
+      this.profile &&
+      this.profile.session.id !== profile.session.id &&
       [...this.records.values()].some(
         (r) =>
           r.payment ||
@@ -342,11 +381,13 @@ export class PosService {
     this.db.set(`profile:${tokenHash}:${registerId}`, profile);
     this.db.set(`last-register:${tokenHash}`, registerId);
     this.records = new Map(
-      this.db.sales(profile.session.id).map((r) => [r.sale.id, r]),
+      this.db.workingSales(profile.session.id).map((r) => [r.sale.id, r]),
     );
     this.outboxRetryAt =
       this.db.get<number>(`outbox-retry:${profile.session.id}`) ?? 0;
-    this.sequence = 0;
+    this.outboxHardRetryAt =
+      this.db.get<number>(`outbox-hard-retry:${profile.session.id}`) ?? 0;
+    this.sequence = this.db.sequence(profile.session.id);
     for (const record of this.records.values())
       this.sequence = Math.max(
         this.sequence,
@@ -376,11 +417,12 @@ export class PosService {
       this.db.set(`adopted:${profile.session.id}`, true);
     }
     this.initialized = true;
+    this.db.set('resume-credentials', { accessToken, registerId });
     if (this.online) {
       for (const record of this.records.values()) {
         const failures = { ...record.syncFailures };
         let reset = false;
-        for (const stage of ['draft', 'defer'] as const)
+        for (const stage of ['draft', 'defer', 'nonFiscal'] as const)
           if (failures[stage]?.authorization) {
             delete failures[stage];
             reset = true;
@@ -409,7 +451,11 @@ export class PosService {
     void this.refreshCatalog(true);
     void this.refreshCategories();
     void this.synchronize();
-    void this.verifyAuthorization();
+    void this.verifyAuthorization().catch(() => {
+      this.lastError =
+        'Ошибка локального хранилища при проверке доступа. Не удаляйте данные кассы.';
+      this.changed();
+    });
     return profile;
   }
 
@@ -673,7 +719,9 @@ export class PosService {
     }
   }
   private record(id: string): LocalSale {
-    const record = this.records.get(id);
+    const record =
+      this.records.get(id) ??
+      (this.profile ? this.db.sale(this.profile.session.id, id) : null);
     if (!record)
       throw new PosError('SALE_NOT_FOUND', 'Чек не найден на этой кассе.');
     return record;
@@ -928,6 +976,17 @@ export class PosService {
       sale,
       revision: record.revision + 1,
       sequence: ++this.sequence,
+      // Cancelling a rejected draft creates a new snapshot. Conflicts still
+      // require explicit comparison; a catalog rejection must not block cancellation.
+      error:
+        request.action === 'cancel' &&
+        ![
+          'SALE_VERSION_CONFLICT',
+          'SALE_DRAFT_ALREADY_EXISTS',
+          'SALE_NOT_EDITABLE',
+        ].includes(record.error ?? '')
+          ? null
+          : record.error,
     });
     this.workspaceRevision++;
     void this.synchronize();
@@ -942,7 +1001,12 @@ export class PosService {
       try {
         this.active();
         let deferredSent = 0;
+        let preparing = [...this.records.values()].some(
+          (r) => r.payment?.stage === 'PREPARING',
+        );
         for (const record of this.records.values()) {
+          // Finish the paying customer's draft before background queue maintenance.
+          if (preparing) break;
           if (deferredSent >= 20) break;
           if (
             !record.deferredPayment ||
@@ -986,6 +1050,9 @@ export class PosService {
             this.assertEpoch(epoch);
             if (this.outboxFailed(record.sale.id, 'defer', error)) throw error;
           }
+          preparing = [...this.records.values()].some(
+            (r) => r.payment?.stage === 'PREPARING',
+          );
         }
         if (this.resuming.size) return;
         for (let sent = 0; sent < 50; sent++) {
@@ -994,12 +1061,24 @@ export class PosService {
             .filter(
               (r) =>
                 r.revision > r.syncedRevision &&
+                !this.archiving.has(r.sale.id) &&
                 !r.error &&
                 !r.deferredPayment &&
-                canSync(r, 'draft'),
+                canSync(r, pendingStage(r) ?? 'draft'),
             )
-            .sort((a, b) => a.sequence - b.sequence)[0];
+            .sort(
+              (a, b) =>
+                Number(!!b.nonFiscalCompletion) -
+                  Number(!!a.nonFiscalCompletion) ||
+                Number(b.payment?.stage === 'PREPARING') -
+                  Number(a.payment?.stage === 'PREPARING') ||
+                a.sequence - b.sequence,
+            )[0];
           if (!record) break;
+          if (record.nonFiscalCompletion && !record.inFlight) {
+            await this.syncNonFiscalSale(record, epoch);
+            continue;
+          }
           const flight = record.inFlight ?? {
             commandId: randomUUID(),
             revision: record.revision,
@@ -1063,14 +1142,26 @@ export class PosService {
               error.status < 500 &&
               ![408, 425, 429].includes(error.status)
             ) {
+              const superseded =
+                !stop &&
+                latest.revision > flight.revision &&
+                !error.details.reconciliation_required &&
+                ![
+                  'SALE_VERSION_CONFLICT',
+                  'SALE_DRAFT_ALREADY_EXISTS',
+                  'SALE_NOT_EDITABLE',
+                ].includes(error.code);
               this.save({
                 ...latest,
                 inFlight: null,
-                error: error.code,
+                error: superseded ? null : error.code,
                 fiscalBlocked:
                   latest.fiscalBlocked ||
                   error.details.reconciliation_required === true,
-                syncFailures: this.record(record.sale.id).syncFailures,
+                syncFailures: {
+                  ...this.record(record.sale.id).syncFailures,
+                  ...(superseded ? { draft: undefined } : {}),
+                },
               });
               if (error.status === 403) this.revoke();
               // A receipt conflict must not starve unrelated drafts.
@@ -1095,6 +1186,109 @@ export class PosService {
     });
     return this.syncJob;
   }
+  private async syncNonFiscalSale(
+    record: LocalSale,
+    epoch: number,
+  ): Promise<void> {
+    const completion = record.nonFiscalCompletion!;
+    const payload = completion.payload ?? {
+      ...draftPayload(
+        { ...record.sale, status: 'DRAFT' },
+        record.serverVersion,
+        completion.commandId,
+      ),
+      completed_at: record.sale.completed_at,
+      total: record.sale.total,
+      snapshot_signature: completion.snapshotSignature,
+      payments: completion.request.payments,
+    };
+    if (!completion.payload)
+      this.save({ ...record, nonFiscalCompletion: { ...completion, payload } });
+    this.syncingEpoch = epoch;
+    this.changed();
+    try {
+      const { sale } = await this.api<{ sale: SaleResponse }>(
+        '/v1/sales/local-non-fiscal',
+        payload,
+        30_000,
+      );
+      this.assertEpoch(epoch);
+      const latest = this.record(record.sale.id);
+      assertCompletedPayment(sale, latest);
+      const paymentSignature = (value: SaleResponse): string =>
+        JSON.stringify(
+          value.payments
+            .map((p) => [
+              p.method,
+              p.status,
+              p.direction,
+              p.amount,
+              p.received,
+              p.change,
+            ])
+            .sort(),
+        );
+      if (
+        sale.fiscalization_mode !== 'NON_FISCAL' ||
+        sale.fiscal_receipt ||
+        nonFiscalSignature(sale) !== completion.snapshotSignature ||
+        Date.parse(sale.completed_at ?? '') !==
+          Date.parse(record.sale.completed_at!) ||
+        paymentSignature(sale) !== paymentSignature(record.sale)
+      )
+        throw new PosError(
+          'POS_API_INVALID_RESPONSE',
+          'Сервер не подтвердил сохранённую нефискальную продажу. Чек остаётся на кассе.',
+        );
+      this.save({
+        ...latest,
+        sale: { ...latest.sale, version: sale.version },
+        serverVersion: sale.version,
+        syncedRevision: latest.revision,
+        error: null,
+        nonFiscalCompletion: {
+          ...latest.nonFiscalCompletion!,
+          synced: true,
+          serverSale: sale,
+        },
+        syncFailures: { ...latest.syncFailures, nonFiscal: undefined },
+      });
+      this.online = true;
+      this.lastError = null;
+    } catch (error) {
+      this.assertEpoch(epoch);
+      if (
+        error instanceof ApiError &&
+        error.details.local_non_fiscal_policy_conflict
+      ) {
+        this.outboxFailed(
+          record.sale.id,
+          'nonFiscal',
+          new PosError(
+            'NON_FISCAL_POLICY_CONFLICT',
+            'Нефискальная продажа сохранена на кассе. Настройки сервера требуют фискализацию: проверьте настройки кассы. Автоматическая фискализация не выполняется.',
+          ),
+        );
+        return;
+      }
+      if (
+        error instanceof ApiError &&
+        error.details.local_non_fiscal_snapshot_conflict
+      ) {
+        this.outboxFailed(
+          record.sale.id,
+          'nonFiscal',
+          new PosError(
+            'NON_FISCAL_SNAPSHOT_CONFLICT',
+            'Нефискальная продажа сохранена на кассе. Цены, налоги или время отличаются от данных сервера. Нужна сверка; оплаченная сумма не изменена.',
+          ),
+        );
+        return;
+      }
+      if (this.outboxFailed(record.sale.id, 'nonFiscal', error)) throw error;
+    }
+  }
+
   private outboxFailed(id: string, stage: SyncStage, error: unknown): boolean {
     const latest = this.record(id);
     const failure = syncFailure(error, latest.syncFailures?.[stage]);
@@ -1102,7 +1296,17 @@ export class PosService {
       ...latest,
       syncFailures: { ...latest.syncFailures, [stage]: failure },
     });
-    if (failure.temporary) {
+    const transportFailure =
+      error instanceof PosConnectionError ||
+      (error instanceof ApiError && failure.temporary);
+    if (transportFailure) {
+      if (error instanceof ApiError && error.retryAfterMs) {
+        this.outboxHardRetryAt = Date.now() + error.retryAfterMs;
+        this.db.set(
+          `outbox-hard-retry:${this.profile!.session.id}`,
+          this.outboxHardRetryAt,
+        );
+      }
       this.outboxRetryAt = failure.nextAttemptAt!;
       this.db.set(
         `outbox-retry:${this.profile!.session.id}`,
@@ -1112,7 +1316,7 @@ export class PosService {
     if (error instanceof ApiError && error.status === 403) this.revoke();
     // Back off the whole transport on an outage; isolate definitive per-receipt rejections.
     return (
-      failure.temporary ||
+      transportFailure ||
       (error instanceof ApiError && [401, 403].includes(error.status))
     );
   }
@@ -1214,6 +1418,17 @@ export class PosService {
     this.workspaceRevision++;
     requirePermission(this.active(), 'sales.complete');
     let record = this.record(request.saleId);
+    if (record.nonFiscalCompletion) {
+      if (
+        JSON.stringify(request) !==
+        JSON.stringify(record.nonFiscalCompletion.request)
+      )
+        throw new PosError(
+          'SALE_NOT_EDITABLE',
+          'Нефискальная продажа уже сохранена.',
+        );
+      return record.sale;
+    }
     if (record.payment || record.fiscalBlocked) {
       if (
         record.payment?.stage === 'PREPARING' ||
@@ -1240,13 +1455,43 @@ export class PosService {
     }
     if (record.sale.status !== 'DRAFT' || !record.sale.items.length)
       throw new PosError('SALE_NOT_EDITABLE', 'Чек уже завершён.');
+    if (nonFiscalAllowed(this.active(), request)) {
+      const sale = completeNonFiscalSale(
+        record.sale,
+        request,
+        new Date().toISOString(),
+        randomUUID,
+      );
+      this.save({
+        ...record,
+        sale,
+        revision: record.revision + 1,
+        nonFiscalCompletion: {
+          commandId: randomUUID(),
+          request,
+          snapshotSignature: nonFiscalSignature(sale),
+        },
+        error: null,
+        syncFailures: record.inFlight ? record.syncFailures : undefined,
+      });
+      void this.synchronize();
+      return this.record(sale.id).sale;
+    }
+    if (request.fiscalizationMode === 'NON_FISCAL')
+      throw new PosError(
+        'SALE_NOT_EDITABLE',
+        'Настройки кассы требуют фискализацию.',
+      );
     // Shift age warns in the UI. The backend/KKM decides whether a checkout
     // can be fiscalized; the client never fabricates a successful payment.
     const signature = moneySignature(record.sale);
-    // Freeze edits durably before draining the outbox or starting any external operation.
+    const preparationEpoch = this.epoch;
+    // Freeze edits durably before syncing this draft or starting any external operation.
     this.save({ ...record, payment: { request, stage: 'PREPARING' } });
     try {
-      await this.synchronize();
+      await this.synchronizeForCheckout(request.saleId);
+      this.assertEpoch(preparationEpoch);
+      requirePermission(this.active(), 'sales.complete');
       record = this.record(request.saleId);
       if (record.revision !== record.syncedRevision || record.error)
         throw new PosError(
@@ -1262,6 +1507,7 @@ export class PosService {
           'Сервер уточнил цены или налоги. Проверьте обновлённый чек и подтвердите оплату ещё раз.',
         );
     } catch (error) {
+      this.assertEpoch(preparationEpoch);
       this.save({ ...this.record(request.saleId), payment: null });
       throw error;
     }
@@ -1306,6 +1552,48 @@ export class PosService {
       this.sending.delete(record.sale.id);
     }
   }
+  private async synchronizeForCheckout(id: string): Promise<void> {
+    const now = Date.now();
+    // One bounded half-open probe for a foreground customer, never bypass Retry-After.
+    if (
+      !this.syncJob &&
+      now >= this.checkoutProbeAt &&
+      now >= this.outboxHardRetryAt
+    ) {
+      this.checkoutProbeAt = now + 5000;
+      this.outboxRetryAt = 0;
+      const current = this.record(id);
+      if (current.syncFailures?.draft?.temporary)
+        this.save({
+          ...current,
+          syncFailures: { ...current.syncFailures, draft: undefined },
+        });
+    }
+    const settled = (): boolean => {
+      const record =
+        this.records.get(id) ??
+        (this.profile ? this.db.sale(this.profile.session.id, id) : null);
+      return (
+        !record || !!record.error || record.revision === record.syncedRevision
+      );
+    };
+    // Scanning normally syncs this draft in advance. Do not wait for other receipts.
+    if (settled()) return;
+    let notify!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      notify = () => {
+        if (settled()) resolve();
+      };
+      this.draftSyncWaiters.add(notify);
+    });
+    try {
+      // Stop waiting as soon as this receipt is acknowledged. A stopped pump
+      // (network backoff, authorization, validation) is checked by checkout too.
+      await Promise.race([ready, this.synchronize()]);
+    } finally {
+      this.draftSyncWaiters.delete(notify);
+    }
+  }
   private async sendPayment(
     id: string,
     request: Extract<PosRequest, { type: 'checkout' }>,
@@ -1326,6 +1614,126 @@ export class PosService {
     assertCompletedPayment(sale, record);
     return sale;
   }
+  private canArchiveCancelledSale(record: LocalSale): boolean {
+    return (
+      record.sale.status === 'CANCELLED' &&
+      record.revision > record.syncedRevision &&
+      !record.inFlight &&
+      !record.payment &&
+      !record.fiscalBlocked &&
+      !record.deferredPayment &&
+      !record.sale.fiscal_receipt &&
+      !record.sale.payments.some((payment) => payment.status !== 'CANCELLED')
+    );
+  }
+
+  private async archiveCancelledSale(id: string): Promise<PosStatus> {
+    const profile = this.active();
+    requirePermission(profile, 'sales.cancel');
+    requirePermission(profile, 'sales.read');
+    if (this.archiving.has(id))
+      throw new PosError(
+        'LOCAL_OPERATION_PENDING',
+        'Дождитесь завершения проверки чека.',
+      );
+    if (
+      !this.records.has(id) &&
+      this.db.get<ArchivedLocalSale>(`sale-archive:${profile.session.id}:${id}`)
+    )
+      return this.status();
+    const record = this.record(id);
+    if (!this.canArchiveCancelledSale(record))
+      throw new PosError(
+        'SALE_NOT_ARCHIVABLE',
+        'Можно убрать только отменённый чек без отправляемой команды и неподтверждённой оплаты. Дождитесь отправки или проверьте оплату.',
+      );
+    const epoch = this.epoch;
+    this.archiving.add(id);
+    this.changed();
+    try {
+      let remote: SaleResponse | null;
+      try {
+        const response = await this.api<{ sale: SaleResponse }>(
+          `/v1/sales/${id}`,
+        );
+        this.assertEpoch(epoch);
+        assertSaleAcknowledgement(response.sale, record);
+        remote = response.sale;
+      } catch (error) {
+        // A timeout or generic proxy 404 is not evidence that the sale is absent.
+        if (!(
+          error instanceof ApiError &&
+          error.status === 404 &&
+          error.code === 'SALE_NOT_FOUND'
+        ))
+          throw error;
+        remote = null;
+      }
+      this.assertEpoch(epoch);
+      if (remote) {
+        if (
+          remote.status === 'COMPLETED' ||
+          remote.fiscal_receipt ||
+          remote.payments.some((payment) => payment.status !== 'CANCELLED')
+        )
+          throw new PosError(
+            'PAYMENT_UNCERTAIN',
+            'На сервере есть оплата этого чека. Его нельзя убрать из очереди без сверки.',
+          );
+        if (remote.status !== 'CANCELLED') {
+          const result = await this.api<{ sale: SaleResponse }>(
+            `/v1/sales/${id}/cancel`,
+            {
+              expected_version: remote.version,
+              reason:
+                record.sale.cancellation_reason ??
+                'Отмена локального чека: исключён из очереди отправки',
+            },
+            30_000,
+          );
+          this.assertEpoch(epoch);
+          assertSaleAcknowledgement(result.sale, record);
+          if (
+            result.sale.status !== 'CANCELLED' ||
+            result.sale.fiscal_receipt ||
+            result.sale.payments.some(
+              (payment) => payment.status !== 'CANCELLED',
+            )
+          )
+            throw new PosError(
+              'POS_API_INVALID_RESPONSE',
+              'Сервер не подтвердил отмену. Чек сохранён в очереди.',
+            );
+          remote = result.sale;
+        }
+      }
+      const latest = this.record(id);
+      if (latest.sale.local_revision !== record.sale.local_revision)
+        throw new PosError(
+          'SALE_VERSION_CONFLICT',
+          'Чек изменился во время проверки. Повторите действие.',
+        );
+      this.db.archiveSale({
+        record: latest,
+        archivedAt: new Date().toISOString(),
+        archivedByMembershipId: profile.session.membership_id,
+        serverSale: remote,
+      });
+      this.records.delete(id);
+      if (
+        ![...this.records.values()].some(
+          (r) => pendingStage(r) || r.payment || r.fiscalBlocked,
+        )
+      )
+        this.lastError = null;
+      void this.synchronize();
+      return this.status();
+    } finally {
+      this.archiving.delete(id);
+      this.changed();
+    }
+  }
+
   private status(): PosStatus {
     const records = [...this.records.values()];
     const catalog = this.profile
@@ -1346,6 +1754,7 @@ export class PosService {
       conflicts: records
         .filter(
           (r) =>
+            !r.nonFiscalCompletion &&
             !r.fiscalBlocked &&
             r.error &&
             [
@@ -1370,6 +1779,7 @@ export class PosService {
           const failure = r.syncFailures?.[stage];
           return {
             saleId: r.sale.id,
+            saleStatus: r.sale.status,
             total: r.sale.total,
             stage,
             code: failure?.code ?? r.error,
@@ -1377,6 +1787,13 @@ export class PosService {
             attempts: failure?.attempts ?? 0,
             nextAttemptAt: failure?.nextAttemptAt ?? null,
             retryable: !r.fiscalBlocked && !r.payment,
+            archivable:
+              this.canArchiveCancelledSale(r) &&
+              Boolean(
+                this.profile?.context.isSystemPosition ||
+                (this.profile?.context.permissions.includes('sales.cancel') &&
+                  this.profile.context.permissions.includes('sales.read')),
+              ),
           };
         }),
       catalogReady: !!catalog,
@@ -1400,6 +1817,35 @@ export class PosService {
     };
   }
   async handle(request: PosRequest): Promise<PosResult> {
+    if (request.type === 'diagnostics') return this.db.diagnostics();
+    if (request.type === 'restoreCredentials') {
+      const credentials = this.db.get<OfflineCredentials>('resume-credentials');
+      if (!credentials) return null;
+      const p = this.db.get<PosProfile>(
+        `profile:${hash(credentials.accessToken)}:${credentials.registerId}`,
+      );
+      if (
+        !p ||
+        p.expiresAt <= Date.now() ||
+        !Number.isFinite(p.expiresAt) ||
+        p.session.status !== 'ACTIVE' ||
+        this.db.get(`revoked:${p.session.id}`) ||
+        Date.now() < (this.db.get<number>('clock') ?? 0) - 60_000
+      )
+        return null;
+      assertAuthorizedPosSession(
+        p.context,
+        p.session,
+        p.shift,
+        credentials.registerId,
+      );
+      return credentials;
+    }
+    if (request.type === 'restartWorker')
+      throw new PosError(
+        'INVALID_REQUEST',
+        'Перезапуск выполняется главным процессом.',
+      );
     if (request.type === 'connect')
       return this.connect(
         request.accessToken,
@@ -1413,6 +1859,14 @@ export class PosService {
       return register ? this.connect(request.accessToken, register) : null;
     }
     if (request.type === 'disconnect') {
+      if (
+        this.profile &&
+        this.db.get(`pending-return:${this.profile.session.id}`)
+      )
+        throw new PosError(
+          'RETURN_PENDING',
+          'Сначала проверьте неподтверждённый возврат.',
+        );
       if (
         [...this.records.values()].some(
           (r) =>
@@ -1431,6 +1885,7 @@ export class PosService {
           `profile:${this.profile.tokenHash}:${this.profile.session.register_id}`,
           null,
         );
+      this.db.set('resume-credentials', null);
       this.epoch++;
       this.catalog.stop();
       this.token = '';
@@ -1443,6 +1898,44 @@ export class PosService {
     if (request.type === 'status') return this.status();
     this.active();
     switch (request.type) {
+      case 'pendingReturn':
+      case 'savePendingReturn':
+      case 'clearPendingReturn': {
+        if (request.sessionId !== this.active().session.id)
+          throw new PosError(
+            'LOCAL_CONTEXT_CHANGED',
+            'Возврат относится к другой смене.',
+          );
+        const key = `pending-return:${request.sessionId}`;
+        const current = this.db.get<PendingReturnCommand>(key);
+        if (request.type === 'pendingReturn') return current;
+        if (request.type === 'savePendingReturn') {
+          if (
+            request.command.type === 'receipt' &&
+            request.command.endpoint !==
+              `/v1/returns/receipts/${request.command.receiptNumber}`
+          )
+            throw new PosError(
+              'INVALID_REQUEST',
+              'Некорректная команда возврата.',
+            );
+          if (
+            current &&
+            JSON.stringify(current) !== JSON.stringify(request.command)
+          )
+            throw new PosError(
+              'RETURN_PENDING',
+              'Сначала проверьте сохранённый возврат.',
+            );
+          this.db.set(key, request.command);
+          return request.command;
+        }
+        if (current?.idempotencyKey === request.commandId)
+          this.db.set(key, null);
+        return null;
+      }
+      case 'archiveCancelledSale':
+        return this.archiveCancelledSale(request.saleId);
       case 'deferPayment':
         return this.deferPayment(request.saleId);
       case 'resumePayment':
@@ -1455,6 +1948,11 @@ export class PosService {
         return this.resolveConflict(request);
       case 'current':
         return this.current()?.sale ?? null;
+      case 'localReceipts':
+        requirePermission(this.active(), 'sales.read');
+        return this.db
+          .localReceipts(this.active().session.id, request.offset ?? 0)
+          .map((r) => r.sale);
       case 'sale':
         return this.record(request.saleId).sale;
       case 'held':
@@ -1506,8 +2004,16 @@ export class PosService {
         for (const record of this.records.values())
           if (
             record.error &&
-            ['INVALID_TOKEN', 'UNAUTHORIZED'].includes(record.error) &&
-            !record.fiscalBlocked
+            !this.archiving.has(record.sale.id) &&
+            (['INVALID_TOKEN', 'UNAUTHORIZED'].includes(record.error) ||
+              (record.sale.status === 'CANCELLED' &&
+                [
+                  'PRODUCT_NOT_FOUND',
+                  'PRODUCT_NOT_ACTIVE',
+                  'PRODUCT_NOT_SELLABLE',
+                ].includes(record.error))) &&
+            !record.fiscalBlocked &&
+            !record.payment
           )
             this.save({ ...record, error: null, syncFailures: undefined });
         await this.synchronize();
@@ -1523,6 +2029,11 @@ export class PosService {
         return this.status();
       case 'retrySale': {
         this.active();
+        if (this.archiving.has(request.saleId))
+          throw new PosError(
+            'LOCAL_OPERATION_PENDING',
+            'Дождитесь завершения проверки чека.',
+          );
         const record = this.record(request.saleId);
         if (record.fiscalBlocked || record.payment)
           throw new PosError(
@@ -1531,6 +2042,7 @@ export class PosService {
           );
         if (
           record.error &&
+          !record.nonFiscalCompletion &&
           [
             'SALE_VERSION_CONFLICT',
             'SALE_DRAFT_ALREADY_EXISTS',
@@ -1556,6 +2068,11 @@ export class PosService {
       }
       case 'prepareCashMovement':
       case 'flush':
+        if (this.db.get(`pending-return:${this.active().session.id}`))
+          throw new PosError(
+            'RETURN_PENDING',
+            'Сначала проверьте неподтверждённый возврат.',
+          );
         await this.synchronize();
         if (
           [...this.records.values()].some(
@@ -1579,6 +2096,16 @@ export class PosService {
   }
 
   private async conflict(id: string): Promise<PosConflict> {
+    if (this.record(id).nonFiscalCompletion)
+      throw new PosError(
+        'SALE_NOT_EDITABLE',
+        'Оплаченный нефискальный чек нельзя перезаписать.',
+      );
+    if (this.archiving.has(id))
+      throw new PosError(
+        'LOCAL_OPERATION_PENDING',
+        'Дождитесь завершения проверки чека.',
+      );
     requirePermission(this.active(), 'sales.read');
     const epoch = this.epoch;
     const record = this.record(id);
@@ -1603,6 +2130,11 @@ export class PosService {
   private async resolveConflict(
     request: Extract<PosRequest, { type: 'resolveConflict' }>,
   ): Promise<SaleResponse | null> {
+    if (this.record(request.saleId).nonFiscalCompletion)
+      throw new PosError(
+        'SALE_NOT_EDITABLE',
+        'Оплаченный нефискальный чек нельзя перезаписать.',
+      );
     requirePermission(this.active(), 'sales.modify');
     const { remote } = await this.conflict(request.saleId);
     const record = this.record(request.saleId);

@@ -18,13 +18,17 @@ const statusSchema = z.object({
     .array(
       z.object({
         saleId: z.string().uuid(),
+        saleStatus: z
+          .enum(['DRAFT', 'HELD', 'COMPLETED', 'CANCELLED'])
+          .optional(),
         total: z.string(),
-        stage: z.enum(['draft', 'defer']),
+        stage: z.enum(['draft', 'defer', 'nonFiscal']),
         code: z.string().nullable(),
         message: z.string().nullable(),
         attempts: count,
         nextAttemptAt: z.number().nullable(),
         retryable: z.boolean(),
+        archivable: z.boolean().optional(),
       }),
     )
     .max(50)
