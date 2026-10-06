@@ -63,7 +63,10 @@ export class CameraApiClient {
   async completeDiscovery(
     accessToken: string,
     job: CameraDiscoveryJob,
-    result: { cameras: DiscoveredCamera[]; error?: 'network_error' },
+    result: {
+      cameras: DiscoveredCamera[];
+      error?: 'network_error' | 'device_error';
+    },
     signal: AbortSignal,
   ): Promise<void> {
     const response = await fetch(

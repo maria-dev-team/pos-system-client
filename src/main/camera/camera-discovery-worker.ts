@@ -1,6 +1,8 @@
 import type { CameraApiClient } from './camera-api.client';
 import { discoverCameras } from './camera-discovery';
 import type { CameraAuthContext } from './camera.types';
+import { resolveFfmpegPath } from './ffmpeg-path';
+import { discoverUsbCameras } from './usb-camera';
 
 export class CameraDiscoveryWorker {
   private context: CameraAuthContext | null = null;
@@ -45,9 +47,20 @@ export class CameraDiscoveryWorker {
       if (job && !signal.aborted) {
         let result;
         try {
-          result = { cameras: await discoverCameras(job, signal) };
+          result = {
+            cameras:
+              job.type === 'usb'
+                ? await discoverUsbCameras(resolveFfmpegPath(), signal)
+                : await discoverCameras(job, signal),
+          };
         } catch {
-          result = { cameras: [], error: 'network_error' as const };
+          result = {
+            cameras: [],
+            error:
+              job.type === 'usb'
+                ? ('device_error' as const)
+                : ('network_error' as const),
+          };
         }
         if (!signal.aborted)
           await this.api.completeDiscovery(

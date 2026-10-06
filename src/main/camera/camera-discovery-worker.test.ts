@@ -4,7 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CameraApiClient } from './camera-api.client';
 import { discoverCameras } from './camera-discovery';
 import { CameraDiscoveryWorker } from './camera-discovery-worker';
+import { discoverUsbCameras } from './usb-camera';
 
+vi.mock('./ffmpeg-path', () => ({ resolveFfmpegPath: () => 'ffmpeg' }));
+vi.mock('./usb-camera', () => ({
+  discoverUsbCameras: vi.fn().mockResolvedValue([]),
+}));
 vi.mock('./camera-discovery', () => ({
   discoverCameras: vi.fn().mockResolvedValue([]),
 }));
@@ -84,4 +89,34 @@ describe('CameraDiscoveryWorker', () => {
     );
     worker.stop();
   });
+});
+
+it('routes USB discovery to the POS devices without network discovery', async () => {
+  vi.useFakeTimers();
+  const job = {
+    id: 'usb-job',
+    type: 'usb',
+    username: '',
+    password: '',
+    claim_token: 'claim',
+  };
+  const api = {
+    claimDiscovery: vi.fn().mockResolvedValueOnce(job),
+    completeDiscovery: vi.fn(),
+  };
+  const worker = new CameraDiscoveryWorker(api as unknown as CameraApiClient);
+  worker.setContext(context);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(discoverUsbCameras).toHaveBeenCalledWith(
+    'ffmpeg',
+    expect.any(AbortSignal),
+  );
+  expect(discoverCameras).not.toHaveBeenCalled();
+  expect(api.completeDiscovery).toHaveBeenCalledWith(
+    'token',
+    job,
+    { cameras: [] },
+    expect.any(AbortSignal),
+  );
+  worker.stop();
 });

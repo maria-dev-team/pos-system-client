@@ -4,8 +4,18 @@ import type { CameraErrorCode } from './camera.types';
 
 const MAX_LINE = 16_384;
 
-export const classifyFfmpegError = (message: string): CameraErrorCode => {
+export const classifyFfmpegError = (
+  message: string,
+  isUsb = false,
+): CameraErrorCode => {
   message = message.replace(/rtsps?:\/\/[^\s<>]+/gi, '[RTSP URL]');
+  if (
+    isUsb &&
+    /could not find video device|video device not found|could not open video device|could not run graph|could not set video options|device or resource busy|no such file or directory|permission denied|not authorized|access denied|failed to create capture session/i.test(
+      message,
+    )
+  )
+    return 'camera_device_unavailable';
   if (
     /\b(?:401|403)\b|unauthorized|forbidden|authentication failed/i.test(
       message,
@@ -23,7 +33,7 @@ export const classifyFfmpegError = (message: string): CameraErrorCode => {
   )
     return 'camera_unreachable';
   if (
-    /unrecognized option|option .+ not found|error splitting the argument list/i.test(
+    /unknown encoder|unknown input format|unrecognized option|option .+ not found|error splitting the argument list/i.test(
       message,
     )
   )
@@ -56,6 +66,8 @@ export class FfmpegErrorParser {
   private droppingLine = false;
   private errorCode: CameraErrorCode = 'ffmpeg_exited';
 
+  constructor(private readonly isUsb = false) {}
+
   append(chunk: Buffer | string): void {
     const text = typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
     for (const part of text.split(/(?<=\n)/)) {
@@ -80,7 +92,7 @@ export class FfmpegErrorParser {
   }
 
   private classify(line: string): void {
-    const code = classifyFfmpegError(line);
+    const code = classifyFfmpegError(line, this.isUsb);
     if (code !== 'ffmpeg_exited') this.errorCode = code;
   }
 }
