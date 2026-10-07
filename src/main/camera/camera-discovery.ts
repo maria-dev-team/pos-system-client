@@ -6,6 +6,8 @@ import { networkInterfaces } from 'os';
 import { parseStringPromise, processors } from 'xml2js';
 
 export type DiscoveredCamera = {
+  type?: 'rtsp' | 'usb';
+  device_id?: string;
   name: string;
   host: string;
   rtsp_port?: number;
@@ -13,6 +15,7 @@ export type DiscoveredCamera = {
   status: 'ready' | 'credentials_required' | 'unavailable';
 };
 export type CameraDiscoveryJob = {
+  type?: 'rtsp' | 'usb';
   id: string;
   username: string;
   password: string;

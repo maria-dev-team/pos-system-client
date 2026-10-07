@@ -10,6 +10,7 @@ import type {
 } from './camera.types';
 import { FfmpegErrorParser } from './ffmpeg-error';
 import { buildRtspUrl } from './rtsp-url';
+import { usbEncodingArgs, usbInputArgs } from './usb-camera';
 
 const SEGMENT_SECONDS = 5;
 const BUFFER_SECONDS = 90;
@@ -269,24 +270,35 @@ export class RollingCameraBuffer {
     const currentRun = ++this.runId;
     this.startedAt = Date.now();
     const outputPattern = join(this.directory, 'segment-%Y%m%d-%H%M%S.ts');
-    const errors = new FfmpegErrorParser();
+    const isUsb = this.options.camera.type === 'usb';
+    const errors = new FfmpegErrorParser(isUsb);
+    let inputArgs: string[];
+    try {
+      inputArgs = isUsb
+        ? usbInputArgs(this.options.camera.device_id)
+        : [
+            '-rtsp_transport',
+            this.transport,
+            '-timeout',
+            '15000000',
+            '-fflags',
+            '+genpts',
+            '-i',
+            buildRtspUrl(this.options.camera),
+          ];
+    } catch {
+      this.handleExit(currentRun, 'camera_device_unavailable');
+      return;
+    }
     const args = [
       '-hide_banner',
       '-loglevel',
       'warning',
-      '-rtsp_transport',
-      this.transport,
-      '-timeout',
-      '15000000',
-      '-fflags',
-      '+genpts',
-      '-i',
-      buildRtspUrl(this.options.camera),
+      ...inputArgs,
       '-map',
       '0:v:0',
       '-an',
-      '-c:v',
-      'copy',
+      ...(isUsb ? usbEncodingArgs() : ['-c:v', 'copy']),
       '-f',
       'segment',
       '-segment_format',
@@ -320,6 +332,7 @@ export class RollingCameraBuffer {
     this.child = null;
     this.options.onStatus('error', errorCode);
     if (
+      this.options.camera.type !== 'usb' &&
       errorCode === 'camera_transport_unsupported' &&
       this.transport === 'tcp'
     ) {

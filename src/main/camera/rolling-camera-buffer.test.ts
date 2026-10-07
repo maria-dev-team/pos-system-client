@@ -11,6 +11,8 @@ vi.mock('child_process', () => ({ spawn: vi.fn() }));
 vi.mock('fs', () => ({
   promises: {
     mkdir: vi.fn(),
+    rm: vi.fn(),
+    copyFile: vi.fn(),
     readdir: vi.fn(),
     stat: vi.fn(),
     unlink: vi.fn(),
@@ -150,4 +152,110 @@ describe('RollingCameraBuffer failures', () => {
     expect(status).not.toHaveBeenCalled();
     expect(fs.writeFile).not.toHaveBeenCalled();
   });
+});
+
+it('records USB into the same segment buffer and retries after disconnect', async () => {
+  const device =
+    process.platform === 'win32'
+      ? 'dshow:@device_pnp_123'
+      : process.platform === 'darwin'
+        ? 'avfoundation:USB Camera'
+        : 'v4l2:/dev/v4l/by-id/usb-Test-video-index0';
+  buffer = new RollingCameraBuffer({
+    camera: {
+      id: 'usb',
+      type: 'usb',
+      device_id: device,
+      host: '',
+      rtsp_port: 554,
+      username: '',
+      password: '',
+      stream_path: '',
+    },
+    ffmpegPath: 'ffmpeg',
+    rootDirectory: '/buffer',
+    onStatus: status,
+  });
+  await buffer.start();
+  const args = vi.mocked(spawn).mock.calls[0][1] as string[];
+  expect(args).not.toContain('-rtsp_transport');
+  expect(args).not.toContain('copy');
+  expect(args).toContain('mpegts');
+  expect(args).toContain('expr:gte(t,n_forced*5)');
+  fail('Could not find video device with name USB Camera\n');
+  expect(status).toHaveBeenLastCalledWith('error', 'camera_device_unavailable');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(spawn).toHaveBeenCalledTimes(2);
+  vi.mocked(fs.readdir).mockResolvedValue(['segment.ts'] as never);
+  vi.mocked(fs.stat).mockResolvedValue({
+    mtimeMs: Date.now(),
+    size: 100,
+  } as never);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(status).toHaveBeenLastCalledWith('online');
+});
+
+it('includes buffered footage before the USB event and waits for the post-event window', async () => {
+  const now = Date.now();
+  buffer = new RollingCameraBuffer({
+    camera: {
+      id: 'usb',
+      type: 'usb',
+      device_id: 'dshow:@device_pnp_123',
+      host: '',
+      rtsp_port: 554,
+      username: '',
+      password: '',
+      stream_path: '',
+    },
+    ffmpegPath: 'ffmpeg',
+    rootDirectory: '/buffer',
+    onStatus: status,
+  });
+  vi.mocked(fs.readdir)
+    .mockResolvedValueOnce(['too-old.ts', 'before.ts', 'current.ts'] as never)
+    .mockResolvedValueOnce(['current.ts', 'after.ts'] as never);
+  vi.mocked(fs.stat).mockImplementation(
+    async (path) =>
+      ({
+        mtimeMs:
+          now +
+          (String(path).endsWith('too-old.ts')
+            ? -30_000
+            : String(path).endsWith('before.ts')
+              ? -10_000
+              : String(path).endsWith('after.ts')
+                ? 15_000
+                : 0),
+        size: 100,
+      }) as never,
+  );
+  const clip = buffer.createEventClip(
+    {
+      job: {
+        id: 'event',
+        camera_id: 'usb',
+        occurred_at: new Date(now).toISOString(),
+        pre_buffer_seconds: 15,
+        post_buffer_seconds: 15,
+        attempt: 1,
+      },
+      serverTime: new Date(now).toISOString(),
+      receivedAt: now,
+    },
+    '/clips',
+  );
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(spawn).not.toHaveBeenCalled();
+  expect(fs.copyFile).toHaveBeenCalledWith(
+    expect.stringContaining('before.ts'),
+    expect.stringContaining('pre-000.ts'),
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+  const list = vi.mocked(fs.writeFile).mock.calls[0][1] as string;
+  expect(list).toContain('pre-000.ts');
+  expect(list).toContain('after.ts');
+  expect(list).not.toContain('too-old.ts');
+  processes[0].emit('close', 0);
+  await expect(clip).resolves.toMatch(/event[\\/]event\.mp4$/);
 });

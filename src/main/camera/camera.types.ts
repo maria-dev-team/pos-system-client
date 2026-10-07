@@ -1,6 +1,7 @@
 export type CameraStatus = 'online' | 'offline' | 'error';
 
 export type CameraErrorCode =
+  | 'camera_device_unavailable'
   | 'ffmpeg_start_failed'
   | 'ffmpeg_exited'
   | 'camera_auth_failed'
@@ -15,6 +16,9 @@ export type CameraErrorCode =
 
 export type CameraConfig = {
   id: string;
+  type?: 'rtsp' | 'usb';
+  device_id?: string | null;
+  device_name?: string | null;
   host: string;
   rtsp_port: number;
   username: string;
