@@ -30,13 +30,13 @@ async function fixture(
   handler?: (path: string, body: Record<string, unknown>) => Promise<Response>,
   path = ':memory:',
   key = randomBytes(32),
+  profile = profileFixture(),
 ): Promise<{
   service: PosService;
   db: PosDatabase;
   fetcher: Mock<typeof fetch>;
 }> {
   const db = new PosDatabase(path, key);
-  const profile = profileFixture();
   profile.tokenHash = createHash('sha256').update('token').digest('hex');
   db.set(`profile:${profile.tokenHash}:${ids.register}`, profile);
   db.set(`adopted:${ids.session}`, true);
@@ -85,6 +85,193 @@ async function fixture(
 }
 
 describe('local POS application service', () => {
+  it('accumulates exact label weights into a durable offline receipt at the catalog price', async () => {
+    const { service, db, fetcher } = await fixture();
+    const scope = `${ids.organization}:${ids.store}`;
+    db.set(`scale-profile:${scope}`, {
+      format: 'ean13-weight-v1',
+      prefix: '20',
+      enabled: false,
+      blocked_reason: null,
+    });
+    await db.cacheProducts(
+      scope,
+      [
+        {
+          ...productFixture(),
+          unit: 'kg',
+          scale_plu: 1,
+          retail_price: '12.34',
+        },
+      ],
+      () => true,
+      'authoritative',
+    );
+    fetcher.mockClear();
+    const scan = {
+      type: 'execute' as const,
+      command: { type: 'scan' as const, barcode: '2000001001851' },
+    };
+    const first = (await service.handle(scan)) as SaleResponse;
+    expect(first).toMatchObject({
+      total: '2.28',
+      items: [{ quantity: '0.185', unit_code: 'kg', unit_price: '12.34' }],
+    });
+    const second = (await service.handle(scan)) as SaleResponse;
+    expect(second).toMatchObject({
+      id: first.id,
+      total: '4.57',
+      items: [{ quantity: '0.370' }],
+    });
+    expect(db.sale(ids.session, second.id)?.sale).toMatchObject({
+      total: '4.57',
+      items: [{ product_id: ids.product, quantity: '0.370' }],
+    });
+    expect(
+      fetcher.mock.calls.some(([url]) =>
+        String(url).includes('/catalog/lookup'),
+      ),
+    ).toBe(false);
+  });
+
+  it('resolves a weight label for price checking without creating a sale or requiring sale permissions', async () => {
+    const profile = profileFixture();
+    profile.context.isSystemPosition = false;
+    profile.context.permissions = ['product.read'];
+    const { service, db } = await fixture(
+      undefined,
+      ':memory:',
+      randomBytes(32),
+      profile,
+    );
+    const scope = `${ids.organization}:${ids.store}`;
+    db.set(`scale-profile:${scope}`, {
+      format: 'ean13-weight-v1',
+      prefix: '20',
+      enabled: true,
+      blocked_reason: null,
+    });
+    await db.cacheProducts(
+      scope,
+      [{ ...productFixture(), unit: 'kg', scale_plu: 1, retail_price: null }],
+      () => true,
+      'authoritative',
+    );
+    await expect(
+      service.handle({ type: 'resolveScan', barcode: '2000001001851' }),
+    ).resolves.toMatchObject({
+      product: { id: ids.product, retail_price: null },
+      quantity: '0.185',
+    });
+    expect(await service.handle({ type: 'current' })).toBeNull();
+    expect(db.sales(ids.session)).toHaveLength(0);
+    await expect(
+      service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: '2000001001851' },
+      }),
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_PERMISSIONS' });
+  });
+
+  it('synchronizes the encoded weight through the existing local draft contract', async () => {
+    const { service, db, fetcher } = await fixture(async (path, body) => {
+      if (path === '/v1/sales/local-draft')
+        return response({
+          sale: {
+            ...db.sale(ids.session, String(body.sale_id))!.sale,
+            version: Number(body.expected_version) + 1,
+          },
+        });
+      throw new TypeError('offline');
+    });
+    const scope = `${ids.organization}:${ids.store}`;
+    db.set(`scale-profile:${scope}`, {
+      format: 'ean13-weight-v1',
+      prefix: '20',
+      enabled: false,
+      blocked_reason: null,
+    });
+    await db.cacheProducts(
+      scope,
+      [{ ...productFixture(), unit: 'kg', scale_plu: 1 }],
+      () => true,
+      'authoritative',
+    );
+    const sale = (await service.handle({
+      type: 'execute',
+      command: { type: 'scan', barcode: '2000001001851' },
+    })) as SaleResponse;
+    await vi.waitFor(() =>
+      expect(db.sale(ids.session, sale.id)?.syncedRevision).toBe(1),
+    );
+    const drafts = fetcher.mock.calls.filter(([url]) =>
+      String(url).endsWith('/v1/sales/local-draft'),
+    );
+    expect(JSON.parse(String(drafts[0]![1]?.body)).items).toEqual([
+      { product_id: ids.product, quantity: '0.185' },
+    ]);
+  });
+
+  it.each([
+    ['2000001001852', 'kg', null, 'SCALE_BARCODE_INVALID'],
+    ['2000001001851', 'pcs', null, 'SCALE_BARCODE_INVALID'],
+    ['2000001001851', 'kg', 'barcode_conflict', 'SCALE_BARCODE_CONFLICT'],
+  ] as const)(
+    'rejects unsafe label %s / %s / %s without changing the cart',
+    async (barcode, unit, blocked, code) => {
+      const { service, db } = await fixture();
+      const scope = `${ids.organization}:${ids.store}`;
+      db.set(`scale-profile:${scope}`, {
+        format: 'ean13-weight-v1',
+        prefix: '20',
+        enabled: true,
+        blocked_reason: blocked,
+      });
+      await db.cacheProducts(
+        scope,
+        [{ ...productFixture(), unit, scale_plu: 1 }],
+        () => true,
+        'authoritative',
+      );
+      await expect(
+        service.handle({ type: 'execute', command: { type: 'scan', barcode } }),
+      ).rejects.toMatchObject({ code });
+      expect(await service.handle({ type: 'current' })).toBeNull();
+    },
+  );
+
+  it('rejects a cached static barcode that collides with the label even before the next profile refresh', async () => {
+    const { service, db } = await fixture();
+    const scope = `${ids.organization}:${ids.store}`;
+    db.set(`scale-profile:${scope}`, {
+      format: 'ean13-weight-v1',
+      prefix: '20',
+      enabled: true,
+      blocked_reason: null,
+    });
+    await db.cacheProducts(
+      scope,
+      [
+        { ...productFixture(), unit: 'kg', scale_plu: 1 },
+        {
+          ...productFixture(),
+          id: randomUUID(),
+          barcode: '2000001001851',
+          nkt: null,
+        },
+      ],
+      () => true,
+      'authoritative',
+    );
+    await expect(
+      service.handle({
+        type: 'execute',
+        command: { type: 'scan', barcode: '2000001001851' },
+      }),
+    ).rejects.toMatchObject({ code: 'SCALE_BARCODE_CONFLICT' });
+    expect(await service.handle({ type: 'current' })).toBeNull();
+  });
+
   it('requires synchronization before cash movements but permits an already synchronized draft', async () => {
     const { service, db } = await fixture(async (path, body) => {
       if (path === '/v1/sales/local-draft')

@@ -23,6 +23,7 @@ import {
   searchProducts,
   setSaleItemQuantity,
 } from '@renderer/common/api';
+import { request } from '@renderer/common/api/request';
 import { queryKeys } from '@renderer/common/constants';
 import { useProductSearchQuery } from '@renderer/features/products';
 
@@ -783,4 +784,41 @@ describe('sale command mutation', () => {
       queryClient.getQueryData(queryKeys.sales.current(cashierSessionId)),
     ).toEqual(sale1);
   });
+});
+
+it('sends the grams encoded in a weighted label to the server scan endpoint', async () => {
+  const queryClient = createTestQueryClient();
+  const sale = saleFixture(1);
+  queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), sale);
+  vi.mocked(scanSaleItem).mockResolvedValue(saleFixture(2));
+  const get = vi.spyOn(request, 'get').mockResolvedValue({
+    data: {
+      data: {
+        scale_profile: {
+          format: 'ean13-weight-v1',
+          prefix: '20',
+          enabled: true,
+          blocked_reason: null,
+        },
+      },
+    },
+  });
+  try {
+    const { result } = renderHook(
+      () => useSaleCommandMutation(cashierSessionId, sale),
+      {
+        wrapper: wrapperFor(queryClient),
+      },
+    );
+    await act(() =>
+      result.current.mutateAsync({ type: 'scan', barcode: '2000001001851' }),
+    );
+    expect(scanSaleItem).toHaveBeenCalledWith(sale.id, {
+      barcode: '2000001001851',
+      expectedVersion: 1,
+      quantityDelta: '0.185',
+    });
+  } finally {
+    get.mockRestore();
+  }
 });

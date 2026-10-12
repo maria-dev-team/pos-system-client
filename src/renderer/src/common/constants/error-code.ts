@@ -64,6 +64,8 @@ export const ErrorCode = {
   PaymentAmountInvalid: 'PAYMENT_AMOUNT_INVALID',
   PaymentAmountMismatch: 'PAYMENT_AMOUNT_MISMATCH',
   PaymentDetailsInvalid: 'PAYMENT_DETAILS_INVALID',
+  ScaleBarcodeInvalid: 'SCALE_BARCODE_INVALID',
+  ScaleBarcodeConflict: 'SCALE_BARCODE_CONFLICT',
   ProductNotFound: 'PRODUCT_NOT_FOUND',
   ProductNotSellable: 'PRODUCT_NOT_SELLABLE',
   ProductMarkingCodeDuplicate: 'PRODUCT_MARKING_CODE_DUPLICATE',

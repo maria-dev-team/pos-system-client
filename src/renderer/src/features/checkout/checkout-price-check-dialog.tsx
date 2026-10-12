@@ -1,5 +1,6 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircle, ScanLine } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ProductResponse } from '@renderer/common/api';
 import { Button } from '@renderer/common/components/ui/button';
@@ -14,8 +15,10 @@ import { Input } from '@renderer/common/components/ui/input';
 import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
+import { resolveProductScan } from '@renderer/common/lib/resolve-product-scan';
 import { useProductSearchQuery } from '@renderer/features/products';
 
+import { PosError } from '../../../../shared/pos/contracts';
 import { parseGs1DataMatrix } from '../../../../shared/pos/gs1-data-matrix';
 import {
   assertProductSellable,
@@ -27,7 +30,11 @@ const unitLabels = { kg: 'кг', l: 'л', m: 'м', pcs: 'шт.' } as const;
 
 type Props = {
   canAdd: boolean;
-  onAdd: (product: ProductResponse, markingCode?: string) => Promise<unknown>;
+  onAdd: (
+    product: ProductResponse,
+    markingCode?: string,
+    quantity?: string,
+  ) => Promise<unknown>;
   onClose: () => void;
   organizationId: string;
   storeId: string;
@@ -41,6 +48,15 @@ export function CheckoutPriceCheckDialog({
   organizationId,
   storeId,
 }: Props) {
+  const queryClient = useQueryClient();
+  const lifecycle = useRef({ version: 0 });
+  useEffect(() => {
+    const context = lifecycle.current;
+    context.version++;
+    return () => {
+      context.version++;
+    };
+  }, [organizationId, storeId]);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [adding, setAdding] = useState<string | null>(null);
@@ -48,7 +64,31 @@ export function CheckoutPriceCheckDialog({
   const [error, setError] = useState<string | null>(null);
   const dataMatrix = parseGs1DataMatrix(search.trim());
   const term = dataMatrix?.gtin ?? search.trim();
-  const products = useProductSearchQuery(term, true, organizationId, storeId);
+  const isBarcode = /^\d{13}$/.test(term);
+  const searchProducts = useProductSearchQuery(
+    term,
+    !isBarcode,
+    organizationId,
+    storeId,
+  );
+  const scan = useQuery({
+    queryKey: ['products', 'price-check-scan', organizationId, storeId, term],
+    enabled: isBarcode,
+    queryFn: () => resolveProductScan(term, organizationId, queryClient),
+    retry: false,
+  });
+  const products = isBarcode
+    ? {
+        ...scan,
+        data:
+          scan.data && !scan.isFetching
+            ? {
+                products: [scan.data.product],
+                meta: { total: 1, limit: 1, offset: 0, has_more: false },
+              }
+            : undefined,
+      }
+    : searchProducts;
   const wrongOrganization = products.data?.products.some(
     (product) => product.organization_id !== organizationId,
   );
@@ -67,18 +107,35 @@ export function CheckoutPriceCheckDialog({
 
   const add = async (product: ProductResponse, markingCode?: string) => {
     if (!canAdd || addingRef.current || wrongOrganization) return;
+    const epoch = lifecycle.current.version;
     addingRef.current = true;
     setAdding(product.id);
     setError(null);
     try {
-      assertProductSellable(product, markingCode);
-      await onAdd(product, markingCode);
-      onClose();
+      const resolved = isBarcode
+        ? await resolveProductScan(term, organizationId, queryClient)
+        : null;
+      if (epoch !== lifecycle.current.version) return;
+      if (resolved && resolved.product.id !== product.id)
+        throw new PosError(
+          'LOCAL_CONTEXT_CHANGED',
+          'Товар по штрихкоду изменился. Повторите проверку цены.',
+        );
+      const currentProduct = resolved?.product ?? product;
+      const currentMarkingCode = resolved?.markingCode ?? markingCode;
+      assertProductSellable(currentProduct, currentMarkingCode);
+      await onAdd(currentProduct, currentMarkingCode, resolved?.quantity);
+      if (epoch === lifecycle.current.version) onClose();
     } catch (error) {
-      setError(getHttpErrorMessage(error, 'Не удалось добавить товар в чек.'));
+      if (epoch === lifecycle.current.version)
+        setError(
+          getHttpErrorMessage(error, 'Не удалось добавить товар в чек.'),
+        );
     } finally {
-      addingRef.current = false;
-      setAdding(null);
+      if (epoch === lifecycle.current.version) {
+        addingRef.current = false;
+        setAdding(null);
+      }
     }
   };
 
@@ -183,9 +240,10 @@ export function CheckoutPriceCheckDialog({
             <>
               {results.products.map((product) => {
                 const markingCode =
-                  dataMatrix && productMatchesBarcode(product, dataMatrix.gtin)
+                  scan.data?.markingCode ??
+                  (dataMatrix && productMatchesBarcode(product, dataMatrix.gtin)
                     ? dataMatrix.markingCode
-                    : undefined;
+                    : undefined);
                 let unavailable: string | null = null;
                 try {
                   assertProductSellable(product, markingCode);

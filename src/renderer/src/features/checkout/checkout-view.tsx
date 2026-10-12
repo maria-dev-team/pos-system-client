@@ -1453,11 +1453,12 @@ function ActiveCheckout({
             setPriceCheckOpen(false);
             refocus();
           }}
-          onAdd={(product, markingCode) =>
+          onAdd={(product, markingCode, quantity) =>
             command.mutateAsync({
               type: 'add',
               productId: product.id,
               ...(markingCode ? { markingCode } : {}),
+              ...(quantity ? { quantity } : {}),
             })
           }
           organizationId={cashierSession.organization_id}
