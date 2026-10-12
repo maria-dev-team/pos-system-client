@@ -113,6 +113,7 @@ function HeldSaleCard({
                 Не удалось загрузить товары чека.
               </p>
               <Button
+                data-error-retry="true"
                 className="min-h-10"
                 onClick={() => void details.refetch()}
                 type="button"
@@ -213,6 +214,7 @@ export function CheckoutHeldSalesDialog({
               Не удалось загрузить отложенные чеки.
             </p>
             <Button
+              data-error-retry="true"
               className="min-h-12"
               onClick={onRetry}
               type="button"

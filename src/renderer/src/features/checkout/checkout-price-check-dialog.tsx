@@ -157,6 +157,7 @@ export function CheckoutPriceCheckDialog({
                     )}
               </p>
               <Button
+                data-error-retry="true"
                 type="button"
                 variant="ghost"
                 onClick={() => void products.refetch()}

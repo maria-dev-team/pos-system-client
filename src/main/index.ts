@@ -1,18 +1,32 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { BrowserWindow, app, net, protocol } from 'electron';
+import { mkdirSync } from 'node:fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 
 import icon from '../../resources/icon.png?asset';
 import { apiConfig } from '../shared/api/config';
+import { reportError } from '../shared/diagnostics';
+import { resolveApiUserDataPath } from './api-user-data';
 import { registerAppUpdater } from './app-updater';
 import { registerCameraIpc } from './camera';
+import { registerDiagnostics } from './diagnostics';
 import { registerPosIpc } from './pos/pos-ipc';
 import { registerReceiptPrinterIpc } from './receipt-printer';
 import { resolveRendererFilePath } from './renderer-protocol';
 import { registerWindowControlsIpc } from './window-controls';
 
 const { apiUrl } = apiConfig;
+
+// Configure both SQLite and Chromium storage before creating any sessions or
+// acquiring the instance lock. A local API must never inherit production data.
+const userData = app.getPath('userData');
+const apiUserData = resolveApiUserDataPath(userData, apiUrl);
+if (apiUserData !== userData) {
+  mkdirSync(apiUserData, { recursive: true, mode: 0o700 });
+  app.setPath('userData', apiUserData);
+  app.setPath('sessionData', apiUserData);
+}
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -37,6 +51,10 @@ function registerRendererProtocol(): void {
   });
 }
 
+process.on('uncaughtExceptionMonitor', (error) =>
+  reportError(error, 'main', 'uncaught'),
+);
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -56,6 +74,7 @@ function createWindow(): void {
     },
   });
 
+  registerDiagnostics(mainWindow);
   registerCameraIpc(mainWindow, apiUrl);
   registerReceiptPrinterIpc(mainWindow);
   registerAppUpdater(mainWindow);

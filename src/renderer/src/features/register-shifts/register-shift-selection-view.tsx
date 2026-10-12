@@ -354,6 +354,7 @@ export function RegisterShiftSelectionView() {
 
                   {shiftQuery?.isError ? (
                     <Button
+                      data-error-retry="true"
                       className="min-h-12 w-full border-border bg-background"
                       onClick={() => void shiftQuery.refetch()}
                       type="button"

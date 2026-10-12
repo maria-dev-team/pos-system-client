@@ -1,3 +1,4 @@
+import { reportError } from '../../shared/diagnostics';
 import type { CameraApiClient } from './camera-api.client';
 import { discoverCameras } from './camera-discovery';
 import type { CameraAuthContext } from './camera.types';
@@ -53,7 +54,8 @@ export class CameraDiscoveryWorker {
                 ? await discoverUsbCameras(resolveFfmpegPath(), signal)
                 : await discoverCameras(job, signal),
           };
-        } catch {
+        } catch (error) {
+          if (!signal.aborted) reportError(error, 'camera', 'discovery');
           result = {
             cameras: [],
             error:
@@ -70,7 +72,8 @@ export class CameraDiscoveryWorker {
             signal,
           );
       }
-    } catch {
+    } catch (error) {
+      if (!signal.aborted) reportError(error, 'camera', 'discovery');
       // Search never blocks sales, recording, or offline operation.
       delay = 30_000;
     } finally {

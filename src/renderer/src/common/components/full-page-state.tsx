@@ -31,7 +31,12 @@ export function FullPageState({
           <p className="mt-2 text-sm text-muted-foreground">{description}</p>
         ) : null}
         {onRetry ? (
-          <Button className="mt-6" onClick={onRetry} type="button">
+          <Button
+            data-error-retry={retryLabel === 'Повторить' ? 'true' : undefined}
+            className="mt-6"
+            onClick={onRetry}
+            type="button"
+          >
             {retryLabel}
           </Button>
         ) : null}

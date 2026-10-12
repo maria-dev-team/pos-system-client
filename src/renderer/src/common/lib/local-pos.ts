@@ -1,5 +1,9 @@
 import type { QueryClient } from '@tanstack/react-query';
 
+import {
+  ignoreReportedError,
+  reportError,
+} from '../../../../shared/diagnostics';
 import type {
   PosProfile,
   PosRequest,
@@ -59,11 +63,29 @@ const needsTokenRefresh = (error: unknown): boolean =>
 export async function callLocalPos<T extends PosResult = PosResult>(
   request: PosRequest,
 ): Promise<T> {
-  if (!window.localPos)
-    throw new PosError('LOCAL_UNAVAILABLE', 'Локальное хранилище недоступно.');
-  const reply = await window.localPos.request(request);
-  if (!reply.ok) throw new PosError(reply.code, reply.message);
-  return reply.value as T;
+  try {
+    if (!window.localPos)
+      throw new PosError(
+        'LOCAL_UNAVAILABLE',
+        'Локальное хранилище недоступно.',
+      );
+    const reply = await window.localPos.request(request);
+    if (!reply.ok) {
+      const error = new PosError(reply.code, reply.message);
+      // The main process already records failed IPC replies, including background failures.
+      if (reply.reported) ignoreReportedError(error);
+      throw error;
+    }
+    return reply.value as T;
+  } catch (error) {
+    reportError(
+      error,
+      'local',
+      request.type,
+      'saleId' in request ? request.saleId : undefined,
+    );
+    throw error;
+  }
 }
 export const localPosActive = () => Boolean(window.localPos && profile);
 export const localPosProfile = () => profile;

@@ -77,6 +77,7 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
           ) : null}
         </div>
         <Button
+          data-error-retry={!state.authorizationRequired ? 'true' : undefined}
           variant="ghost"
           type="button"
           disabled={busy.includes('refresh')}
@@ -131,6 +132,7 @@ export function LocalPosStatus({ sessionId }: { sessionId: string }) {
                 ) : null}
                 {item.code && item.retryable ? (
                   <Button
+                    data-error-retry="true"
                     type="button"
                     variant="ghost"
                     disabled={busy.includes(item.saleId)}

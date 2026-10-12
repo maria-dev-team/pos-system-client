@@ -1,6 +1,7 @@
-import { MutationCache, QueryClient } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 
+import { reportError } from '../../../../shared/diagnostics';
 import { assertAuthCurrent, captureAuth, contextChanged } from '../api/request';
 import { effectiveAuthContext } from '../helpers/access-token';
 
@@ -32,7 +33,11 @@ export const createQueryClient = (): QueryClient => {
   };
   const owners = new WeakMap<object, Execution>();
   return new QueryClient({
+    queryCache: new QueryCache({
+      onError: (error) => reportError(error, 'renderer', 'query'),
+    }),
     mutationCache: new MutationCache({
+      onError: (error) => reportError(error, 'renderer', 'mutation'),
       onMutate: (_variables, mutation) => {
         const existing = owners.get(mutation);
         if (existing) {

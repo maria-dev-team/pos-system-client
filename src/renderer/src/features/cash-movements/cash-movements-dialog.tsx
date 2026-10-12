@@ -145,6 +145,7 @@ export function CashMovementsDialog({
               </p>
             ) : null}
             <Button
+              data-error-retry={flow.pending ? 'true' : undefined}
               className="w-full"
               disabled={flow.busy || flow.blocked}
               type="submit"

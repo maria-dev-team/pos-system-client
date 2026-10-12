@@ -51,6 +51,8 @@ import { SalesHistoryView } from '@renderer/features/sales-history';
 import { StatusBar } from '@renderer/features/status-bar';
 import { currentUserQueryOptions } from '@renderer/features/user';
 
+import { reportPosError } from '../analytics/error-reporting';
+
 type RouterContext = {
   queryClient: QueryClient;
 };
@@ -130,6 +132,7 @@ function RootLayout() {
 }
 
 function RouteError({ error }: { error: Error }) {
+  useEffect(() => reportPosError(error, 'renderer', 'route'), [error]);
   const router = useRouter();
   return (
     <FullPageState

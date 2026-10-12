@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { CategoryResponse } from '../../shared/api/responses/category.response';
+import { reportError, retryDiagnostics } from '../../shared/diagnostics';
 import type {
   ArchivedLocalSale,
   LocalSale,
@@ -110,35 +111,43 @@ export class PosService {
     private readonly apiUrl: string,
     private readonly changed: () => void,
     private readonly fetcher: typeof fetch = fetch,
+    private readonly diagnosticsScope: (task: () => void) => void = (task) =>
+      task(),
   ) {
     this.catalog = new PosCatalog(
       db,
       (path, timeout) => this.api(path, undefined, timeout),
       changed,
     );
-    this.timer = setInterval(() => {
-      if (Date.now() - this.lastMaintenanceAt > 60_000) {
-        this.lastMaintenanceAt = Date.now();
-        try {
-          this.db.pruneHistory();
-        } catch {
-          this.lastError =
-            'Не удалось обслужить локальную историю. Проверьте свободное место на диске.';
-          this.changed();
-        }
-      }
-      if (this.profile && this.initialized) {
-        void this.synchronize();
-        void this.refreshCatalog();
-        void this.refreshCategories();
-        void this.verifyAuthorization().catch(() => {
-          this.lastError =
-            'Ошибка локального хранилища при проверке доступа. Не удаляйте данные кассы.';
-          this.changed();
-        });
-        void this.checkPendingPayments();
-      }
-    }, 15_000);
+    this.timer = setInterval(
+      () =>
+        this.diagnosticsScope(() => {
+          if (Date.now() - this.lastMaintenanceAt > 60_000) {
+            this.lastMaintenanceAt = Date.now();
+            try {
+              this.db.pruneHistory();
+            } catch (error) {
+              reportError(error, 'worker', 'maintenance');
+              this.lastError =
+                'Не удалось обслужить локальную историю. Проверьте свободное место на диске.';
+              this.changed();
+            }
+          }
+          if (this.profile && this.initialized) {
+            void this.synchronize();
+            void this.refreshCatalog();
+            void this.refreshCategories();
+            void this.verifyAuthorization().catch((error) => {
+              reportError(error, 'worker', 'authorization');
+              this.lastError =
+                'Ошибка локального хранилища при проверке доступа. Не удаляйте данные кассы.';
+              this.changed();
+            });
+            void this.checkPendingPayments();
+          }
+        }),
+      15_000,
+    );
     this.timer.unref();
   }
   private get scope(): string {
@@ -326,6 +335,7 @@ export class PosService {
         this.online = true;
       }
     } catch (error) {
+      reportError(error, 'worker', 'connect');
       this.assertEpoch(epoch);
       // A server rejection is never treated as an offline authorization grant.
       if (
@@ -451,7 +461,8 @@ export class PosService {
     void this.refreshCatalog(true);
     void this.refreshCategories();
     void this.synchronize();
-    void this.verifyAuthorization().catch(() => {
+    void this.verifyAuthorization().catch((error) => {
+      reportError(error, 'worker', 'authorization');
       this.lastError =
         'Ошибка локального хранилища при проверке доступа. Не удаляйте данные кассы.';
       this.changed();
@@ -525,6 +536,7 @@ export class PosService {
         );
         this.online = true;
       } catch (error) {
+        reportError(error, 'worker', 'verifyAuthorization');
         if (epoch !== this.epoch) return;
         if (
           (error instanceof ApiError && error.status === 403) ||
@@ -589,6 +601,7 @@ export class PosService {
           );
         for (const sale of sales) this.adopt(sale);
       } catch (error) {
+        reportError(error, 'worker', 'restoreDeferredPayments');
         if (
           epoch === this.epoch &&
           error instanceof ApiError &&
@@ -702,6 +715,7 @@ export class PosService {
           this.active();
           await this.reconcilePayment(record.sale.id, recover);
         } catch (error) {
+          reportError(error, 'worker', 'reconcilePayment', record.sale.id);
           if (epoch !== this.epoch) return;
           this.lastError =
             error instanceof PosError
@@ -731,7 +745,8 @@ export class PosService {
     try {
       requirePermission(this.active(), 'product.read');
       await this.catalog.refresh(force);
-    } catch {
+    } catch (error) {
+      reportError(error, 'worker', 'refreshCatalog');
       /* Expired access must not initiate background reads. */
     }
   }
@@ -740,7 +755,8 @@ export class PosService {
     const epoch = this.epoch;
     // Optional background work must not terminate the worker if even recording
     // its retry marker fails (disk full, I/O failure, corrupted metadata).
-    return this.updateCategories().catch(() => {
+    return this.updateCategories().catch((error) => {
+      reportError(error, 'worker', 'categories');
       if (epoch !== this.epoch) return;
       this.lastError =
         'Не удалось обновить категории. Проверьте локальное хранилище; сохранённые товары доступны.';
@@ -754,7 +770,8 @@ export class PosService {
     let scope: string;
     try {
       scope = this.scope;
-    } catch {
+    } catch (error) {
+      reportError(error, 'worker', 'updateCategories');
       return;
     }
     const updated = this.db.get<number>(`categories-updated:${scope}`) ?? 0;
@@ -828,7 +845,8 @@ export class PosService {
           this.db.set(`categories-applied:${scope}`, dirty);
           this.db.set(`categories-version:${scope}`, randomUUID());
         }
-      } catch {
+      } catch (error) {
+        reportError(error, 'worker', 'updateCategories');
         // Categories are optional for barcode checkout. Retry slowly on failure.
         if (epoch === this.epoch)
           this.db.set(`categories-retry:${scope}`, Date.now() + 60_000);
@@ -1171,6 +1189,7 @@ export class PosService {
           }
         }
       } catch (error) {
+        reportError(error, 'worker', 'synchronize');
         if (epoch === this.epoch) {
           this.online = !networkError(error);
           this.lastError =
@@ -1290,6 +1309,7 @@ export class PosService {
   }
 
   private outboxFailed(id: string, stage: SyncStage, error: unknown): boolean {
+    reportError(error, 'worker', `sync/${stage}`, id);
     const latest = this.record(id);
     const failure = syncFailure(error, latest.syncFailures?.[stage]);
     this.save({
@@ -1507,6 +1527,7 @@ export class PosService {
           'Сервер уточнил цены или налоги. Проверьте обновлённый чек и подтвердите оплату ещё раз.',
         );
     } catch (error) {
+      reportError(error, 'worker', 'checkout', request.saleId);
       this.assertEpoch(preparationEpoch);
       this.save({ ...this.record(request.saleId), payment: null });
       throw error;
@@ -1533,6 +1554,7 @@ export class PosService {
       });
       return sale;
     } catch (error) {
+      reportError(error, 'worker', 'checkout', request.saleId);
       this.sending.delete(record.sale.id);
       this.assertEpoch(epoch);
       // HTTP status alone cannot prove whether the provider accepted a fiscal request.
@@ -1540,7 +1562,8 @@ export class PosService {
       try {
         const sale = await this.reconcilePayment(record.sale.id);
         if (sale) return sale;
-      } catch {
+      } catch (error) {
+        reportError(error, 'worker', 'checkout', request.saleId);
         /* Keep the durable payment intent. */
       }
       if (!this.record(record.sale.id).payment) throw error;
@@ -1660,6 +1683,7 @@ export class PosService {
         assertSaleAcknowledgement(response.sale, record);
         remote = response.sale;
       } catch (error) {
+        reportError(error, 'worker', 'archiveCancelledSale', id);
         // A timeout or generic proxy 404 is not evidence that the sale is absent.
         if (!(
           error instanceof ApiError &&
@@ -1999,6 +2023,7 @@ export class PosService {
         };
       }
       case 'retry':
+        retryDiagnostics({ source: 'worker' });
         await this.checkPendingPayments(true);
         // Safe replay uses the SAME command id and payload, including after a crash.
         for (const record of this.records.values())
@@ -2028,6 +2053,7 @@ export class PosService {
             .join(', ')}.`;
         return this.status();
       case 'retrySale': {
+        retryDiagnostics({ source: 'worker', operation_id: request.saleId });
         this.active();
         if (this.archiving.has(request.saleId))
           throw new PosError(
@@ -2118,6 +2144,7 @@ export class PosService {
     try {
       remote = (await this.api<{ sale: SaleResponse }>(`/v1/sales/${id}`)).sale;
     } catch (error) {
+      reportError(error, 'worker', 'conflict');
       if (!(error instanceof ApiError) || error.status !== 404) throw error;
       remote = (
         await this.api<{ sale: SaleResponse | null }>('/v1/sales/current')

@@ -14,6 +14,8 @@ import {
 import { PosDatabase } from './pos-database';
 import { PosService } from './pos-service';
 
+type ReviewEndpoint = 'checkout-state' | 'reconcile';
+
 const services: PosService[] = [];
 const directories: string[] = [];
 afterEach(() => {
@@ -39,7 +41,7 @@ async function fixture(): Promise<{
     unauthorized: boolean;
     safe: boolean;
     paid: Set<string>;
-    failReview: Set<string>;
+    failReview: Map<string, ReviewEndpoint>;
   };
 }> {
   const directory = mkdtempSync(join(tmpdir(), 'pos-recovery-test-'));
@@ -59,7 +61,7 @@ async function fixture(): Promise<{
     unauthorized: false,
     safe: false,
     paid: new Set<string>(),
-    failReview: new Set<string>(),
+    failReview: new Map<string, ReviewEndpoint>(),
   };
   const remote = new Map<string, SaleResponse>();
   const calls: string[] = [];
@@ -144,7 +146,8 @@ async function fixture(): Promise<{
       path.endsWith('/reconcile') ||
       path.endsWith('/checkout')
     ) {
-      if (mode.failReview.has(id)) throw new TypeError('review failed');
+      if (mode.failReview.get(id) === path.split('/').at(-1))
+        throw new TypeError('review failed');
       if (mode.paid.has(id)) {
         sale = {
           ...sale,
@@ -334,28 +337,45 @@ describe('non-blocking checkout recovery', () => {
     });
   });
 
-  it('continues reviewing other receipts when one reconciliation endpoint fails', async () => {
-    const { service, mode, calls } = await fixture();
-    const first = await scan(service);
-    await expect(pay(service, first)).rejects.toMatchObject({
-      code: 'PAYMENT_UNCERTAIN',
-    });
-    await service.handle({ type: 'deferPayment', saleId: first.id });
-    const second = await scan(service);
-    await expect(pay(service, second)).rejects.toMatchObject({
-      code: 'PAYMENT_UNCERTAIN',
-    });
-    await service.handle({ type: 'deferPayment', saleId: second.id });
-    const third = await scan(service);
-    mode.failReview.add(first.id);
-    mode.paid.add(second.id);
-    await service.handle({ type: 'retry' });
-    expect(
-      await service.handle({ type: 'sale', saleId: second.id }),
-    ).toMatchObject({ status: 'COMPLETED' });
-    expect(await service.handle({ type: 'current' })).toMatchObject({
-      id: third.id,
-    });
-    expect(calls).toEqual([first.id, second.id]);
-  });
+  // Three receipts use real SQLite FULL durability; Windows CI disk flushes
+  // can exceed Vitest's default 5 seconds even with immediate mocked HTTP.
+  it.each(['checkout-state', 'reconcile'] as const)(
+    'continues reviewing other receipts when one %s endpoint fails',
+    async (endpoint) => {
+      const { service, mode, calls, fetcher } = await fixture();
+      const first = await scan(service);
+      await expect(pay(service, first)).rejects.toMatchObject({
+        code: 'PAYMENT_UNCERTAIN',
+      });
+      await service.handle({ type: 'deferPayment', saleId: first.id });
+      const second = await scan(service);
+      await expect(pay(service, second)).rejects.toMatchObject({
+        code: 'PAYMENT_UNCERTAIN',
+      });
+      await service.handle({ type: 'deferPayment', saleId: second.id });
+      const third = await scan(service);
+      mode.failReview.set(first.id, endpoint);
+      mode.paid.add(second.id);
+      await service.handle({ type: 'retry' });
+      expect(fetcher).toHaveBeenCalledWith(
+        `https://api.test/v1/sales/${first.id}/${endpoint}`,
+        expect.objectContaining({
+          method: endpoint === 'reconcile' ? 'POST' : 'GET',
+        }),
+      );
+      expect(
+        await service.handle({ type: 'sale', saleId: second.id }),
+      ).toMatchObject({ status: 'COMPLETED' });
+      expect(await service.handle({ type: 'current' })).toMatchObject({
+        id: third.id,
+      });
+      expect(await service.handle({ type: 'status' })).toMatchObject({
+        paymentReviews: [
+          { saleId: first.id, deferred: true, canResume: false },
+        ],
+      });
+      expect(calls).toEqual([first.id, second.id]);
+    },
+    15_000,
+  );
 });
