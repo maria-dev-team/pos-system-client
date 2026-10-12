@@ -15,12 +15,14 @@ import {
   scanSaleItem,
   setSaleItemQuantity,
 } from '@renderer/common/api';
+import { assertAuthCurrent, captureAuth } from '@renderer/common/api/request';
 import { ErrorCode, queryKeys } from '@renderer/common/constants';
 import { getHttpErrorCode } from '@renderer/common/helpers/http-error.helper';
 import {
   executeLocalSale,
   localPosActive,
 } from '@renderer/common/lib/local-pos';
+import { browserWeightedBarcode } from '@renderer/common/lib/resolve-product-scan';
 
 import type { SaleCommand } from '../../../../shared/pos/contracts';
 
@@ -117,12 +119,25 @@ export function useSaleCommandMutation(
 
       const expectedVersion = currentSale.version;
       switch (command.type) {
-        case 'scan':
+        case 'scan': {
+          const auth = captureAuth();
+          const weighted = await browserWeightedBarcode(
+            command.barcode,
+            queryClient,
+          );
+          assertAuthCurrent(auth);
+          if (
+            localPosActive() ||
+            queryClient.getQueryData<SaleResponse | null>(saleKey)?.id !==
+              currentSale.id
+          )
+            throw new Error('Current sale is no longer active');
           return scanSaleItem(currentSale.id, {
             barcode: command.barcode,
             expectedVersion,
-            quantityDelta: '1',
+            quantityDelta: weighted?.quantity ?? '1',
           });
+        }
         case 'add':
           return addSaleItem(currentSale.id, {
             expectedVersion,

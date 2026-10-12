@@ -106,6 +106,10 @@ const messages: Record<ErrorCodeValue, string> = {
   [ErrorCode.PaymentAmountMismatch]:
     'Сумма оплат должна совпадать с суммой продажи.',
   [ErrorCode.PaymentDetailsInvalid]: 'Указаны некорректные данные оплаты.',
+  [ErrorCode.ScaleBarcodeInvalid]:
+    'Некорректная весовая этикетка. Повторите сканирование.',
+  [ErrorCode.ScaleBarcodeConflict]:
+    'Префикс весовых этикеток совпадает со штрихкодом товара. Обратитесь к администратору.',
   [ErrorCode.ProductNotFound]: 'Товар не найден.',
   [ErrorCode.ProductNotSellable]: 'Этот товар нельзя продавать.',
   [ErrorCode.ProductMarkingCodeDuplicate]:

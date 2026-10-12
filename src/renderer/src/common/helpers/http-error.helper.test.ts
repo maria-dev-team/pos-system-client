@@ -75,6 +75,14 @@ describe('getHttpErrorMessage', () => {
     ],
     ['SALE_ITEM_NOT_FOUND', 'Позиция продажи не найдена.'],
     ['PRODUCT_NOT_FOUND', 'Товар не найден.'],
+    [
+      'SCALE_BARCODE_INVALID',
+      'Некорректная весовая этикетка. Повторите сканирование.',
+    ],
+    [
+      'SCALE_BARCODE_CONFLICT',
+      'Префикс весовых этикеток совпадает со штрихкодом товара. Обратитесь к администратору.',
+    ],
     ['PRODUCT_NOT_SELLABLE', 'Этот товар нельзя продавать.'],
     ['PRODUCT_SALE_PRICE_REQUIRED', 'Для товара не указана цена продажи.'],
     ['INVALID_PRODUCT_QUANTITY', 'Указано некорректное количество товара.'],

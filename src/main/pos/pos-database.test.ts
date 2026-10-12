@@ -457,3 +457,131 @@ describe('additional barcode catalog', () => {
     expect(restarted.barcode('store', '000456')?.id).toBe(legacyProduct.id);
   });
 });
+
+describe('scale PLU catalog', () => {
+  it.each(['replace', 'cache'] as const)(
+    'indexes PLUs per store through %s and retains scale names offline',
+    async (mode) => {
+      const db = open();
+      const product = {
+        ...productFixture(),
+        scale_plu: 1,
+        scale_name: 'Яблоки',
+      };
+      if (mode === 'replace') await db.replaceCatalog('store', [product]);
+      else await db.cacheProducts('store', [product]);
+      expect(db.scalePlu('store', 1)).toEqual(product);
+      expect(db.scalePlu('other-store', 1)).toBeUndefined();
+    },
+  );
+
+  it('removes a PLU index entry when it changes, clears or its product is deleted', async () => {
+    const db = open();
+    const product = { ...productFixture(), scale_plu: 1, scale_name: null };
+    await db.cacheProducts('store', [product]);
+    await db.cacheProducts(
+      'store',
+      [{ ...product, scale_plu: 2 }],
+      () => true,
+      'authoritative',
+    );
+    expect(db.scalePlu('store', 1)).toBeUndefined();
+    expect(db.scalePlu('store', 2)?.id).toBe(product.id);
+    await db.cacheProducts(
+      'store',
+      [{ ...product, scale_plu: null }],
+      () => true,
+      'authoritative',
+    );
+    expect(db.scalePlu('store', 2)).toBeUndefined();
+    await db.cacheProducts('store', [product], () => true, 'authoritative');
+    await db.deleteProducts('store', [product.id], () => true);
+    expect(db.scalePlu('store', 1)).toBeUndefined();
+  });
+
+  it('rejects duplicate PLUs instead of selecting an arbitrary product', async () => {
+    const db = open();
+    const product = { ...productFixture(), scale_plu: 1 };
+    await db.cacheProducts('store', [product, { ...product, id: 'other' }]);
+    expect(() => db.scalePlu('store', 1)).toThrow('нескольким товарам');
+  });
+
+  it('checks the PLU index against the encrypted product', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-plu-integrity-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const db = open(path);
+    await db.cacheProducts('store', [{ ...productFixture(), scale_plu: 1 }]);
+    const connection = new DatabaseSync(path);
+    try {
+      connection.exec('UPDATE products SET scale_plu=2');
+    } finally {
+      connection.close();
+    }
+    expect(() => db.scalePlu('store', 2)).toThrow(
+      'Catalog index integrity failure',
+    );
+  });
+
+  it('restarts the catalog once after upgrading while preserving offline products and receipts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-plu-upgrade-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const key = randomBytes(32);
+    const initial = new PosDatabase(path, key);
+    const product = productFixture();
+    const sale = receipt();
+    await initial.cacheProducts('store', [product]);
+    initial.save(sale);
+    initial.set('clock', 123);
+    for (const scope of ['store', 'other-store']) {
+      initial.set(`catalog-cursor:${scope}`, 'old');
+      initial.set(`catalog-progress:${scope}`, { cursor: 'old' });
+      initial.set(`catalog-pending:${scope}`, true);
+      initial.set(`catalog:${scope}`, 'old');
+    }
+    initial.close();
+    const legacy = new DatabaseSync(path);
+    if (
+      legacy
+        .prepare('PRAGMA table_info(products)')
+        .all()
+        .some((column) => column.name === 'scale_plu')
+    )
+      legacy.exec(
+        'DROP INDEX products_scale_plu; ALTER TABLE products DROP COLUMN scale_plu',
+      );
+    legacy.exec(`
+      DROP INDEX sales_active;
+      DROP INDEX sales_history;
+      ALTER TABLE local_sales DROP COLUMN active;
+      ALTER TABLE local_sales DROP COLUMN completed_at;
+      ALTER TABLE local_sales DROP COLUMN non_fiscal;
+      PRAGMA user_version=2;
+    `);
+    legacy.close();
+    const upgraded = new PosDatabase(path, key);
+    try {
+      expect(upgraded.product('store', product.id)).toEqual(product);
+      expect(upgraded.sale(ids.session, sale.sale.id)).toEqual(sale);
+      expect(upgraded.workingSales(ids.session)).toEqual([sale]);
+      upgraded.save({ ...sale, sequence: 2 });
+      expect(upgraded.sale(ids.session, sale.sale.id)?.sequence).toBe(2);
+      expect(upgraded.get('clock')).toBe(123);
+      for (const scope of ['store', 'other-store']) {
+        expect(upgraded.get(`catalog-cursor:${scope}`)).toBeNull();
+        expect(upgraded.get(`catalog-progress:${scope}`)).toBeNull();
+        expect(upgraded.get(`catalog-pending:${scope}`)).toBeNull();
+        expect(upgraded.get(`catalog:${scope}`)).toBeNull();
+      }
+      await upgraded.cacheProducts('store', [{ ...product, scale_plu: 1 }]);
+      expect(upgraded.scalePlu('store', 1)?.id).toBe(product.id);
+      upgraded.set('catalog-cursor:store', 'new');
+    } finally {
+      upgraded.close();
+    }
+    const restarted = open(path, key);
+    expect(restarted.get('catalog-cursor:store')).toBe('new');
+    expect(restarted.scalePlu('store', 1)?.id).toBe(product.id);
+  });
+});

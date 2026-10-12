@@ -4,6 +4,9 @@ export type ProductResponse = {
   barcode: string;
   /** Absent only in catalogs cached before additional barcode support. */
   additional_barcode?: string | null;
+  /** Absent in catalogs saved before scale label support. */
+  scale_plu?: number | null;
+  scale_name?: string | null;
   category_id: string | null;
   created_at: string;
   deleted_at: string | null;

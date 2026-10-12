@@ -14,6 +14,7 @@ import type {
   ProductResponse,
   SaleCommand,
   SaleResponse,
+  ScannedProduct,
 } from '../../shared/pos/contracts';
 import { PosError } from '../../shared/pos/contracts';
 import type { SyncStage } from '../../shared/pos/contracts';
@@ -34,6 +35,10 @@ import {
   fiscalShiftExpired,
   offlineGrantExpiresAt,
 } from '../../shared/pos/session-policy';
+import {
+  assertWeightedProduct,
+  parseWeightedBarcode,
+} from '../../shared/pos/weighted-barcode';
 import {
   PosApiError as ApiError,
   PosConnectionError,
@@ -859,6 +864,56 @@ export class PosService {
     return this.categoriesJob;
   }
 
+  private async resolveScan(barcode: string): Promise<ScannedProduct> {
+    requirePermission(this.active(), 'product.read');
+    const epoch = this.epoch;
+    const profile = this.catalog.scaleProfile();
+    const label = parseWeightedBarcode(barcode, profile);
+    const matrix = label ? null : parseGs1DataMatrix(barcode);
+    const code = matrix?.gtin ?? barcode;
+    const product = label
+      ? await this.catalog.scalePlu(label.scalePlu)
+      : (this.db.barcode(this.scope, code) ??
+        (await this.catalog.barcode(code)));
+    this.assertEpoch(epoch);
+    if (JSON.stringify(profile) !== JSON.stringify(this.catalog.scaleProfile()))
+      throw new PosError(
+        'LOCAL_CONTEXT_CHANGED',
+        'Настройки весов изменились. Повторите сканирование.',
+      );
+    if (label) {
+      assertWeightedProduct(product, label);
+      try {
+        const collision = this.db.barcode(this.scope, barcode);
+        if (collision && collision.id !== product.id)
+          throw new PosError(
+            'SCALE_BARCODE_CONFLICT',
+            'Весовая этикетка совпадает с кодом другого товара.',
+          );
+      } catch (error) {
+        if (
+          error instanceof PosError &&
+          error.code === 'PRODUCT_BARCODE_AMBIGUOUS'
+        )
+          throw new PosError(
+            'SCALE_BARCODE_CONFLICT',
+            'Весовая этикетка совпадает с кодами других товаров.',
+          );
+        throw error;
+      }
+    }
+    if (!product)
+      throw new PosError(
+        'PRODUCT_NOT_FOUND',
+        'Товар не найден в каталоге магазина.',
+      );
+    return {
+      product,
+      quantity: label?.quantity ?? '1',
+      ...(matrix ? { markingCode: matrix.markingCode } : {}),
+    };
+  }
+
   private async execute(command: SaleCommand): Promise<SaleResponse> {
     this.active();
     if (this.current()?.payment || this.current()?.fiscalBlocked)
@@ -870,20 +925,13 @@ export class PosService {
     const workspace = this.workspaceRevision;
     let product: ProductResponse | undefined;
     if (command.type === 'scan') {
-      requirePermission(this.active(), 'product.read');
-      const matrix = parseGs1DataMatrix(command.barcode);
-      const code = matrix?.gtin ?? command.barcode;
-      product =
-        this.db.barcode(this.scope, code) ?? (await this.catalog.barcode(code));
-      if (!product)
-        throw new PosError(
-          'PRODUCT_NOT_FOUND',
-          'Товар не найден в каталоге магазина.',
-        );
+      const resolved = await this.resolveScan(command.barcode);
+      product = resolved.product;
       command = {
         type: 'add',
         productId: product.id,
-        ...(matrix ? { markingCode: matrix.markingCode } : {}),
+        quantity: resolved.quantity,
+        ...(resolved.markingCode ? { markingCode: resolved.markingCode } : {}),
       };
     } else if (command.type === 'add') {
       requirePermission(this.active(), 'product.read');
@@ -1990,6 +2038,8 @@ export class PosService {
           }));
       case 'execute':
         return this.execute(request.command);
+      case 'resolveScan':
+        return this.resolveScan(request.barcode);
       case 'transition':
         if (
           this.record(request.saleId).payment ||

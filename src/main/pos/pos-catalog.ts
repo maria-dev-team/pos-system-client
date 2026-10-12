@@ -9,6 +9,10 @@ import {
   type ProductResponse,
 } from '../../shared/pos/contracts';
 import { productMatchesBarcode } from '../../shared/pos/product-policy';
+import {
+  type ScaleProfile,
+  scaleProfileSchema,
+} from '../../shared/pos/weighted-barcode';
 import { PosApiError, PosConnectionError } from './pos-api-client';
 import { PosDatabase } from './pos-database';
 
@@ -25,6 +29,8 @@ const productSchema = z.object({
     .transform((value) => value ?? null),
   name: z.string().max(1000),
   sku: z.string().nullable(),
+  scale_plu: z.number().int().min(1).max(99999).nullish(),
+  scale_name: z.string().max(255).nullish(),
   category_id: z.string().uuid().nullable(),
   nkt_product_id: z.string().uuid().nullable(),
   unit: z.enum(['pcs', 'kg', 'l', 'm']),
@@ -133,6 +139,11 @@ export class PosCatalog {
     this.phase = null;
     this.waitingForTransactions = false;
   }
+  scaleProfile(): ScaleProfile | null {
+    return this.scope
+      ? this.db.get<ScaleProfile>(`scale-profile:${this.scope}`)
+      : null;
+  }
   status(): Pick<
     PosStatus,
     | 'catalogSyncing'
@@ -173,6 +184,31 @@ export class PosCatalog {
         'LOCAL_CONTEXT_CHANGED',
         'Контекст кассы изменился. Повторите поиск.',
       );
+  }
+  private profile(input: unknown): ScaleProfile | undefined {
+    // Older servers omit the field; retain the last reserved prefix for existing labels.
+    if (input === undefined) return undefined;
+    const parsed = scaleProfileSchema.safeParse(input);
+    if (!parsed.success)
+      throw new PosError(
+        'POS_API_INVALID_RESPONSE',
+        'Сервер вернул некорректный профиль весов.',
+      );
+    return parsed.data;
+  }
+  private saveProfile(profile: ScaleProfile | undefined, epoch: number): void {
+    this.check(epoch);
+    if (!profile) return;
+    const previous = this.scaleProfile();
+    if (
+      previous?.format === profile.format &&
+      previous.prefix === profile.prefix &&
+      previous.enabled === profile.enabled &&
+      previous.blocked_reason === profile.blocked_reason
+    )
+      return;
+    this.db.set(`scale-profile:${this.scope}`, profile);
+    this.revision = `${Date.now()}:${randomUUID()}`;
   }
   private products(input: unknown, max: number): ProductResponse[] {
     const parsed = z.array(productSchema).max(max).safeParse(input);
@@ -238,12 +274,14 @@ export class PosCatalog {
           let progress = this.db.get<Progress>(`catalog-progress:${scope}`);
           if (!progress?.cursor) {
             // Capture the journal BEFORE walking UUID pages. Catch-up covers writes behind that walk.
-            const start = await this.request<{ cursor: unknown }>(
-              '/v1/pos/catalog/sync-start',
-              5000,
-            );
+            const start = await this.request<{
+              cursor: unknown;
+              scale_profile?: unknown;
+            }>('/v1/pos/catalog/sync-start', 5000);
             this.check(epoch);
             const baseline = this.cursor(start.cursor);
+            const profile = this.profile(start.scale_profile);
+            this.saveProfile(profile, epoch);
             progress = {
               cycle: randomUUID(),
               after: null,
@@ -335,6 +373,7 @@ export class PosCatalog {
             has_more: unknown;
             categories_changed: unknown;
             waiting_for_transactions?: unknown;
+            scale_profile?: unknown;
           }>(`/v1/pos/catalog/changes?${params}`, 5000);
           this.check(epoch);
           const products = this.products(page.products, 250);
@@ -343,6 +382,7 @@ export class PosCatalog {
             .max(250)
             .safeParse(page.deleted_ids);
           const next = this.cursor(page.cursor);
+          const profile = this.profile(page.scale_profile);
           if (
             !deleted.success ||
             typeof page.has_more !== 'boolean' ||
@@ -370,8 +410,10 @@ export class PosCatalog {
             this.check(epoch);
             this.revision = `${Date.now()}:${randomUUID()}`;
           }
+          this.check(epoch);
           if (page.categories_changed)
             this.db.set(`categories-dirty:${scope}`, randomUUID());
+          this.saveProfile(profile, epoch);
           // A crash during apply replays the same batch. Never acknowledge a partially saved page.
           this.db.set(`catalog-cursor:${scope}`, next);
           this.pending = page.has_more;
@@ -461,13 +503,13 @@ export class PosCatalog {
         );
         this.check(epoch);
         const products = this.products(result.products, 2);
-        if (
-          products.some((p) =>
-            params.has('product_id')
-              ? p.id !== params.get('product_id')
-              : !productMatchesBarcode(p, params.get('barcode') ?? ''),
-          )
-        )
+        const matches = (p: ProductResponse): boolean =>
+          params.has('product_id')
+            ? p.id === params.get('product_id')
+            : params.has('scale_plu')
+              ? p.scale_plu === Number(params.get('scale_plu'))
+              : productMatchesBarcode(p, params.get('barcode') ?? '');
+        if (products.some((p) => !matches(p)))
           throw new PosError(
             'POS_API_INVALID_RESPONSE',
             'Сервер вернул товар, не соответствующий запросу.',
@@ -480,11 +522,7 @@ export class PosCatalog {
         await this.cache(products, epoch, writes);
         return products.flatMap((p) => {
           const local = this.db.product(this.scope, p.id);
-          return local &&
-            (params.has('product_id') ||
-              productMatchesBarcode(local, params.get('barcode') ?? ''))
-            ? [local]
-            : [];
+          return local && matches(local) ? [local] : [];
         });
       } catch (error) {
         reportError(error, 'worker', 'lookup');
@@ -522,6 +560,19 @@ export class PosCatalog {
       throw new PosError(
         'POS_API_INVALID_RESPONSE',
         'Сервер вернул другой товар.',
+      );
+    return products[0];
+  }
+  async scalePlu(plu: number): Promise<ProductResponse | undefined> {
+    const local = this.db.scalePlu(this.scope, plu);
+    if (local) return local;
+    const products = await this.lookup(
+      new URLSearchParams({ scale_plu: String(plu) }),
+    );
+    if (products.length > 1)
+      throw new PosError(
+        'PRODUCT_BARCODE_AMBIGUOUS',
+        'PLU соответствует нескольким товарам. Выберите товар по названию.',
       );
     return products[0];
   }

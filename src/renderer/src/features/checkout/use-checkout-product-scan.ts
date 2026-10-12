@@ -1,17 +1,15 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
-import { type SaleResponse, searchProducts } from '@renderer/common/api';
+import type { SaleResponse } from '@renderer/common/api';
 import { queryKeys } from '@renderer/common/constants';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
 import { localPosActive } from '@renderer/common/lib/local-pos';
+import { resolveProductScan } from '@renderer/common/lib/resolve-product-scan';
 
 import { PosError, type SaleCommand } from '../../../../shared/pos/contracts';
 import { parseGs1DataMatrix } from '../../../../shared/pos/gs1-data-matrix';
-import {
-  assertProductSellable,
-  selectExactBarcodeProduct,
-} from '../../../../shared/pos/product-policy';
+import { assertProductSellable } from '../../../../shared/pos/product-policy';
 
 type Options = {
   cashierSessionId: string;
@@ -26,7 +24,9 @@ type Options = {
 export function useCheckoutProductScan(options: Options) {
   const queryClient = useQueryClient();
   const lifecycle = useRef({ version: 0 });
-  const lookups = useRef(new Map<string, ReturnType<typeof searchProducts>>());
+  const lookups = useRef(
+    new Map<string, ReturnType<typeof resolveProductScan>>(),
+  );
   useEffect(() => {
     const session = lifecycle.current;
     const pending = lookups.current;
@@ -59,7 +59,11 @@ export function useCheckoutProductScan(options: Options) {
             'PRODUCT_LOOKUP_BUSY',
             'Поиск ещё обрабатывает предыдущие коды. Повторите сканирование после ответа.',
           );
-        lookup = searchProducts({ limit: 20, offset: 0, search: searchValue });
+        lookup = resolveProductScan(
+          barcode,
+          options.organizationId,
+          queryClient,
+        );
         lookups.current.set(searchValue, lookup);
         const pending = lookup;
         void lookup
@@ -76,17 +80,14 @@ export function useCheckoutProductScan(options: Options) {
           'LOCAL_CONTEXT_CHANGED',
           'Чек изменился во время поиска. Повторите сканирование для текущего покупателя.',
         );
-      const product = selectExactBarcodeProduct(result.products, searchValue);
-      if (product.organization_id !== options.organizationId)
-        throw new PosError(
-          'LOCAL_CONTEXT_CHANGED',
-          'Ответ поиска относится к другой организации. Повторите поиск.',
-        );
-      assertProductSellable(product, dataMatrix?.markingCode);
+      const { product, quantity } = result;
+      const markingCode = dataMatrix?.markingCode;
+      assertProductSellable(product, markingCode);
       await options.execute({
         type: 'add',
         productId: product.id,
-        ...(dataMatrix ? { markingCode: dataMatrix.markingCode } : {}),
+        ...(quantity !== '1' ? { quantity } : {}),
+        ...(markingCode ? { markingCode } : {}),
       });
       if (epoch !== lifecycle.current.version) return;
       options.onIssue(null);

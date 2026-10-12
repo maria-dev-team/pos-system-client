@@ -666,3 +666,236 @@ it('does not restore an additional code removed while its online lookup was in f
   expect(await lookup).toBeUndefined();
   expect(db.barcode(scope, '000456')).toBeUndefined();
 });
+
+const scaleProfile = {
+  format: 'ean13-weight-v1',
+  prefix: '20',
+  enabled: true,
+  blocked_reason: null,
+} as const;
+
+it('looks up a PLU online and retains scale metadata for offline scans', async () => {
+  const p = { ...product(), scale_plu: 1, scale_name: 'Яблоки' };
+  const { catalog, db, request } = setup(async (path) => {
+    expect(path).toBe('/v1/pos/catalog/lookup?scale_plu=1');
+    return { products: [p] };
+  });
+  expect(await catalog.scalePlu(1)).toMatchObject({
+    id: p.id,
+    scale_plu: 1,
+    scale_name: 'Яблоки',
+  });
+  request.mockRejectedValue(new TypeError('offline'));
+  expect(await catalog.scalePlu(1)).toMatchObject({ id: p.id });
+  expect(db.scalePlu(scope, 1)?.scale_name).toBe('Яблоки');
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it('enriches scale fields on a legacy product before its full catalog refresh finishes', async () => {
+  const p = {
+    ...product(),
+    additional_barcode: null,
+    scale_plu: 1,
+    scale_name: null,
+  };
+  const { db, catalog } = setup(async () => ({ products: [p] }));
+  const legacy: ProductResponse = { ...p };
+  delete legacy.scale_plu;
+  delete legacy.scale_name;
+  await db.cacheProducts(scope, [legacy]);
+  expect(await catalog.scalePlu(1)).toMatchObject({ id: p.id, scale_plu: 1 });
+});
+
+it.each([0, 100000, 1.5, '1'])(
+  'rejects malformed scale PLU %j without caching the response',
+  async (scale_plu) => {
+    const p = product();
+    const { catalog, db } = setup(async () => ({
+      products: [{ ...p, scale_plu }],
+    }));
+    await expect(catalog.barcode(p.barcode)).rejects.toMatchObject({
+      code: 'POS_API_INVALID_RESPONSE',
+    });
+    expect(db.product(scope, p.id)).toBeUndefined();
+  },
+);
+
+it('rejects a different PLU and duplicate remote PLU matches', async () => {
+  const p = { ...product(), scale_plu: 2 };
+  const { catalog, db, request } = setup(async () => ({ products: [p] }));
+  await expect(catalog.scalePlu(1)).rejects.toMatchObject({
+    code: 'POS_API_INVALID_RESPONSE',
+  });
+  expect(db.product(scope, p.id)).toBeUndefined();
+  request.mockResolvedValue({
+    products: [
+      { ...p, scale_plu: 1 },
+      { ...p, id: randomUUID(), scale_plu: 1 },
+    ],
+  });
+  await expect(catalog.scalePlu(1)).rejects.toMatchObject({
+    code: 'PRODUCT_BARCODE_AMBIGUOUS',
+  });
+});
+
+it('does not restore a PLU removed while its lookup was in flight', async () => {
+  const p = { ...product(), scale_plu: 1, scale_name: null };
+  let finish!: (value: unknown) => void;
+  const { db, catalog, request } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  request.mockImplementation(async (path) =>
+    path.includes('/lookup?')
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : delta([{ ...p, scale_plu: null }]),
+  );
+  const lookup = catalog.scalePlu(1);
+  await catalog.refresh();
+  finish({ products: [p] });
+  expect(await lookup).toBeUndefined();
+  expect(db.scalePlu(scope, 1)).toBeUndefined();
+});
+
+it('discards a PLU lookup after changing store', async () => {
+  let finish!: (value: unknown) => void;
+  const { db, catalog } = setup(
+    async () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const lookup = catalog.scalePlu(1);
+  const rejected = expect(lookup).rejects.toMatchObject({
+    code: 'LOCAL_CONTEXT_CHANGED',
+  });
+  catalog.activate(ids.organization, randomUUID());
+  finish({ products: [{ ...product(), scale_plu: 1 }] });
+  await rejected;
+  expect(db.scalePlu(scope, 1)).toBeUndefined();
+});
+
+it('persists the bootstrap scale profile before continuing an interrupted product download', async () => {
+  const { db, catalog, request } = setup();
+  const revision = catalog.status().catalogRevision;
+  request.mockImplementation(async (path) => {
+    if (path.endsWith('/sync-start'))
+      return { cursor: 'baseline', scale_profile: scaleProfile };
+    throw new Error('offline');
+  });
+  await catalog.refresh();
+  expect(db.get(`scale-profile:${scope}`)).toEqual(scaleProfile);
+  expect(catalog.status().catalogRevision).not.toBe(revision);
+  catalog.activate(ids.organization, ids.store);
+  expect(catalog.scaleProfile()).toEqual(scaleProfile);
+  catalog.activate(ids.organization, randomUUID());
+  expect(catalog.scaleProfile()).toBeNull();
+});
+
+it('persists profile-only changes and preserves the profile when an older API omits it', async () => {
+  const { db, catalog, request } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  request.mockResolvedValue({ ...delta(), scale_profile: scaleProfile });
+  await catalog.refresh();
+  expect(catalog.scaleProfile()).toEqual(scaleProfile);
+  expect(db.get(`catalog-cursor:${scope}`)).toBe('next');
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  const disabled = {
+    ...scaleProfile,
+    enabled: false,
+    blocked_reason: 'barcode_conflict',
+  };
+  request.mockResolvedValue({
+    ...delta([], [], 'disabled'),
+    scale_profile: disabled,
+  });
+  await catalog.refresh();
+  expect(catalog.scaleProfile()).toEqual(disabled);
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  request.mockResolvedValue(delta([], [], 'older-api'));
+  await catalog.refresh();
+  expect(catalog.scaleProfile()).toEqual(disabled);
+  expect(db.get(`catalog-cursor:${scope}`)).toBe('older-api');
+});
+
+it('invalidates cached scans only when a profile-only delta changes the scale profile', async () => {
+  const { db, catalog, request } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  db.set(`scale-profile:${scope}`, scaleProfile);
+  const revision = catalog.status().catalogRevision;
+  const blocked = {
+    ...scaleProfile,
+    enabled: false,
+    blocked_reason: 'barcode_conflict',
+  };
+  request.mockResolvedValue({ ...delta(), scale_profile: blocked });
+  await catalog.refresh();
+  const changedRevision = catalog.status().catalogRevision;
+  expect(changedRevision).not.toBe(revision);
+  expect(catalog.scaleProfile()).toEqual(blocked);
+
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  request.mockResolvedValue({
+    ...delta([], [], 'same-profile'),
+    scale_profile: { ...blocked },
+  });
+  await catalog.refresh();
+  expect(catalog.status().catalogRevision).toBe(changedRevision);
+
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  request.mockResolvedValue(delta([], [], 'omitted-profile'));
+  await catalog.refresh();
+  expect(catalog.status().catalogRevision).toBe(changedRevision);
+  expect(catalog.scaleProfile()).toEqual(blocked);
+});
+
+it.each([
+  null,
+  {},
+  { ...scaleProfile, prefix: '2' },
+  { ...scaleProfile, enabled: 'true' },
+])(
+  'rejects malformed scale profile %j before acknowledging the delta',
+  async (scale_profile) => {
+    const { db, catalog, request } = setup();
+    db.set(`catalog-cursor:${scope}`, 'baseline');
+    db.set(`scale-profile:${scope}`, scaleProfile);
+    request.mockResolvedValue({ ...delta([product()]), scale_profile });
+    await catalog.refresh();
+    expect(catalog.status().catalogError).toBeTruthy();
+    expect(db.get(`catalog-cursor:${scope}`)).toBe('baseline');
+    expect(db.get(`scale-profile:${scope}`)).toEqual(scaleProfile);
+    expect(db.product(scope, product().id)).toBeUndefined();
+  },
+);
+
+it('does not persist a scale profile returned for a previous store', async () => {
+  let finish!: (value: unknown) => void;
+  const { db, catalog, request } = setup();
+  request.mockImplementation(
+    async () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const refreshing = catalog.refresh();
+  await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  catalog.activate(ids.organization, randomUUID());
+  finish({ cursor: 'baseline', scale_profile: scaleProfile });
+  await refreshing;
+  expect(db.get(`scale-profile:${scope}`)).toBeNull();
+  expect(catalog.scaleProfile()).toBeNull();
+});
+
+it('does not acknowledge an empty profile update when the store changes during apply', async () => {
+  const { db, catalog, request, changed } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  request.mockResolvedValue({ ...delta(), scale_profile: scaleProfile });
+  changed.mockImplementation(() => {
+    if (catalog.status().catalogPhase === 'saving')
+      queueMicrotask(() => catalog.activate(ids.organization, ids.product));
+  });
+  await catalog.refresh();
+  expect(db.get(`scale-profile:${scope}`)).toBeNull();
+  expect(db.get(`catalog-cursor:${scope}`)).toBe('baseline');
+});

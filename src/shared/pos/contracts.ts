@@ -65,7 +65,18 @@ export const saleCommandSchema = z.discriminatedUnion('type', [
 ]);
 
 export type SaleCommand = z.infer<typeof saleCommandSchema>;
+export type ScannedProduct = {
+  product: ProductResponse;
+  quantity: string;
+  markingCode?: string;
+};
 export const posRequestSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('resolveScan'),
+      barcode: z.string().trim().min(1).max(512),
+    })
+    .strict(),
   z.object({ type: z.literal('restoreCredentials') }).strict(),
   z.object({ type: z.literal('restartWorker') }).strict(),
   z.object({ type: z.literal('diagnostics') }).strict(),
@@ -247,6 +258,7 @@ export type PosDiagnostics = {
   uptimeSeconds: number;
 };
 export type PosResult =
+  | ScannedProduct
   | PosDiagnostics
   | OfflineCredentials
   | PendingReturnCommand

@@ -85,6 +85,25 @@ export class PosDatabase {
         throw error;
       }
     }
+    if (Number(this.statement('PRAGMA user_version').get()?.user_version) < 3) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!columns.some((row) => row.name === 'scale_plu'))
+          this.db.exec('ALTER TABLE products ADD COLUMN scale_plu INTEGER');
+        this.db.exec(`
+          CREATE INDEX IF NOT EXISTS products_scale_plu ON products(scope,scale_plu);
+          -- Rehydrate scale fields discarded by older clients while retaining offline data.
+          DELETE FROM metadata WHERE key LIKE 'catalog-cursor:%'
+            OR key LIKE 'catalog-progress:%' OR key LIKE 'catalog-pending:%'
+            OR key LIKE 'catalog:%';
+          PRAGMA user_version=3;
+          COMMIT;
+        `);
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
     const saleColumns = this.statement('PRAGMA table_info(local_sales)').all();
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -330,7 +349,7 @@ export class PosDatabase {
   ): Promise<void> {
     const generation = `${scope}:${randomUUID()}`;
     const insert = this.statement(
-      'INSERT INTO products(scope,id,barcode,additional_barcode,gtin,category,name,quick,value) VALUES (?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO products(scope,id,barcode,additional_barcode,scale_plu,gtin,category,name,quick,value) VALUES (?,?,?,?,?,?,?,?,?,?)',
     );
     const search = this.statement(
       'INSERT INTO product_search(rowid,scope,id,name) VALUES (?,?,?,?)',
@@ -345,6 +364,7 @@ export class PosDatabase {
             p.id,
             p.barcode,
             p.additional_barcode ?? null,
+            p.scale_plu ?? null,
             p.nkt?.gtin ?? null,
             p.category_id,
             p.name.toLocaleLowerCase('ru'),
@@ -415,10 +435,10 @@ export class PosDatabase {
       'SELECT rowid,content_hash,last_seen,value FROM products WHERE scope=? AND id=?',
     );
     const insert = this.statement(
-      'INSERT INTO products(scope,id,barcode,additional_barcode,gtin,category,name,quick,value,content_hash,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO products(scope,id,barcode,additional_barcode,scale_plu,gtin,category,name,quick,value,content_hash,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     );
     const update = this.statement(
-      'UPDATE products SET barcode=?,additional_barcode=?,gtin=?,category=?,name=?,quick=?,value=?,content_hash=?,last_seen=? WHERE rowid=?',
+      'UPDATE products SET barcode=?,additional_barcode=?,scale_plu=?,gtin=?,category=?,name=?,quick=?,value=?,content_hash=?,last_seen=? WHERE rowid=?',
     );
     for (let offset = 0; offset < products.length; offset += 25) {
       if (!current()) return;
@@ -438,11 +458,16 @@ export class PosDatabase {
                 row.value as Uint8Array,
                 `product:${generation}:${product.id}`,
               );
-              // Enrich legacy records on an online scan before bootstrap finishes.
-              // Once a record knows this field, foreground lookups must not replace it.
+              // Foreground lookups may enrich fields discarded by older clients.
               if (
                 mode === 'missing' &&
-                previous.additional_barcode !== undefined
+                !(
+                  ['additional_barcode', 'scale_plu', 'scale_name'] as const
+                ).some(
+                  (field) =>
+                    previous[field] === undefined &&
+                    product[field] !== undefined,
+                )
               )
                 continue;
               // A slow background page must not overwrite a newer on-demand price/product.
@@ -454,6 +479,7 @@ export class PosDatabase {
                 update.run(
                   product.barcode,
                   product.additional_barcode ?? null,
+                  product.scale_plu ?? null,
                   product.nkt?.gtin ?? null,
                   product.category_id,
                   product.name.toLocaleLowerCase('ru'),
@@ -483,6 +509,7 @@ export class PosDatabase {
               product.id,
               product.barcode,
               product.additional_barcode ?? null,
+              product.scale_plu ?? null,
               product.nkt?.gtin ?? null,
               product.category_id,
               product.name.toLocaleLowerCase('ru'),
@@ -601,6 +628,26 @@ export class PosDatabase {
         )
       : undefined;
     if (product && !productMatchesBarcode(product, barcode))
+      throw new Error('Catalog index integrity failure');
+    return product;
+  }
+  scalePlu(scope: string, plu: number): ProductResponse | undefined {
+    scope = this.catalogScope(scope);
+    const rows = this.statement(
+      'SELECT id,value FROM products WHERE scope=? AND scale_plu=? LIMIT 2',
+    ).all(scope, plu);
+    if (rows.length > 1)
+      throw new PosError(
+        'PRODUCT_BARCODE_AMBIGUOUS',
+        'PLU соответствует нескольким товарам. Выберите товар по названию.',
+      );
+    const product = rows[0]
+      ? this.open<ProductResponse>(
+          rows[0].value as Uint8Array,
+          `product:${scope}:${rows[0].id}`,
+        )
+      : undefined;
+    if (product && product.scale_plu !== plu)
       throw new Error('Catalog index integrity failure');
     return product;
   }

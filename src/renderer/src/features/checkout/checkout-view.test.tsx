@@ -37,6 +37,7 @@ import {
   searchProducts,
   triggerAntiFraudEvent,
 } from '@renderer/common/api';
+import { request } from '@renderer/common/api/request';
 import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
 
 import { CheckoutView } from './index';
@@ -242,6 +243,9 @@ const renderCheckout = (
 };
 
 beforeEach(() => {
+  vi.spyOn(request, 'get').mockResolvedValue({
+    data: { data: {} },
+  });
   vi.clearAllMocks();
   vi.mocked(getAuthContext).mockResolvedValue(
     contextFixture([
@@ -287,7 +291,10 @@ beforeEach(() => {
   vi.mocked(triggerAntiFraudEvent).mockResolvedValue(undefined);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('server-authoritative checkout', () => {
   it('shows quick products by category only with both read permissions', async () => {
