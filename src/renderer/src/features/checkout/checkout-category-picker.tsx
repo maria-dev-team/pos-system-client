@@ -366,6 +366,7 @@ function ErrorState({
       <div>
         <p className="text-sm font-medium text-destructive">{label}</p>
         <Button
+          data-error-retry="true"
           className="mt-3 min-h-12 border-border bg-background"
           onClick={onRetry}
           type="button"

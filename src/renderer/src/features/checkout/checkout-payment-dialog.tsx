@@ -70,6 +70,7 @@ function BanknoteButtons({
   const current = value.trim() === '' ? '0.00' : getCashChange(value, '0');
   return banknotes.map((amount) => (
     <Button
+      data-analytics-id="checkout.payment"
       aria-label={
         forCashAmount
           ? `Добавить ${amount} ₸ к наличной части`

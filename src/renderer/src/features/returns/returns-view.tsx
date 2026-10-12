@@ -101,6 +101,7 @@ export function ReturnsView({
             </p>
           ) : null}
           <Button
+            data-error-retry="true"
             className="mt-6"
             disabled={recovery.isPending || recovery.isConflict}
             onClick={() => void recovery.onRetry()}

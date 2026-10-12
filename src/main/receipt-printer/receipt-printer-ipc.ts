@@ -4,6 +4,7 @@ import {
   ipcMain,
 } from 'electron';
 
+import { reportError } from '../../shared/diagnostics';
 import {
   MAX_RASTER_BAND_HEIGHT_DOTS,
   buildEscPosReceipt,
@@ -462,7 +463,24 @@ const printDocument = async (
 export const registerReceiptPrinterIpc = (
   mainWindow: ElectronBrowserWindow,
 ): void => {
-  ipcMain.handle(GET_PRINTERS_CHANNEL, async (event) => {
+  const handle = (
+    channel: string,
+    callback: (event: Electron.IpcMainInvokeEvent, input: unknown) => unknown,
+  ): void => {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      assertSender(event.sender, mainWindow);
+      try {
+        const result = await callback(event, input);
+        if (isRecord(result) && result.ok === false)
+          reportError(result, 'printer', channel.split(':')[1]!);
+        return result;
+      } catch (error) {
+        reportError(error, 'printer', channel.split(':')[1]!);
+        throw error;
+      }
+    });
+  };
+  handle(GET_PRINTERS_CHANNEL, async (event) => {
     assertSender(event.sender, mainWindow);
     const printers = await printDeadline(
       mainWindow.webContents.getPrintersAsync(),
@@ -475,7 +493,7 @@ export const registerReceiptPrinterIpc = (
     }));
   });
 
-  ipcMain.handle(PRINT_CHANNEL, async (event, request: unknown) => {
+  handle(PRINT_CHANNEL, async (event, request: unknown) => {
     assertSender(event.sender, mainWindow);
     if (!isPrintRequest(request)) {
       return {
@@ -502,35 +520,32 @@ export const registerReceiptPrinterIpc = (
     );
   });
 
-  ipcMain.handle(
-    PRINT_SHIFT_REPORT_CHANNEL,
-    async (event, request: unknown) => {
-      assertSender(event.sender, mainWindow);
-      if (!isShiftReportPrintRequest(request)) {
-        return {
-          code: 'PRINT_FAILED',
-          message: 'Некорректные данные отчёта.',
+  handle(PRINT_SHIFT_REPORT_CHANNEL, async (event, request: unknown) => {
+    assertSender(event.sender, mainWindow);
+    if (!isShiftReportPrintRequest(request)) {
+      return {
+        code: 'PRINT_FAILED',
+        message: 'Некорректные данные отчёта.',
+        ok: false,
+      } satisfies PrintResult;
+    }
+    return queuePrint(() =>
+      printDocument(
+        mainWindow,
+        request,
+        renderShiftReportDocument(request.report),
+        'report',
+      ),
+    ).catch(
+      () =>
+        ({
           ok: false,
-        } satisfies PrintResult;
-      }
-      return queuePrint(() =>
-        printDocument(
-          mainWindow,
-          request,
-          renderShiftReportDocument(request.report),
-          'report',
-        ),
-      ).catch(
-        () =>
-          ({
-            ok: false,
-            code: 'PRINT_FAILED',
-            message:
-              'Печать недоступна или очередь занята. Повторите проверку принтера.',
-          }) satisfies PrintResult,
-      );
-    },
-  );
+          code: 'PRINT_FAILED',
+          message:
+            'Печать недоступна или очередь занята. Повторите проверку принтера.',
+        }) satisfies PrintResult,
+    );
+  });
 
   mainWindow.on('closed', () => {
     ipcMain.removeHandler(GET_PRINTERS_CHANNEL);

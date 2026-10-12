@@ -185,6 +185,8 @@ function LockedCheckout({
         </p>
         <div className={`mt-6 grid gap-3 ${canEnd ? 'sm:grid-cols-2' : ''}`}>
           <Button
+            data-error-retry="true"
+            data-analytics-id="checkout.action"
             className="min-h-12"
             disabled={!onRetrySession}
             onClick={onRetrySession}
@@ -995,6 +997,7 @@ function ActiveCheckout({
             <div className="flex items-center justify-between gap-3 rounded-lg bg-destructive/5 p-3 text-sm text-destructive">
               <span>Не удалось найти товары</span>
               <Button
+                data-error-retry="true"
                 className="min-h-12"
                 onClick={() => void products.refetch()}
                 type="button"

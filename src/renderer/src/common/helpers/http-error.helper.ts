@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { toast } from 'sonner';
 
+import { reportError } from '../../../../shared/diagnostics';
 import { PosError } from '../../../../shared/pos/contracts';
 import { fiscalErrorMessage } from '../../../../shared/pos/fiscal-error';
 import {
@@ -179,5 +180,6 @@ export const httpErrorHandler = (
   fallback?: string,
   toastId?: string,
 ): void => {
+  reportError(error, 'renderer', 'action');
   toast.error(getHttpErrorMessage(error, fallback), { id: toastId });
 };

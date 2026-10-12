@@ -8,6 +8,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AppUpdateState } from '../shared/desktop-contracts';
+import { reportError, retryDiagnostics } from '../shared/diagnostics';
 
 export type { AppUpdateState } from '../shared/desktop-contracts';
 
@@ -38,6 +39,7 @@ const logUpdaterError = async (
   state: AppUpdateState,
   error: unknown,
 ): Promise<void> => {
+  reportError(error, 'updater', stage);
   const details =
     error instanceof Error
       ? {
@@ -199,6 +201,7 @@ export const registerAppUpdater = (mainWindow: BrowserWindow): void => {
     if (!active || operationInFlight || state.status !== 'download-failed') {
       return;
     }
+    retryDiagnostics({ source: 'updater' });
     operationInFlight = true;
     try {
       await downloadUpdate(state.attempt + 1);

@@ -140,7 +140,11 @@ export function LocalConflictDialog({ saleId }: { saleId: string }) {
               </div>
             </>
           ) : (
-            <Button disabled={busy} onClick={() => void load()}>
+            <Button
+              data-error-retry="true"
+              disabled={busy}
+              onClick={() => void load()}
+            >
               {busy ? 'Загружаем версии…' : 'Повторить'}
             </Button>
           )}

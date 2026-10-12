@@ -323,6 +323,7 @@ export function SalesHistoryView({
                     {getHttpErrorMessage(receipts.error)}
                   </p>
                   <Button
+                    data-error-retry="true"
                     className="mt-4"
                     onClick={() => void receipts.refetch()}
                     type="button"
@@ -460,6 +461,7 @@ export function SalesHistoryView({
                     {getHttpErrorMessage(detail.error)}
                   </p>
                   <Button
+                    data-error-retry="true"
                     aria-label="Повторить загрузку чека"
                     className="mt-4"
                     onClick={() => void detail.refetch()}

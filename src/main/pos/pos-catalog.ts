@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import type { ProductSearchResponse } from '../../shared/api/responses/product.response';
+import { reportError } from '../../shared/diagnostics';
 import {
   PosError,
   type PosStatus,
@@ -436,6 +437,7 @@ export class PosCatalog {
           (complete ? 15_000 : 1000) +
           Math.floor(Math.random() * 5000);
       } catch (error) {
+        reportError(error, 'worker', 'refresh');
         if (epoch !== this.epoch) return;
         if (
           error instanceof PosApiError &&
@@ -523,6 +525,7 @@ export class PosCatalog {
           return local && matches(local) ? [local] : [];
         });
       } catch (error) {
+        reportError(error, 'worker', 'lookup');
         this.check(epoch);
         if (
           error instanceof PosConnectionError ||
@@ -693,6 +696,7 @@ export class PosCatalog {
           },
         };
       } catch (error) {
+        reportError(error, 'worker', 'search');
         this.check(epoch);
         if (
           error instanceof PosConnectionError ||

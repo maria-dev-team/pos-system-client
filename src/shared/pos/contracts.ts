@@ -274,7 +274,8 @@ export type PosResult =
 
 export type PosConflict = { local: SaleResponse; remote: SaleResponse | null };
 export type PosReply =
-  { ok: true; value: PosResult } | { ok: false; code: string; message: string };
+  | { ok: true; value: PosResult }
+  | { ok: false; code: string; message: string; reported?: boolean };
 export type LocalPosBridge = {
   request: (request: PosRequest) => Promise<PosReply>;
   onChange: (listener: () => void) => () => void;
