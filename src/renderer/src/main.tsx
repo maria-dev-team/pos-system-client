@@ -4,6 +4,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
 
+import { startAnalytics } from '@renderer/common/analytics';
 import { configureAccessTokenProvider } from '@renderer/common/api';
 import { TooltipProvider } from '@renderer/common/components/ui/tooltip';
 import { createQueryClient } from '@renderer/common/lib/query-client';
@@ -36,3 +37,6 @@ createRoot(document.getElementById('root')!).render(
     </ThemeProvider>
   </StrictMode>,
 );
+
+const stopAnalytics = startAnalytics();
+if (import.meta.hot) import.meta.hot.dispose(stopAnalytics);

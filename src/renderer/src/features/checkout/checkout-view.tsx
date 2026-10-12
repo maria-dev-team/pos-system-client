@@ -185,6 +185,7 @@ function LockedCheckout({
         </p>
         <div className={`mt-6 grid gap-3 ${canEnd ? 'sm:grid-cols-2' : ''}`}>
           <Button
+            data-analytics-id="checkout.action"
             className="min-h-12"
             disabled={!onRetrySession}
             onClick={onRetrySession}
