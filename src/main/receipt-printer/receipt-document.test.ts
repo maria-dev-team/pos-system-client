@@ -102,6 +102,17 @@ describe('receipt raster profiles', () => {
 });
 
 describe('renderReceiptDocument', () => {
+  it('labels a non-fiscal receipt clearly without a fiscal sign or fiscal QR', () => {
+    const html = renderReceiptDocument?.({
+      ...receipt,
+      fiscal: null,
+      localReceiptNumber: 'НФ-local-sale',
+    });
+    expect(html).toContain('НЕФИСКАЛЬНЫЙ ЧЕК');
+    expect(html).toContain('НФ-local-sale');
+    expect(html).not.toContain('Фискальный признак');
+    expect(html).not.toContain('QR-код фискального чека');
+  });
   it('renders Kazakh text and escapes receipt data in line order', () => {
     const html = renderReceiptDocument?.(receipt);
 

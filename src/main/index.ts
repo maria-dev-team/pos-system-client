@@ -66,6 +66,19 @@ function createWindow(): void {
     mainWindow.show();
   });
 
+  let rendererRestarts = 0;
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (
+      details.reason === 'clean-exit' ||
+      mainWindow.isDestroyed() ||
+      rendererRestarts >= 2
+    )
+      return;
+    rendererRestarts++;
+    setTimeout(() => {
+      if (!mainWindow.isDestroyed()) mainWindow.webContents.reload();
+    }, 1000);
+  });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.session.setPermissionRequestHandler(
     (_webContents, _permission, callback) => callback(false),

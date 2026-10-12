@@ -185,6 +185,53 @@ const deferred = <T,>() => {
 };
 
 describe('receipt printing controls', () => {
+  it('prints a non-fiscal receipt after restart without loading user or organization over the network', async () => {
+    const nonFiscal = {
+      ...sale,
+      fiscal_receipt: null,
+      fiscalization_mode: 'NON_FISCAL' as const,
+      receipt_number: 'НФ-local-id',
+    };
+    const first = renderWithClient(
+      <ReceiptPrintButton
+        cashierSession={cashierSession}
+        context={context}
+        sale={nonFiscal}
+      />,
+    );
+    const key = 'pos-receipt-metadata:organization-1:store-1:membership-1';
+    await waitFor(() => expect(localStorage.getItem(key)).toContain('Айжан'));
+    await waitFor(() =>
+      expect(localStorage.getItem(key)).toContain('Maria Market'),
+    );
+    first.unmount();
+    vi.mocked(getCurrentUser).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(getMyOrganizations).mockImplementation(
+      () => new Promise(() => {}),
+    );
+    renderWithClient(
+      <ReceiptPrintButton
+        cashierSession={cashierSession}
+        context={context}
+        sale={nonFiscal}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Печать чека' }));
+    await waitFor(() =>
+      expect(window.receiptPrinter?.print).toHaveBeenCalledWith(
+        expect.objectContaining({
+          receipt: expect.objectContaining({
+            fiscal: null,
+            localReceiptNumber: 'НФ-local-id',
+            cashier: 'Айжан Қасымова',
+            organization: expect.objectContaining({
+              displayName: 'Maria Market',
+            }),
+          }),
+        }),
+      ),
+    );
+  });
   beforeEach(() => {
     window.localStorage.clear();
     vi.clearAllMocks();

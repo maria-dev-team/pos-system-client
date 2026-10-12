@@ -1,6 +1,7 @@
 import { type BrowserWindow, ipcMain } from 'electron';
 
 import { CameraApiClient } from './camera-api.client';
+import { CameraDiscoveryWorker } from './camera-discovery-worker';
 import { CameraManager } from './camera-manager';
 import type { CameraAuthContext } from './camera.types';
 
@@ -21,12 +22,16 @@ export const registerCameraIpc = (
   mainWindow: BrowserWindow,
   apiUrl: string,
 ): CameraManager => {
-  const manager = new CameraManager(new CameraApiClient(apiUrl));
+  const api = new CameraApiClient(apiUrl);
+  const manager = new CameraManager(api);
+  const discovery = new CameraDiscoveryWorker(api);
   ipcMain.on(CHANNEL, (event, context: unknown) => {
     if (event.sender !== mainWindow.webContents || !isContext(context)) return;
     manager.setContext(context);
+    discovery.setContext(context);
   });
   mainWindow.on('closed', () => {
+    discovery.stop();
     ipcMain.removeAllListeners(CHANNEL);
     void manager.shutdown();
   });

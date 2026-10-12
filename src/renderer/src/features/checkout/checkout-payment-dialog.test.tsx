@@ -103,6 +103,173 @@ describe('CheckoutPaymentDialog', () => {
     ]);
   });
 
+  it('fills exact cash without submitting and adds banknotes cumulatively', async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = renderDialog({
+      sale: saleFixture({ total: '1234.50' }),
+    });
+    const received = screen.getByLabelText('Получено наличными, ₸');
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 1000 ₸' }),
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 2000 ₸' }),
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 5000 ₸' }),
+    );
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 10000 ₸' }),
+    );
+    expect(received).toHaveValue('18000.00');
+    expect(onConfirm).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Без сдачи' }));
+    expect(received).toHaveValue('1234.50');
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 1000 ₸' }),
+    );
+    expect(received).toHaveValue('2234.50');
+    expect(screen.getByText('1 000,00 ₸')).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить оплату' }),
+    );
+    expect(onConfirm).toHaveBeenCalledWith([
+      { method: 'CASH', amount: '1234.50', received: '2234.50' },
+    ]);
+  });
+
+  it('uses the cash portion for exact mixed receipts and keeps banknotes out of the split', async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = renderDialog({
+      sale: saleFixture({ total: '6500.00' }),
+    });
+    await user.click(screen.getByRole('button', { name: 'Смешанная' }));
+    const exact = screen.getByRole('button', {
+      name: 'Получено ровно наличную часть',
+    });
+    const cash = screen.getByLabelText('Наличная часть, ₸');
+    const received = screen.getByLabelText('Получено наличными, ₸');
+    expect(exact).toBeDisabled();
+    for (const value of ['0', '6500', '7000', '1.234']) {
+      fireEvent.change(cash, { target: { value } });
+      expect(exact).toBeDisabled();
+    }
+    fireEvent.change(cash, { target: { value: '1500.50' } });
+    await user.click(exact);
+    expect(received).toHaveValue('1500.50');
+    expect(screen.getByText('4 999,50 ₸')).toBeInTheDocument();
+    fireEvent.change(cash, { target: { value: '2000.50' } });
+    await user.click(exact);
+    expect(received).toHaveValue('2000.50');
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 5000 ₸' }),
+    );
+    expect(cash).toHaveValue('2000.50');
+    expect(received).toHaveValue('7000.50');
+    expect(onConfirm).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить оплату' }),
+    );
+    expect(onConfirm).toHaveBeenCalledWith([
+      { method: 'CASH', amount: '2000.50', received: '7000.50' },
+      { method: 'CASHLESS', amount: '4499.50' },
+    ]);
+  });
+
+  it('adds banknotes to the mixed cash portion independently and updates the cashless remainder', async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = renderDialog({
+      sale: saleFixture({ total: '25000.00' }),
+    });
+    await user.click(screen.getByRole('button', { name: 'Смешанная' }));
+    const cash = screen.getByLabelText('Наличная часть, ₸');
+    const received = screen.getByLabelText('Получено наличными, ₸');
+    for (const amount of [1000, 2000, 5000, 10000]) {
+      await user.click(
+        screen.getByRole('button', {
+          name: `Добавить ${amount} ₸ к наличной части`,
+        }),
+      );
+    }
+    expect(cash).toHaveValue('18000.00');
+    expect(received).toHaveValue('');
+    expect(screen.getByText('7 000,00 ₸')).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', { name: 'Получено ровно наличную часть' }),
+    );
+    expect(received).toHaveValue('18000.00');
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить купюру 1000 ₸' }),
+    );
+    expect(cash).toHaveValue('18000.00');
+    expect(received).toHaveValue('19000.00');
+    expect(onConfirm).not.toHaveBeenCalled();
+    await user.click(
+      screen.getByRole('button', { name: 'Подтвердить оплату' }),
+    );
+    expect(onConfirm).toHaveBeenCalledWith([
+      { amount: '18000.00', method: 'CASH', received: '19000.00' },
+      { amount: '7000.00', method: 'CASHLESS' },
+    ]);
+  });
+
+  it('preserves invalid cash input and disables both banknote groups while confirming', async () => {
+    const user = userEvent.setup();
+    const sale = saleFixture({ total: '6500.00' });
+    const { rerender, onConfirm, onOpenChange } = renderDialog({ sale });
+    await user.click(screen.getByRole('button', { name: 'Смешанная' }));
+    const cash = screen.getByLabelText('Наличная часть, ₸');
+    fireEvent.change(cash, { target: { value: '1.234' } });
+    expect(
+      screen.getByRole('button', { name: 'Добавить 1000 ₸ к наличной части' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Добавить купюру 1000 ₸' }),
+    ).toBeEnabled();
+    expect(cash).toHaveValue('1.234');
+    fireEvent.change(cash, { target: { value: '500.50' } });
+    await user.click(
+      screen.getByRole('button', { name: 'Добавить 1000 ₸ к наличной части' }),
+    );
+    expect(cash).toHaveValue('1500.50');
+    rerender(
+      <CheckoutPaymentDialog
+        sale={sale}
+        open
+        pending
+        onConfirm={onConfirm}
+        onOpenChange={onOpenChange}
+      />,
+    );
+    for (const amount of [1000, 2000, 5000, 10000]) {
+      expect(
+        screen.getByRole('button', {
+          name: `Добавить ${amount} ₸ к наличной части`,
+        }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole('button', { name: `Добавить купюру ${amount} ₸` }),
+      ).toBeDisabled();
+    }
+  });
+
+  it('does not silently discard invalid received input when adding banknotes', async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const input = screen.getByLabelText('Получено наличными, ₸');
+    fireEvent.change(input, { target: { value: '1.234' } });
+    const banknote = screen.getByRole('button', {
+      name: 'Добавить купюру 1000 ₸',
+    });
+    expect(banknote).toBeDisabled();
+    await user.click(banknote);
+    expect(input).toHaveValue('1.234');
+    await user.clear(input);
+    expect(banknote).toBeEnabled();
+    await user.click(banknote);
+    expect(input).toHaveValue('1000.00');
+  });
+
   it('includes a valid buyer BIN/IIN when requested', async () => {
     const user = userEvent.setup();
     const { onConfirm } = renderDialog();
@@ -286,6 +453,12 @@ describe('CheckoutPaymentDialog', () => {
     expect(screen.getByRole('button', { name: 'Смешанная' })).toBeDisabled();
     expect(screen.getByLabelText('Получено наличными, ₸')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Отмена' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Без сдачи' })).toBeDisabled();
+    for (const amount of [1000, 2000, 5000, 10000]) {
+      expect(
+        screen.getByRole('button', { name: `Добавить купюру ${amount} ₸` }),
+      ).toBeDisabled();
+    }
     expect(
       screen.getByRole('button', { name: 'Подтвердить оплату' }),
     ).toBeDisabled();

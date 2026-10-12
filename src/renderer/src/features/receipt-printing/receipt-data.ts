@@ -4,10 +4,13 @@ type PrintableReceipt = Parameters<
   NonNullable<Window['receiptPrinter']>['print']
 >[0]['receipt'];
 
-type ReceiptMetadata = {
+export type ReceiptMetadata = {
   cashierName?: string | null;
   currentCashier?: { id: string; name: string } | null;
-  organization?: OrganizationResponse | null;
+  organization?: Pick<
+    OrganizationResponse,
+    'name' | 'trade_name' | 'timezone'
+  > | null;
   store?: { address: string | null; name: string } | null;
 };
 

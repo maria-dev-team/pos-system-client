@@ -8,7 +8,9 @@ import type {
   CameraStatus,
   ClaimedCaptureJob,
 } from './camera.types';
+import { FfmpegErrorParser } from './ffmpeg-error';
 import { buildRtspUrl } from './rtsp-url';
+import { usbEncodingArgs, usbInputArgs } from './usb-camera';
 
 const SEGMENT_SECONDS = 5;
 const BUFFER_SECONDS = 90;
@@ -29,6 +31,7 @@ export class RollingCameraBuffer {
   private restartTimer: NodeJS.Timeout | null = null;
   private restartAttempt = 0;
   private inspecting = false;
+  private transport: 'tcp' | 'udp' = 'tcp';
   private runId = 0;
   private startedAt = 0;
   private stopped = true;
@@ -98,6 +101,8 @@ export class RollingCameraBuffer {
     const pinned = await this.pinCompletedSegments(eventDirectory, rangeStart);
 
     const waitMs = captureEnd + (SEGMENT_SECONDS + 1) * 1_000 - Date.now();
+    if (waitMs > 120_000)
+      throw new Error('Capture window exceeds the local limit');
     if (waitMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
@@ -231,14 +236,29 @@ export class RollingCameraBuffer {
           stdio: ['ignore', 'ignore', 'pipe'],
         },
       );
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        error ? reject(error) : resolve();
+      };
+      const deadline = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* still settle the failed job */
+        }
+        finish(new Error('Clip FFmpeg timed out'));
+      }, 30_000);
       child.stderr?.resume();
       child.once('error', () =>
-        reject(new Error('Unable to start clip FFmpeg')),
+        finish(new Error('Unable to start clip FFmpeg')),
       );
       child.once('close', (code) => {
-        if (code === 0) resolve();
+        if (code === 0) finish();
         else
-          reject(
+          finish(
             new Error(`Clip FFmpeg exited with code ${code ?? 'unknown'}`),
           );
       });
@@ -250,21 +270,35 @@ export class RollingCameraBuffer {
     const currentRun = ++this.runId;
     this.startedAt = Date.now();
     const outputPattern = join(this.directory, 'segment-%Y%m%d-%H%M%S.ts');
+    const isUsb = this.options.camera.type === 'usb';
+    const errors = new FfmpegErrorParser(isUsb);
+    let inputArgs: string[];
+    try {
+      inputArgs = isUsb
+        ? usbInputArgs(this.options.camera.device_id)
+        : [
+            '-rtsp_transport',
+            this.transport,
+            '-timeout',
+            '15000000',
+            '-fflags',
+            '+genpts',
+            '-i',
+            buildRtspUrl(this.options.camera),
+          ];
+    } catch {
+      this.handleExit(currentRun, 'camera_device_unavailable');
+      return;
+    }
     const args = [
       '-hide_banner',
       '-loglevel',
       'warning',
-      '-rtsp_transport',
-      'tcp',
-      '-timeout',
-      '15000000',
-      '-i',
-      buildRtspUrl(this.options.camera),
+      ...inputArgs,
       '-map',
       '0:v:0',
       '-an',
-      '-c:v',
-      'copy',
+      ...(isUsb ? usbEncodingArgs() : ['-c:v', 'copy']),
       '-f',
       'segment',
       '-segment_format',
@@ -285,11 +319,11 @@ export class RollingCameraBuffer {
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     this.child = child;
-    child.stderr?.resume();
+    child.stderr?.on('data', (chunk: Buffer) => errors.append(chunk));
     child.once('error', () =>
       this.handleExit(currentRun, 'ffmpeg_start_failed'),
     );
-    child.once('close', () => this.handleExit(currentRun, 'ffmpeg_exited'));
+    child.once('close', () => this.handleExit(currentRun, errors.finish()));
   }
 
   private handleExit(runId: number, errorCode: CameraErrorCode): void {
@@ -297,6 +331,13 @@ export class RollingCameraBuffer {
     this.runId += 1;
     this.child = null;
     this.options.onStatus('error', errorCode);
+    if (
+      this.options.camera.type !== 'usb' &&
+      errorCode === 'camera_transport_unsupported' &&
+      this.transport === 'tcp'
+    ) {
+      this.transport = 'udp';
+    }
     const delay = Math.min(
       1_000 * 2 ** this.restartAttempt,
       MAX_RESTART_DELAY_MS,
@@ -306,10 +347,12 @@ export class RollingCameraBuffer {
   }
 
   private async inspectSegments(): Promise<void> {
-    if (this.inspecting || this.stopped) return;
+    if (this.inspecting || this.stopped || !this.child) return;
+    const currentRun = this.runId;
     this.inspecting = true;
     try {
       const recent = await this.cleanup();
+      if (this.stopped || currentRun !== this.runId || !this.child) return;
       const newestSegmentAt = recent.length ? Math.max(...recent) : 0;
       if (
         newestSegmentAt >= this.startedAt &&
@@ -321,7 +364,8 @@ export class RollingCameraBuffer {
         this.restartStalledProcess();
       }
     } catch {
-      this.options.onStatus('error', 'filesystem_error');
+      if (!this.stopped && currentRun === this.runId)
+        this.options.onStatus('error', 'filesystem_error');
     } finally {
       this.inspecting = false;
     }
@@ -344,11 +388,12 @@ export class RollingCameraBuffer {
         .map(async (name) => {
           const path = join(this.directory, name);
           const stat = await fs.stat(path).catch(() => null);
-          return stat ? { path, mtime: stat.mtimeMs } : null;
+          return stat ? { path, mtime: stat.mtimeMs, size: stat.size } : null;
         }),
     );
     const existingSegments = segments.filter(
-      (segment): segment is { path: string; mtime: number } => segment !== null,
+      (segment): segment is { path: string; mtime: number; size: number } =>
+        segment !== null,
     );
     await Promise.all(
       existingSegments
@@ -356,7 +401,7 @@ export class RollingCameraBuffer {
         .map(({ path }) => fs.unlink(path).catch(() => undefined)),
     );
     return existingSegments
-      .filter(({ mtime }) => mtime >= cutoff)
+      .filter(({ mtime, size }) => mtime >= cutoff && size > 0)
       .map(({ mtime }) => mtime);
   }
 }

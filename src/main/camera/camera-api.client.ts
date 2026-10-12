@@ -1,5 +1,7 @@
 import { promises as fs } from 'fs';
+import { openAsBlob } from 'node:fs';
 
+import type { CameraDiscoveryJob, DiscoveredCamera } from './camera-discovery';
 import type {
   CameraConfig,
   CameraErrorCode,
@@ -33,6 +35,58 @@ export class CameraConfigRateLimitError extends Error {
 
 export class CameraApiClient {
   constructor(private readonly apiUrl: string) {}
+
+  async claimDiscovery(
+    accessToken: string,
+    registerId: string | null,
+    signal: AbortSignal,
+  ): Promise<CameraDiscoveryJob | null> {
+    const response = await fetch(
+      new URL('/v1/cameras/discovery/claim', this.apiUrl),
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(registerId ? { register_id: registerId } : {}),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      },
+    );
+    if (!response.ok)
+      throw new Error(`Discovery request failed: ${response.status}`);
+    return (
+      (await response.json()) as { data: { job: CameraDiscoveryJob | null } }
+    ).data.job;
+  }
+
+  async completeDiscovery(
+    accessToken: string,
+    job: CameraDiscoveryJob,
+    result: {
+      cameras: DiscoveredCamera[];
+      error?: 'network_error' | 'device_error';
+    },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const response = await fetch(
+      new URL(
+        `/v1/cameras/discovery/${encodeURIComponent(job.id)}/complete`,
+        this.apiUrl,
+      ),
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ claim_token: job.claim_token, ...result }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      },
+    );
+    if (!response.ok)
+      throw new Error(`Discovery result failed: ${response.status}`);
+  }
 
   async getConfig(
     accessToken: string,
@@ -115,13 +169,12 @@ export class CameraApiClient {
     eventId: string,
     filePath: string,
   ): Promise<void> {
-    const bytes = await fs.readFile(filePath);
+    const stat = await fs.stat(filePath);
+    if (stat.size > 64 * 1024 * 1024)
+      throw new Error('Capture clip exceeds 64 MiB');
+    const blob = await openAsBlob(filePath, { type: 'video/mp4' });
     const form = new FormData();
-    form.append(
-      'file',
-      new Blob([bytes], { type: 'video/mp4' }),
-      `${eventId}.mp4`,
-    );
+    form.append('file', blob, `${eventId}.mp4`);
     const response = await fetch(
       new URL(
         `/v1/anti-fraud/capture-jobs/${encodeURIComponent(eventId)}/upload`,

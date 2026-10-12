@@ -10,7 +10,10 @@ export class PosApiError extends PosError {
   constructor(
     code: string,
     readonly status: number,
-    readonly details: FiscalErrorDetails = {},
+    readonly details: FiscalErrorDetails & {
+      local_non_fiscal_policy_conflict?: boolean;
+      local_non_fiscal_snapshot_conflict?: boolean;
+    } = {},
     readonly retryAfterMs = 0,
   ) {
     super(

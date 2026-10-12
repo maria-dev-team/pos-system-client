@@ -78,25 +78,32 @@ export function CheckoutCategoryPicker({
     queryKey: queryKeys.products.quick(organizationId, storeId),
   });
 
+  const {
+    fetchNextPage: fetchCategories,
+    hasNextPage: moreCategories,
+    isFetchingNextPage: fetchingCategories,
+    isError: categoriesError,
+  } = categories;
+  const {
+    fetchNextPage: fetchProducts,
+    hasNextPage: moreProducts,
+    isFetchingNextPage: fetchingProducts,
+    isError: productsError,
+  } = quickProducts;
   useEffect(() => {
-    if (open && categories.hasNextPage && !categories.isFetchingNextPage)
-      void categories.fetchNextPage();
+    if (open && moreCategories && !fetchingCategories && !categoriesError)
+      void fetchCategories();
   }, [
-    categories.fetchNextPage,
-    categories.hasNextPage,
-    categories.isFetchingNextPage,
     open,
+    moreCategories,
+    fetchingCategories,
+    categoriesError,
+    fetchCategories,
   ]);
-
   useEffect(() => {
-    if (open && quickProducts.hasNextPage && !quickProducts.isFetchingNextPage)
-      void quickProducts.fetchNextPage();
-  }, [
-    open,
-    quickProducts.fetchNextPage,
-    quickProducts.hasNextPage,
-    quickProducts.isFetchingNextPage,
-  ]);
+    if (open && moreProducts && !fetchingProducts && !productsError)
+      void fetchProducts();
+  }, [open, moreProducts, fetchingProducts, productsError, fetchProducts]);
 
   const sellableQuickProducts = useMemo(
     () =>
@@ -144,13 +151,7 @@ export function CheckoutCategoryPicker({
     : [];
   const busy = addingProductId !== undefined;
   const pending = disabled || busy;
-  const loading =
-    categories.isPending ||
-    quickProducts.isPending ||
-    categories.hasNextPage ||
-    quickProducts.hasNextPage ||
-    categories.isFetchingNextPage ||
-    quickProducts.isFetchingNextPage;
+  const loading = categories.isPending || quickProducts.isPending;
 
   const selectProduct = async (product: ProductResponse) => {
     if (pending) return;
@@ -244,6 +245,9 @@ export function CheckoutCategoryPicker({
             />
           ) : visibleCategories.length || visibleProducts.length ? (
             <div className="space-y-6">
+              {fetchingCategories || fetchingProducts ? (
+                <p role="status">Загружаем остальные товары…</p>
+              ) : null}
               {visibleCategories.length ? (
                 <section aria-label="Категории быстрых товаров">
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

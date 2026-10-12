@@ -7,3 +7,5 @@ export {
   XReportPrintButton,
   ZReportPrintButton,
 } from './shift-report-printing';
+
+export { useReceiptMetadata } from './use-receipt-metadata';

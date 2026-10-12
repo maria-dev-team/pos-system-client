@@ -122,6 +122,19 @@ describe('registerAppUpdater', () => {
     updater.downloadUpdate.mockResolvedValue(['/update.exe']);
   });
 
+  it('releases startup after ten seconds and ignores a late downloaded update', async () => {
+    updater.checkForUpdates.mockReturnValue(new Promise(() => undefined));
+    const window = createWindow();
+    registerAppUpdater(window as never);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(
+      stateHandler()({ sender: window.webContents }),
+    ).resolves.toMatchObject({ status: 'unchecked' });
+    updater.emit('update-downloaded', { version: '2.0.0' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    window.close();
+  });
   it('bypasses the updater for unpackaged builds', async () => {
     electron.app.isPackaged = false;
     const window = createWindow();

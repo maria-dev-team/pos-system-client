@@ -18,8 +18,21 @@ export function useAppUpdateState(): AppUpdateState {
   return state;
 }
 
+const fallback: AppUpdateState = {
+  status: 'unchecked',
+  currentVersion: '',
+  availableVersion: null,
+  downloadPercent: null,
+  downloadTransferred: null,
+  downloadTotal: null,
+  attempt: 0,
+  restartAt: null,
+};
+
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppUpdateState>();
+  const [state, setState] = useState<AppUpdateState | undefined>(() =>
+    window.appUpdates ? undefined : fallback,
+  );
 
   useEffect(() => {
     const appUpdates = window.appUpdates;
@@ -32,9 +45,14 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setState(next);
     });
 
-    void appUpdates.getState().then((next) => {
-      if (active && !receivedUpdate) setState(next);
-    });
+    void appUpdates
+      .getState()
+      .then((next) => {
+        if (active && !receivedUpdate) setState(next);
+      })
+      .catch(() => {
+        if (active && !receivedUpdate) setState(fallback);
+      });
 
     return () => {
       active = false;
@@ -161,6 +179,18 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
               </p>
             </>
           )}
+          {state?.status !== 'download-failed' &&
+          state?.status !== 'restarting' ? (
+            <Button
+              className="mt-6"
+              variant="ghost"
+              onClick={() => {
+                void window.appUpdates?.continueWithoutUpdate();
+              }}
+            >
+              Продолжить работу
+            </Button>
+          ) : null}
         </div>
       </section>
     </main>

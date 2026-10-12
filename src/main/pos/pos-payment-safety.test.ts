@@ -5,6 +5,7 @@ import { type Mock, afterEach, expect, it, vi } from 'vitest';
 import type { LocalSale, SaleResponse } from '../../shared/pos/contracts';
 import { applyCommand, newSale } from '../../shared/pos/sale';
 import {
+  fiscalReceiptFixture,
   ids,
   productFixture,
   profileFixture,
@@ -154,4 +155,27 @@ it('accepts a completed non-fiscal payment without a fiscal receipt', async () =
     status: 'COMPLETED',
   });
   expect(db.sale(ids.session, sale.id)?.payment).toBeNull();
+});
+
+it('accepts a confirmed autonomous Webkassa receipt without sending another payment', async () => {
+  const { service, db, sale, fetcher } = await pendingPayment((draft) => ({
+    sale: {
+      ...draft,
+      fiscal_receipt: { ...fiscalReceiptFixture(draft.total), offline: true },
+      status: 'COMPLETED',
+      version: draft.version + 1,
+    },
+    retry_safe: false,
+    replay_ready: false,
+  }));
+  await expect(
+    service.handle({ type: 'reconcilePayment', saleId: sale.id }),
+  ).resolves.toMatchObject({
+    status: 'COMPLETED',
+    fiscal_receipt: { offline: true },
+  });
+  expect(db.sale(ids.session, sale.id)?.payment).toBeNull();
+  expect(
+    fetcher.mock.calls.some(([url]) => String(url).endsWith('/checkout')),
+  ).toBe(false);
 });

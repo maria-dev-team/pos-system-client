@@ -38,6 +38,7 @@ import {
   localPosActive,
 } from '@renderer/common/lib/local-pos';
 import { readPendingCashMovement } from '@renderer/features/cash-movements';
+import { assertNoPendingReturns } from '@renderer/features/returns';
 
 import { PosError } from '../../../../shared/pos/contracts';
 import { cashierSessionClosingSchema } from './cashier-session.schema';
@@ -80,6 +81,7 @@ export function EndCashierSessionAction({
     useState<CashierSessionResponse | null>(null);
   const mutation = useMutation({
     mutationFn: async (cash: string) => {
+      assertNoPendingReturns(cashierSession.id);
       if (readPendingCashMovement(cashierSession.id))
         throw new PosError(
           'CASH_MOVEMENT_PENDING',

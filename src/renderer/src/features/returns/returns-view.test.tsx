@@ -284,7 +284,23 @@ beforeEach(() => {
     receipts: [receiptSummary],
   });
   vi.mocked(getReceipt).mockResolvedValue(receipt);
-  vi.mocked(createReceiptReturn).mockResolvedValue(completedReturn);
+  vi.mocked(createReceiptReturn).mockImplementation(
+    async (_receipt, id, payload) => ({
+      ...completedReturn,
+      id,
+      items: payload.items.map((item) => ({
+        ...receipt.items.find((i) => i.id === item.saleItemId)!,
+        source_sale_item_id: item.saleItemId,
+        quantity: item.quantity,
+        return_disposition: item.returnDisposition,
+      })),
+      payments: payload.payments.map((p) => ({
+        ...receipt.payments[0]!,
+        ...p,
+        direction: 'OUTGOING' as const,
+      })),
+    }),
+  );
   vi.mocked(createWithoutReceiptReturn).mockResolvedValue(completedReturn);
   vi.mocked(triggerAntiFraudEvent).mockResolvedValue(undefined);
 });
