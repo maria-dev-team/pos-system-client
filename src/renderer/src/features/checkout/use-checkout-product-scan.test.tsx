@@ -310,7 +310,7 @@ it('does not reuse a package marking code when a raw GTIN shares its lookup', as
   );
 });
 
-it('shares and briefly caches the profile for distinct barcode scans', async () => {
+it('shares an in-flight profile request but refreshes it for the next scan', async () => {
   const product = { ...productFixture(), additional_barcode: '2900000000018' };
   vi.mocked(searchProducts).mockResolvedValue(response(product));
   const f = fixture();
@@ -320,12 +320,71 @@ it('shares and briefly caches the profile for distinct barcode scans', async () 
       f.result.current('2900000000018'),
     ]),
   );
-  await act(() => f.result.current(product.barcode));
-  expect(f.execute).toHaveBeenCalledTimes(3);
   expect(request.get).toHaveBeenCalledExactlyOnceWith(
     '/v1/pos/catalog/sync-start',
   );
+  await act(() => f.result.current(product.barcode));
+  expect(f.execute).toHaveBeenCalledTimes(3);
+  expect(request.get).toHaveBeenCalledTimes(2);
 });
+
+it.each(['barcode conflict', 'prefix change', 'profile refresh failure'])(
+  'refuses another weighted addition after a %s',
+  async (change) => {
+    const barcode = '2000001001851';
+    const product = { ...productFixture(), unit: 'kg' as const, scale_plu: 1 };
+    let changed = false;
+    vi.mocked(searchProducts).mockResolvedValue(response());
+    vi.mocked(request.get).mockImplementation(async (path) => {
+      if (path === '/v1/pos/catalog/lookup')
+        return { data: { data: { products: [product] } } };
+      if (changed && change === 'profile refresh failure')
+        throw new Error('profile unavailable');
+      return {
+        data: {
+          data: {
+            scale_profile: {
+              format: 'ean13-weight-v1',
+              prefix: changed && change === 'prefix change' ? '21' : '20',
+              enabled: true,
+              blocked_reason:
+                changed && change === 'barcode conflict'
+                  ? 'barcode_conflict'
+                  : null,
+            },
+          },
+        },
+      };
+    });
+    const f = fixture();
+    await act(() => f.result.current(barcode));
+    expect(f.execute).toHaveBeenCalledExactlyOnceWith({
+      type: 'add',
+      productId: product.id,
+      quantity: '0.185',
+    });
+
+    changed = true;
+    await act(() => f.result.current(barcode));
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(
+      vi
+        .mocked(request.get)
+        .mock.calls.filter(([path]) => path === '/v1/pos/catalog/lookup'),
+    ).toHaveLength(1);
+    expect(f.onIssue).toHaveBeenLastCalledWith({
+      barcode,
+      message: expect.any(String),
+    });
+    if (change === 'prefix change')
+      expect(searchProducts).toHaveBeenCalledWith({
+        limit: 20,
+        offset: 0,
+        search: barcode,
+      });
+    else expect(searchProducts).not.toHaveBeenCalled();
+  },
+);
 
 it('does not reuse the previous authentication context profile', async () => {
   vi.mocked(searchProducts).mockResolvedValue(response(productFixture()));

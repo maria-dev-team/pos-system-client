@@ -28,7 +28,7 @@ export async function browserWeightedBarcode(
   const auth = captureAuth();
   const profile = await queryClient.fetchQuery({
     queryKey: ['products', 'scale-profile', auth.generation, auth.context],
-    staleTime: 15_000,
+    staleTime: 0,
     retry: false,
     queryFn: async () => {
       const { data } = await request.get('/v1/pos/catalog/sync-start');
