@@ -34,6 +34,7 @@ export function LocalPosSyncBar() {
       ))}
       {issue ? (
         <Button
+          data-error-retry="true"
           type="button"
           variant="ghost"
           className="shrink-0"

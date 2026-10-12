@@ -72,6 +72,7 @@ function ReceiptDetailContent({
           )}
         </p>
         <Button
+          data-error-retry="true"
           className="mt-3"
           onClick={() => void receiptDetail.refetch()}
           type="button"
@@ -254,6 +255,7 @@ export function ReceiptReturnPanel({
             <div className="rounded-xl border border-destructive/20 p-4 text-center">
               <p className="font-semibold">Не удалось загрузить чеки</p>
               <Button
+                data-error-retry="true"
                 className="mt-3"
                 onClick={() => void receipts.refetch()}
                 type="button"
@@ -395,6 +397,7 @@ export function WithoutReceiptReturnPanel({
         <div className="rounded-xl border border-destructive/20 p-4 text-center">
           <p>Не удалось найти товары</p>
           <Button
+            data-error-retry="true"
             onClick={() => void products.refetch()}
             type="button"
             variant="ghost"

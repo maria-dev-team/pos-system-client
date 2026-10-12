@@ -6,9 +6,11 @@ import { pathToFileURL } from 'url';
 
 import icon from '../../resources/icon.png?asset';
 import { apiConfig } from '../shared/api/config';
+import { reportError } from '../shared/diagnostics';
 import { resolveApiUserDataPath } from './api-user-data';
 import { registerAppUpdater } from './app-updater';
 import { registerCameraIpc } from './camera';
+import { registerDiagnostics } from './diagnostics';
 import { registerPosIpc } from './pos/pos-ipc';
 import { registerReceiptPrinterIpc } from './receipt-printer';
 import { resolveRendererFilePath } from './renderer-protocol';
@@ -49,6 +51,10 @@ function registerRendererProtocol(): void {
   });
 }
 
+process.on('uncaughtExceptionMonitor', (error) =>
+  reportError(error, 'main', 'uncaught'),
+);
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -68,6 +74,7 @@ function createWindow(): void {
     },
   });
 
+  registerDiagnostics(mainWindow);
   registerCameraIpc(mainWindow, apiUrl);
   registerReceiptPrinterIpc(mainWindow);
   registerAppUpdater(mainWindow);

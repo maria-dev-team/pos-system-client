@@ -120,6 +120,7 @@ function AppUpdateGate({ state }: { state: AppUpdateState | undefined }) {
               </p>
               <div className="mt-6 grid gap-3">
                 <Button
+                  data-error-retry="true"
                   onClick={() => {
                     void window.appUpdates?.retryDownload();
                   }}

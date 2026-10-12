@@ -22,7 +22,7 @@ import { serializeRequestData } from './request-data.serializer';
 
 const clientConfig = {
   baseURL: apiConfig.apiUrl,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', 'X-Client-Type': 'pos' },
   timeout: 15_000,
   withCredentials: true,
 };

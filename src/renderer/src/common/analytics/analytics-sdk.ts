@@ -181,8 +181,6 @@ export class AnalyticsSDK {
       if (element && /^[a-zA-Z0-9._-]{1,100}$/.test(element))
         this.track('form.changed', { element });
     });
-    listen(window, 'error', () => this.track('js.error'));
-    listen(window, 'unhandledrejection', () => this.track('js.error'));
     listen(window, 'offline', () => this.track('network.offline'));
     listen(window, 'online', () => {
       this.track('network.online');

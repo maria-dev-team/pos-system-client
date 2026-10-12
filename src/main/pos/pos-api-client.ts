@@ -15,6 +15,7 @@ export class PosApiError extends PosError {
       local_non_fiscal_snapshot_conflict?: boolean;
     } = {},
     readonly retryAfterMs = 0,
+    readonly traceId?: string,
   ) {
     super(
       code,
@@ -48,6 +49,8 @@ export async function requestPosApi<T>(
       method: body === undefined ? 'GET' : 'POST',
       redirect: 'error',
       headers: {
+        'X-Client-Type': 'pos',
+        'X-Pos-Diagnostics': '1',
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
@@ -76,6 +79,7 @@ export async function requestPosApi<T>(
         response.status,
         {},
         retryAfter(response),
+        response.headers.get('x-trace-id') ?? undefined,
       );
     if (error instanceof PosError) throw error;
     if (
@@ -105,6 +109,7 @@ export async function requestPosApi<T>(
         response,
         (error as { retry_after_seconds?: unknown }).retry_after_seconds,
       ),
+      response.headers.get('x-trace-id') ?? undefined,
     );
   }
   if (

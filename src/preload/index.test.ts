@@ -217,3 +217,50 @@ it('exposes a dedicated shift report print method without arbitrary IPC access',
   );
   expect(api).not.toHaveProperty('invoke');
 });
+
+const diagnostics = (): import('../shared/diagnostics').DiagnosticsBridge => {
+  return electron.exposeInMainWorld.mock.calls.find(
+    ([name]) => name === 'diagnostics',
+  )![1];
+};
+it('probes older main processes without invoking missing diagnostics handlers', async () => {
+  vi.useFakeTimers();
+  try {
+    electron.invoke.mockClear();
+    const pending = expect(diagnostics().pending('cashier')).rejects.toThrow(
+      'Перезапустите',
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    await pending;
+    expect(electron.invoke).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it('shares a readiness probe and invokes fixed channels only after matching acknowledgement', async () => {
+  electron.on.mockClear();
+  electron.send.mockClear();
+  electron.invoke.mockClear();
+  electron.invoke.mockResolvedValue([]);
+  const pending = diagnostics().pending('cashier');
+  const context = diagnostics().context('cashier', '/checkout');
+  expect(electron.send.mock.calls).toHaveLength(1);
+  const [channel, id] = electron.send.mock.calls[0]!;
+  expect(channel).toBe('diagnostics:connect');
+  const listener = electron.on.mock.calls.find(
+    ([name]) => name === 'diagnostics:ready',
+  )![1];
+  listener({}, id + 1);
+  expect(electron.invoke).not.toHaveBeenCalled();
+  listener({}, id);
+  await expect(pending).resolves.toEqual([]);
+  await context;
+  expect(electron.invoke.mock.calls).toEqual([
+    ['diagnostics:pending', 'cashier'],
+    ['diagnostics:context', { owner: 'cashier', page: '/checkout' }],
+  ]);
+  expect(electron.removeListener).toHaveBeenCalledWith(
+    'diagnostics:ready',
+    listener,
+  );
+});

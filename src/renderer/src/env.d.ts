@@ -10,6 +10,7 @@ interface ImportMeta {
 }
 
 interface Window {
+  diagnostics?: import('../../shared/diagnostics').DiagnosticsBridge;
   localPos?: import('../../shared/pos/contracts').LocalPosBridge;
   windowControls?: {
     minimize: () => void;

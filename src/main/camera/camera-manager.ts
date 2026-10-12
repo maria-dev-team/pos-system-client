@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 
+import { reportError } from '../../shared/diagnostics';
 import {
   CameraApiClient,
   CameraConfigRateLimitError,
@@ -111,6 +112,7 @@ export class CameraManager {
       this.configRetryDelayMs = CONFIG_REFRESH_MS;
       await this.replaceCamera(camera);
     } catch (error) {
+      reportError(error, 'camera', 'capture');
       // Keep an already-running local buffer alive during backend outages.
       if (generation === this.refreshGeneration) {
         this.configRetryDelayMs = Math.min(
@@ -176,6 +178,7 @@ export class CameraManager {
     status: CameraStatus,
     errorCode?: CameraErrorCode,
   ): Promise<void> {
+    if (errorCode) reportError({ code: errorCode }, 'camera', 'capture');
     const nextErrorCode = errorCode ?? null;
     if (
       status === this.currentStatus &&
@@ -240,6 +243,7 @@ export class CameraManager {
       clipPath = await buffer.createEventClip(claimed, this.clipsRoot);
       await this.uploadWithRetry(context.accessToken, eventId, clipPath);
     } catch (error) {
+      reportError(error, 'camera', 'capture');
       if (eventId) {
         const message =
           error instanceof Error ? error.message : 'Unknown capture error';
@@ -272,6 +276,7 @@ export class CameraManager {
         await this.api.uploadCaptureClip(accessToken, eventId, clipPath);
         return;
       } catch (error) {
+        reportError(error, 'camera', 'capture');
         lastError = error;
         if (attempt < UPLOAD_ATTEMPTS) {
           await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));

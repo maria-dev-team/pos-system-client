@@ -5,6 +5,14 @@ import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 
 import {
+  type PosDiagnostic,
+  describeError,
+  emitDiagnostic,
+  readDiagnosticContext,
+  reportError,
+  retryDiagnostics,
+} from '../../shared/diagnostics';
+import {
   POS_STATUS_TIMEOUT_MS,
   type PosReply,
   posRequestSchema,
@@ -75,6 +83,7 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
   const pending = new Map<number, (reply: PosReply) => void>();
   const unavailable: PosReply = {
     ok: false,
+    reported: true,
     code: 'LOCAL_STORAGE_ERROR',
     message:
       'Локальное хранилище кассы недоступно. Перезапустите приложение; не удаляйте данные кассы.',
@@ -83,7 +92,9 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
   let closed = false;
   let activeWorker: Worker | undefined;
   let workerGeneration = 0;
-  const fail = (): void => {
+  const fail = (capture = true): void => {
+    if (capture && !closed)
+      reportError({ code: 'LOCAL_STORAGE_ERROR' }, 'worker', 'startup');
     failed = true;
     for (const resolve of pending.values()) resolve(unavailable);
     pending.clear();
@@ -120,9 +131,20 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
       });
       worker.on(
         'message',
-        (message: { changed?: boolean; id: number; reply: PosReply }) => {
+        (message: {
+          diagnostic?: PosDiagnostic;
+          owner?: string | null;
+          retry?: { source?: string; operation_id?: string };
+          changed?: boolean;
+          id: number;
+          reply: PosReply;
+        }) => {
           if (activeWorker !== worker) return;
-          if (message.changed) {
+          if (message.diagnostic) {
+            emitDiagnostic(message.diagnostic, message.owner);
+          } else if (message.retry) {
+            retryDiagnostics(message.retry);
+          } else if (message.changed) {
             if (!window.isDestroyed()) window.webContents.send('pos:changed');
           } else {
             pending.get(message.id)?.(message.reply);
@@ -155,13 +177,15 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
           code: 'INVALID_REQUEST',
           message: 'Некорректные параметры операции.',
         };
+      const diagnosticContext = readDiagnosticContext();
       try {
         if (parsed.data.type === 'restartWorker') {
           if (closed || restarting) return unavailable;
+          retryDiagnostics({ source: 'worker' });
           restarting = true;
           workerGeneration++;
           // Never replay pending mutations. Their durable state is read after restart.
-          fail();
+          fail(false);
           const previous = activeWorker;
           activeWorker = undefined;
           try {
@@ -188,7 +212,20 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
             settled = true;
             clearTimeout(timer);
             pending.delete(id);
-            resolve(reply);
+            if (!reply.ok && !reply.reported)
+              emitDiagnostic(
+                {
+                  ...describeError(
+                    { code: reply.code },
+                    'local',
+                    parsed.data.type,
+                    'saleId' in parsed.data ? parsed.data.saleId : undefined,
+                  ),
+                  page: diagnosticContext.page,
+                },
+                diagnosticContext.owner,
+              );
+            resolve(reply.ok ? reply : { ...reply, reported: true });
           };
           pending.set(id, finish);
           // Only read-only status requests time out. Never treat an elapsed UI
@@ -216,7 +253,11 @@ export function registerPosIpc(window: BrowserWindow, apiUrl: string): void {
                 finish(unavailable);
                 return;
               }
-              worker.postMessage({ id, request: parsed.data });
+              worker.postMessage({
+                id,
+                request: parsed.data,
+                diagnosticContext,
+              });
             })
             .catch(() => finish(unavailable));
         });
