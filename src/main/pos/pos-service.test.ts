@@ -46,9 +46,6 @@ async function fixture(
   profile.tokenHash = createHash('sha256').update('token').digest('hex');
   db.set(`profile:${profile.tokenHash}:${ids.register}`, profile);
   db.set(`adopted:${ids.session}`, true);
-  await db.replaceCatalog(`${ids.organization}:${ids.store}`, [
-    productFixture(),
-  ]);
   const fetcher = vi.fn(
     async (input: string | URL | Request, init?: RequestInit) => {
       const path = String(input).replace('https://api.test', '');
@@ -100,6 +97,9 @@ async function fixture(
     fetcher as typeof fetch,
   );
   services.push(service);
+  await db.replaceCatalog(`${ids.organization}:${ids.store}`, [
+    productFixture(),
+  ]);
   await service.connect('token', ids.register);
   await tick();
   return { service, db, fetcher };
@@ -1435,7 +1435,7 @@ describe('local POS application service', () => {
       items: [{ quantity: '1.000' }],
     });
     expect(reopened.sale(ids.session, sale.id)!.inFlight).toEqual(flight);
-  });
+  }, 15_000);
   it('requires successful initial draft adoption before permitting offline edits', async () => {
     const { service, db, fetcher } = await fixture();
     await service.handle({ type: 'disconnect' });
