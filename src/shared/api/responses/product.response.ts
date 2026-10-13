@@ -13,6 +13,7 @@ export type ProductResponse = {
   id: string;
   is_active: boolean;
   is_quick: boolean;
+  quick_groups?: { id: string; name: string }[];
   name: string;
   nkt: {
     gtin: string | null;

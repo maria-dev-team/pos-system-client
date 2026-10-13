@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useKeyboardViewport } from './keyboard-viewport';
 import { NumericKeypad } from './numeric-keypad';
 import { Button } from './ui/button';
 import { VirtualKeyboard } from './virtual-keyboard';
@@ -59,13 +60,23 @@ export function OnScreenKeyboardProvider({
 }: {
   children: ReactNode;
 }) {
+  const keyboardRef = useRef<HTMLElement | null>(null);
   const activeElementRef = useRef<EditableElement | null>(null);
   const [mode, setMode] = useState<KeyboardMode>('text');
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
   const [maxLength, setMaxLength] = useState<number>();
+  const revealRef = useKeyboardViewport(
+    open,
+    mode,
+    keyboardRef,
+    activeElementRef,
+  );
 
   useEffect(() => {
+    let pointerAction = false;
+    let pointerOnField = false;
+    let pointerFrame = 0;
     const dismiss = () => {
       activeElementRef.current = null;
       setOpen(false);
@@ -83,26 +94,58 @@ export function OnScreenKeyboardProvider({
       setValue(element.value);
       setMaxLength(element.maxLength > -1 ? element.maxLength : undefined);
       setOpen(true);
+      revealRef.current();
     };
     const handlePointerDown = (event: PointerEvent) => {
       if (isKeyboardTarget(event.target)) return;
+      pointerAction = true;
+      pointerOnField = false;
+      cancelAnimationFrame(pointerFrame);
       if (isEditableElement(event.target)) {
+        pointerOnField = true;
         activate(event.target);
         return;
       }
       if (event.target instanceof Element) {
         const label = event.target.closest('label');
         if (label && isEditableElement(label.control)) {
+          pointerOnField = true;
           activate(label.control);
           return;
         }
       }
+      // Closing here would resize the page before pointerup and move the
+      // pressed button away from the pointer, swallowing its click.
+    };
+    const handleClick = (event: MouseEvent) => {
+      const fieldPress = pointerOnField;
+      pointerOnField = false;
+      pointerAction = false;
+      if (fieldPress) return;
+      if (isKeyboardTarget(event.target) || isEditableElement(event.target))
+        return;
+      if (event.target instanceof Element) {
+        const label = event.target.closest('label');
+        if (label && isEditableElement(label.control)) return;
+      }
       dismiss();
+    };
+    const handlePointerUp = () => {
+      cancelAnimationFrame(pointerFrame);
+      pointerFrame = requestAnimationFrame(() => {
+        pointerAction = false;
+        pointerOnField = false;
+        if (
+          !isEditableElement(document.activeElement) &&
+          !isKeyboardTarget(document.activeElement)
+        )
+          dismiss();
+      });
     };
     const handleFocus = (event: FocusEvent) => {
       if (isKeyboardTarget(event.target)) return;
       if (!isEditableElement(event.target)) {
-        dismiss();
+        if (!pointerAction) dismiss();
         return;
       }
       activate(event.target);
@@ -137,6 +180,9 @@ export function OnScreenKeyboardProvider({
     };
 
     document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('pointerup', handlePointerUp, true);
+    document.addEventListener('pointercancel', handlePointerUp, true);
+    document.addEventListener('click', handleClick);
     document.addEventListener('focusin', handleFocus, true);
     document.addEventListener('input', handleInput, true);
     document.addEventListener('keydown', handleKeyDown, true);
@@ -156,6 +202,10 @@ export function OnScreenKeyboardProvider({
     observer.observe(document.body, { childList: true, subtree: true });
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown, true);
+      cancelAnimationFrame(pointerFrame);
+      document.removeEventListener('pointerup', handlePointerUp, true);
+      document.removeEventListener('pointercancel', handlePointerUp, true);
+      document.removeEventListener('click', handleClick);
       document.removeEventListener('focusin', handleFocus, true);
       document.removeEventListener('input', handleInput, true);
       document.removeEventListener('keydown', handleKeyDown, true);
@@ -168,14 +218,7 @@ export function OnScreenKeyboardProvider({
       window.removeEventListener('blur', dismiss);
       observer.disconnect();
     };
-  }, []);
-
-  useEffect(() => {
-    document.body.dataset.onScreenKeyboardOpen = String(open);
-    return () => {
-      delete document.body.dataset.onScreenKeyboardOpen;
-    };
-  }, [open]);
+  }, [revealRef]);
 
   const updateValue = (nextValue: string) => {
     const element = activeElementRef.current;
@@ -223,6 +266,7 @@ export function OnScreenKeyboardProvider({
       {open
         ? createPortal(
             <section
+              ref={keyboardRef}
               aria-label={
                 mode === 'numeric'
                   ? 'Экранная цифровая клавиатура'

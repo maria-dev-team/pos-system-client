@@ -126,6 +126,7 @@ export function productFixture(): ProductResponse {
     unit: 'pcs',
     is_active: true,
     is_quick: false,
+    quick_groups: [],
     deleted_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

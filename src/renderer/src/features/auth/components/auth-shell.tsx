@@ -8,7 +8,10 @@ type AuthShellProps = {
 
 export function AuthShell({ children, description, title }: AuthShellProps) {
   return (
-    <main className="grid min-h-full place-items-center bg-workspace px-6 py-10">
+    <main
+      data-auth-shell
+      className="grid min-h-full place-items-center bg-workspace px-6 py-10"
+    >
       <section className="w-full max-w-[520px] rounded-2xl border border-border bg-card p-8 shadow-[var(--shadow-surface)] sm:p-10">
         <header className="mb-8 text-center">
           <div
