@@ -118,7 +118,7 @@ function RootLayout() {
   return (
     <OnScreenKeyboardProvider>
       <LocalPosSyncProvider enabled={Boolean(accessToken)}>
-        <div className="flex h-svh flex-col overflow-hidden">
+        <div className="flex h-[var(--pos-viewport-height,100svh)] flex-col overflow-hidden">
           <StatusBar />
           <LocalPosSyncBar />
           <div className="min-h-0 flex-1 overflow-auto">

@@ -104,6 +104,23 @@ export class PosDatabase {
         throw error;
       }
     }
+    if (Number(this.statement('PRAGMA user_version').get()?.user_version) < 4) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        this.db.exec(`
+          -- Older POS versions discarded quick_groups. Reload each store once,
+          -- preserving cached products and receipts for use while offline.
+          DELETE FROM metadata WHERE key LIKE 'catalog-cursor:%'
+            OR key LIKE 'catalog-progress:%' OR key LIKE 'catalog-pending:%'
+            OR key LIKE 'catalog:%';
+          PRAGMA user_version=4;
+          COMMIT;
+        `);
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    }
     const saleColumns = this.statement('PRAGMA table_info(local_sales)').all();
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -462,7 +479,12 @@ export class PosDatabase {
               if (
                 mode === 'missing' &&
                 !(
-                  ['additional_barcode', 'scale_plu', 'scale_name'] as const
+                  [
+                    'additional_barcode',
+                    'scale_plu',
+                    'scale_name',
+                    'quick_groups',
+                  ] as const
                 ).some(
                   (field) =>
                     previous[field] === undefined &&

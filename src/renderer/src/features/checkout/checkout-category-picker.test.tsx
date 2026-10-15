@@ -114,6 +114,7 @@ const renderPicker = (
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   vi.mocked(getCategories).mockResolvedValue(categoryPage());
   vi.mocked(searchProducts).mockResolvedValue(productPage([product()]));
 });
@@ -133,6 +134,12 @@ describe('CheckoutCategoryPicker', () => {
     expect(
       await screen.findByRole('button', { name: 'Открыть категорию Выпечка' }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('navigation', { name: 'Путь быстрого выбора' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Быстрые товары' }),
+    ).not.toBeInTheDocument();
     expect(getCategories).toHaveBeenCalledWith({ limit: 100, offset: 0 });
     expect(searchProducts).toHaveBeenCalledWith({
       isQuick: true,
@@ -175,6 +182,20 @@ describe('CheckoutCategoryPicker', () => {
     expect(screen.queryByText('Старый хлеб')).not.toBeInTheDocument();
     expect(screen.queryByText('Хлеб без цены')).not.toBeInTheDocument();
     expect(screen.queryByText('Обычный напиток')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Хлеб' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Выпечка' }));
+    expect(
+      screen.getByRole('button', { name: 'Открыть категорию Хлеб' }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Все категории' }));
+    expect(
+      screen.getByRole('button', { name: 'Открыть категорию Выпечка' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('navigation', { name: 'Путь быстрого выбора' }),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps the dialog open and announces a successful add', async () => {
@@ -209,23 +230,111 @@ describe('CheckoutCategoryPicker', () => {
     expect(screen.queryByText('Товар «Хлеб» добавлен')).not.toBeInTheDocument();
   });
 
-  it('shows uncategorized quick products in a fallback category', async () => {
-    const user = userEvent.setup();
+  it('shows uncategorized quick products directly beside category folders', async () => {
     vi.mocked(searchProducts).mockResolvedValue(
       productPage([
+        product(),
         product({ category_id: null, id: 'kurt', name: 'Курт', sku: null }),
       ]),
     );
     renderPicker(true);
+    expect(
+      await screen.findByRole('button', { name: 'Добавить товар Курт' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Открыть категорию Выпечка' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Открыть категорию Без категории' }),
+    ).not.toBeInTheDocument();
+  });
 
+  it('uses independent groups, keeps ungrouped products at the root, and supports multiple groups', async () => {
+    const user = userEvent.setup();
+    vi.mocked(searchProducts).mockResolvedValue(
+      productPage([
+        product({
+          quick_groups: [
+            { id: 'breakfast', name: 'Завтрак' },
+            { id: 'popular', name: 'Популярное' },
+          ],
+        }),
+        product({ id: 'kurt', name: 'Курт', quick_groups: [] }),
+      ]),
+    );
+    renderPicker(true);
+    await user.click(screen.getByRole('tab', { name: 'По группам' }));
+    expect(
+      await screen.findByRole('button', { name: 'Добавить товар Курт' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Добавить товар Хлеб' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Открыть категорию Выпечка' }),
+    ).not.toBeInTheDocument();
     await user.click(
-      await screen.findByRole('button', {
-        name: 'Открыть категорию Без категории',
-      }),
+      screen.getByRole('button', { name: 'Открыть группу Завтрак' }),
     );
     expect(
-      screen.getByRole('button', { name: 'Добавить товар Курт' }),
+      screen.getByRole('button', { name: 'Добавить товар Хлеб' }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Добавить товар Курт' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Все группы' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Открыть группу Популярное' }),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Добавить товар Хлеб' }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'По категориям' }));
+    expect(
+      await screen.findByRole('button', { name: 'Открыть категорию Выпечка' }),
+    ).toBeInTheDocument();
+  });
+
+  it('remembers either tab after closing and remounting and does not fetch categories for groups', async () => {
+    const user = userEvent.setup();
+    renderPicker(true);
+    await user.click(screen.getByRole('tab', { name: 'По группам' }));
+    await user.click(screen.getByRole('button', { name: 'Закрыть' }));
+    cleanup();
+    vi.mocked(getCategories).mockClear();
+    renderPicker(true);
+    expect(screen.getByRole('tab', { name: 'По группам' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(
+      await screen.findByRole('button', { name: 'Добавить товар Хлеб' }),
+    ).toBeInTheDocument();
+    expect(getCategories).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('tab', { name: 'По категориям' }));
+    cleanup();
+    renderPicker(true);
+    expect(screen.getByRole('tab', { name: 'По категориям' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(
+      await screen.findByRole('button', { name: 'Открыть категорию Выпечка' }),
+    ).toBeInTheDocument();
+  });
+
+  it('allows group browsing if category loading fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(getCategories).mockRejectedValue(new Error('offline'));
+    renderPicker(true);
+    await screen.findByText('Не удалось загрузить быстрые товары');
+    await user.click(screen.getByRole('tab', { name: 'По группам' }));
+    expect(
+      await screen.findByRole('button', { name: 'Добавить товар Хлеб' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Не удалось загрузить быстрые товары'),
+    ).not.toBeInTheDocument();
   });
 
   it('can be closed while product selection is disabled', async () => {

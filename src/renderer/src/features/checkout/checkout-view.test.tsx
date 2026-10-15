@@ -297,23 +297,27 @@ afterEach(() => {
 });
 
 describe('server-authoritative checkout', () => {
-  it('shows quick products by category only with both read permissions', async () => {
+  it('allows quick groups with product read and requires category read for the category tab', async () => {
+    const user = userEvent.setup();
     renderCheckout();
-
-    await screen.findByLabelText('Сканируйте или найдите товар');
-    expect(
-      screen.queryByRole('button', { name: 'Быстрые товары' }),
-    ).not.toBeInTheDocument();
+    await user.click(
+      await screen.findByRole('button', { name: 'Быстрые товары' }),
+    );
+    expect(screen.getByRole('tab', { name: 'По группам' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: 'По категориям' })).toBeDisabled();
 
     cleanup();
     vi.mocked(getAuthContext).mockResolvedValue(
       contextFixture(['category.read', 'product.read', 'sales.create']),
     );
     renderCheckout();
-
-    expect(
+    await user.click(
       await screen.findByRole('button', { name: 'Быстрые товары' }),
-    ).toBeInTheDocument();
+    );
+    expect(screen.getByRole('tab', { name: 'По категориям' })).toBeEnabled();
   });
 
   it('adds repeated category selections without closing the picker', async () => {

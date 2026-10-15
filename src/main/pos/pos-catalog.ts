@@ -36,6 +36,9 @@ const productSchema = z.object({
   unit: z.enum(['pcs', 'kg', 'l', 'm']),
   is_active: z.boolean(),
   is_quick: z.boolean(),
+  quick_groups: z
+    .array(z.object({ id: z.string().uuid(), name: z.string().max(255) }))
+    .default([]),
   retail_price: z
     .string()
     .regex(/^\d+(?:\.\d{1,2})?$/)

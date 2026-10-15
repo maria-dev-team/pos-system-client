@@ -217,6 +217,7 @@ describe('durable local database', () => {
     const quick = {
       ...regular,
       id: 'quick-product',
+      quick_groups: [{ id: 'breakfast', name: 'Завтрак' }],
       barcode: 'quick-barcode',
       is_quick: true,
       name: 'Быстрый товар',
@@ -224,7 +225,11 @@ describe('durable local database', () => {
     await db.replaceCatalog('store', [regular, quick]);
 
     expect(db.search('store', '', undefined, 20, 0, true).products).toEqual([
-      expect.objectContaining({ id: 'quick-product', is_quick: true }),
+      expect.objectContaining({
+        id: 'quick-product',
+        is_quick: true,
+        quick_groups: [{ id: 'breakfast', name: 'Завтрак' }],
+      }),
     ]);
   });
   it('rejects ambiguous barcode/GTIN matches instead of selecting an arbitrary product', async () => {
@@ -583,5 +588,57 @@ describe('scale PLU catalog', () => {
     const restarted = open(path, key);
     expect(restarted.get('catalog-cursor:store')).toBe('new');
     expect(restarted.scalePlu('store', 1)?.id).toBe(product.id);
+  });
+});
+
+describe('quick group catalog upgrade', () => {
+  it('rehydrates old metadata once, keeps offline products and receipts, and caches membership changes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pos-quick-groups-'));
+    directories.push(dir);
+    const path = join(dir, 'pos.sqlite');
+    const key = randomBytes(32);
+    const initial = new PosDatabase(path, key);
+    const product = { ...productFixture(), is_quick: true };
+    const sale = receipt();
+    await initial.replaceCatalog('store', [product]);
+    initial.save(sale);
+    for (const scope of ['store', 'other-store']) {
+      initial.set(`catalog-cursor:${scope}`, 'legacy-cursor');
+      initial.set(`catalog-progress:${scope}`, { cursor: 'legacy-cursor' });
+    }
+    initial.close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec('PRAGMA user_version=3');
+    legacy.close();
+    const upgraded = new PosDatabase(path, key);
+    try {
+      expect(upgraded.barcode('store', product.barcode)?.id).toBe(product.id);
+      expect(upgraded.sale(ids.session, sale.sale.id)).toEqual(sale);
+      for (const scope of ['store', 'other-store']) {
+        expect(upgraded.get(`catalog-cursor:${scope}`)).toBeNull();
+        expect(upgraded.get(`catalog-progress:${scope}`)).toBeNull();
+      }
+      for (const groups of [
+        [{ id: 'group', name: 'Завтрак' }],
+        [{ id: 'group', name: 'Утро' }],
+        [],
+      ]) {
+        await upgraded.cacheProducts(
+          'store',
+          [{ ...product, quick_groups: groups }],
+          () => true,
+          'authoritative',
+        );
+        expect(
+          upgraded.search('store', '', undefined, 20, 0, true).products[0]
+            .quick_groups,
+        ).toEqual(groups);
+      }
+      upgraded.set('catalog-cursor:store', 'new-cursor');
+    } finally {
+      upgraded.close();
+    }
+    const restarted = open(path, key);
+    expect(restarted.get('catalog-cursor:store')).toBe('new-cursor');
   });
 });

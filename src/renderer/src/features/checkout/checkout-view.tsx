@@ -294,7 +294,7 @@ function ActiveCheckout({
     context.data?.isSystemPosition ||
     context.data?.permissions.includes('product.read'),
   );
-  const canBrowseCategories = Boolean(
+  const canReadCategories = Boolean(
     context.data &&
     (context.data.isSystemPosition ||
       (context.data.permissions.includes('category.read') &&
@@ -932,7 +932,7 @@ function ActiveCheckout({
               Проверить цену
             </Button>
           ) : null}
-          {canBrowseCategories ? (
+          {canSearch ? (
             <Button
               className="h-12 shrink-0 px-3 text-sm"
               disabled={!canAddProduct || scannerBlocked}
@@ -1526,8 +1526,9 @@ function ActiveCheckout({
         />
       ) : null}
 
-      {canBrowseCategories ? (
+      {canSearch ? (
         <CheckoutCategoryPicker
+          canReadCategories={canReadCategories}
           disabled={!canAddProduct || isBusy}
           onOpenChange={(open) => {
             setCategoryPickerOpen(open);

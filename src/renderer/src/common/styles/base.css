@@ -210,3 +210,20 @@ body[data-on-screen-keyboard-open='true'] {
   border-bottom-width: 2px;
   font-size: 0.95rem;
 }
+
+/* Keep portaled dialogs and the page inside the area above the keyboard. */
+body[data-on-screen-keyboard-open='true'] [data-slot='dialog-content'] {
+  top: calc(var(--pos-viewport-height, 100svh) / 2);
+  min-height: 0;
+  max-height: max(0px, calc(var(--pos-viewport-height, 100svh) - 2rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+body[data-on-screen-keyboard-open='true'] :is(input, textarea) {
+  scroll-margin-block: 1rem;
+}
+
+body[data-on-screen-keyboard-open='true'] [data-auth-shell] {
+  padding-block: 1rem;
+}
