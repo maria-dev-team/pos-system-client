@@ -217,15 +217,16 @@ function PaymentForm({
     serverErrorMessage && serverErrorMessage !== dismissedServerError
       ? serverErrorMessage
       : null;
-  const fiscalizationMode: FiscalizationMode = !fiscalizationEnabled
-    ? 'NON_FISCAL'
-    : fiscalizationPolicy === 'SELECTIVE'
-      ? fiscalize
-        ? 'FISCAL'
-        : 'NON_FISCAL'
-      : fiscalizationPolicy === 'CASHLESS_ONLY' && mode !== 'CASHLESS'
-        ? 'NON_FISCAL'
-        : 'FISCAL';
+  const fiscalizationMode: FiscalizationMode =
+    !fiscalizationEnabled || fiscalizationPolicy === 'NEVER'
+      ? 'NON_FISCAL'
+      : fiscalizationPolicy === 'SELECTIVE'
+        ? fiscalize
+          ? 'FISCAL'
+          : 'NON_FISCAL'
+        : fiscalizationPolicy === 'CASHLESS_ONLY' && mode !== 'CASHLESS'
+          ? 'NON_FISCAL'
+          : 'FISCAL';
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -375,7 +376,8 @@ function PaymentForm({
         {fiscalizationMode === 'NON_FISCAL' ? (
           <p className="text-sm text-muted-foreground">
             Нефискальный чек. В приложении POS продажа сохраняется на кассе,
-            передаётся в учёт при наличии связи и не отправляется в Webkassa.
+            передаётся в учёт при наличии связи и не отправляется фискальному
+            провайдеру.
           </p>
         ) : null}
         {mode === 'CASH' ? (

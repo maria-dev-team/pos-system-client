@@ -68,6 +68,38 @@ const renderDialog = (
 afterEach(cleanup);
 
 describe('CheckoutPaymentDialog', () => {
+  it.each(['Наличные', 'Безналичные', 'Смешанная'])(
+    'submits %s without fiscalization in NEVER mode with a connected provider',
+    async (method) => {
+      const user = userEvent.setup();
+      const { onConfirm } = renderDialog({
+        fiscalizationEnabled: true,
+        fiscalizationPolicy: 'NEVER',
+      });
+      await user.click(screen.getByRole('button', { name: method }));
+      if (method === 'Смешанная') {
+        await user.type(screen.getByLabelText('Наличная часть, ₸'), '40');
+      }
+      if (method !== 'Безналичные') {
+        await user.type(screen.getByLabelText('Получено наличными, ₸'), '100');
+      }
+      await user.click(
+        screen.getByRole('button', { name: 'Подтвердить оплату' }),
+      );
+      expect(onConfirm).toHaveBeenCalledWith(
+        expect.any(Array),
+        undefined,
+        'NON_FISCAL',
+      );
+      const parts = onConfirm.mock.calls[0]![0];
+      expect(parts.map((part: { method: string }) => part.method)).toEqual(
+        method === 'Смешанная'
+          ? ['CASH', 'CASHLESS']
+          : [method === 'Наличные' ? 'CASH' : 'CASHLESS'],
+      );
+    },
+  );
+
   it('lets the cashier choose a non-fiscal check in selective mode', async () => {
     const user = userEvent.setup();
     const { onConfirm } = renderDialog({

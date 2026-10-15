@@ -30,7 +30,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function fixture(policy: 'ALWAYS' | 'SELECTIVE' = 'SELECTIVE'): Promise<{
+async function fixture(
+  policy: 'ALWAYS' | 'SELECTIVE' | 'NEVER' = 'SELECTIVE',
+  enabled = true,
+): Promise<{
   service: PosService;
   db: PosDatabase;
   imports: Record<string, unknown>[];
@@ -49,6 +52,7 @@ async function fixture(policy: 'ALWAYS' | 'SELECTIVE' = 'SELECTIVE'): Promise<{
   let db = new PosDatabase(path, key);
   const profile = profileFixture();
   profile.register.fiscalization.policy = policy;
+  profile.register.fiscalization.enabled = enabled;
   profile.tokenHash = createHash('sha256').update('token').digest('hex');
   db.set(`profile:${profile.tokenHash}:${ids.register}`, profile);
   db.set(`adopted:${ids.session}`, true);
@@ -169,6 +173,50 @@ function advanceRetry(): void {
 }
 
 describe('durable non-fiscal checkout', () => {
+  it.each([
+    { policy: 'NEVER' as const, enabled: true },
+    { policy: 'ALWAYS' as const, enabled: false },
+  ])(
+    'supports all payment methods offline and syncs without fiscal checkout: %j',
+    async ({ policy, enabled }) => {
+      const f = await fixture(policy, enabled);
+      const payments: Array<
+        Extract<PosRequest, { type: 'checkout' }>['payments']
+      > = [
+        [{ method: 'CASH', amount: '650.00', received: '1000.00' }],
+        [{ method: 'CASHLESS', amount: '650.00' }],
+        [
+          { method: 'CASH', amount: '250.00', received: '300.00' },
+          { method: 'CASHLESS', amount: '400.00' },
+        ],
+      ];
+      for (const parts of payments) {
+        const sale = await cart(f.service);
+        const request = {
+          ...payment(sale),
+          fiscalizationMode: 'FISCAL' as const,
+          payments: parts,
+        };
+        await expect(f.service.handle(request)).resolves.toMatchObject({
+          status: 'COMPLETED',
+          fiscalization_mode: 'NON_FISCAL',
+          fiscal_receipt: null,
+          payments: parts,
+        });
+        expect(await f.service.handle({ type: 'current' })).toBeNull();
+      }
+      await f.restart();
+      expect(await f.service.handle({ type: 'localReceipts' })).toHaveLength(3);
+      advanceRetry();
+      f.online();
+      await f.service.handle({ type: 'retry' });
+      expect(f.accepted.size).toBe(3);
+      expect(
+        f.fetcher.mock.calls.some(([url]) => String(url).endsWith('/checkout')),
+      ).toBe(false);
+    },
+  );
+
   it('returns the completed receipt while a slow draft HTTP request is still unanswered', async () => {
     const f = await fixture();
     f.online();
