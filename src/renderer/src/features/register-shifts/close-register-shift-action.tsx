@@ -189,7 +189,9 @@ export function CloseRegisterShiftAction({
                 <ZReportPrintButton report={zReport} timeZone={timeZone} />
               ) : (
                 <p className="text-sm font-medium text-muted-foreground">
-                  Печать Z-отчёта недоступна для этого провайдера.
+                  {closedShift.fiscal_closed_at
+                    ? 'Печать Z-отчёта недоступна для этого провайдера.'
+                    : 'Смена закрыта без фискализации. Z-отчёт не формируется.'}
                 </p>
               )}
 
@@ -208,7 +210,7 @@ export function CloseRegisterShiftAction({
                 <DialogDescription>
                   {registerShift.status === 'CLOSING'
                     ? 'Сервер сохранил сумму. Повторите закрытие смены.'
-                    : 'Пересчитайте наличные. Касса будет закрыта, ОФД сформирует Z-отчёт. После закрытия сумму нельзя изменить.'}
+                    : 'Пересчитайте наличные. Кассовая смена будет закрыта. После закрытия сумму нельзя изменить.'}
                 </DialogDescription>
               </DialogHeader>
 

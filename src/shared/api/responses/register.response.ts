@@ -1,4 +1,5 @@
-export type FiscalizationPolicy = 'ALWAYS' | 'SELECTIVE' | 'CASHLESS_ONLY';
+export type FiscalizationPolicy =
+  'ALWAYS' | 'SELECTIVE' | 'CASHLESS_ONLY' | 'NEVER';
 
 export type RegisterResponse = {
   code: string;

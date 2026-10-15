@@ -247,7 +247,8 @@ export function RegisterShiftSelectionView() {
               const shiftHistoryQuery = shiftHistoryQueries[index];
               const registerShift = shiftQuery?.data;
               const lastClosedShift = shiftHistoryQuery?.data?.find(
-                ({ status }) => status === 'CLOSED',
+                ({ status, fiscal_closed_at }) =>
+                  status === 'CLOSED' && Boolean(fiscal_closed_at),
               );
               const lastZReportAction = lastClosedShift ? (
                 <LastZReportPrintButton
@@ -383,7 +384,9 @@ export function RegisterShiftSelectionView() {
                             Начать работу
                             <ArrowRight aria-hidden="true" />
                           </Button>
-                          {canReadShift ? (
+                          {canReadShift &&
+                          register.fiscalization?.enabled &&
+                          register.fiscalization.policy !== 'NEVER' ? (
                             <XReportPrintButton
                               registerShiftId={registerShift.id}
                               timeZone={timeZone}
