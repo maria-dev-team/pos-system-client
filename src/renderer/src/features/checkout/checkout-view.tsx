@@ -1570,7 +1570,9 @@ function ActiveCheckout({
                   ambiguity: {
                     ...ambiguity,
                     current_version: localPosActive()
-                      ? (current?.local_revision ?? 0)
+                      ? (ambiguity.current_version ??
+                        current?.local_revision ??
+                        0)
                       : (current?.version ?? 0),
                   },
                   barcode,

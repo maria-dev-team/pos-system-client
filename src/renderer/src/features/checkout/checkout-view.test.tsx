@@ -42,7 +42,10 @@ import {
 } from '@renderer/common/api';
 import { request } from '@renderer/common/api/request';
 import { OnScreenKeyboardProvider } from '@renderer/common/components/on-screen-keyboard';
+import { queryKeys } from '@renderer/common/constants';
+import * as localPos from '@renderer/common/lib/local-pos';
 
+import { PosError } from '../../../../shared/pos/contracts';
 import { CheckoutView } from './index';
 
 vi.mock('@renderer/common/api', async (importOriginal) => {
@@ -1099,6 +1102,145 @@ describe('price checking before receipt changes', () => {
       fireEvent(target, event);
     }
   }
+  it.each([5, 0])(
+    'preserves the worker ambiguity revision %s when the cached local sale is stale',
+    async (workerRevision) => {
+      const cachedSale = saleFixture({ local_revision: 4 });
+      vi.mocked(getCurrentSale).mockResolvedValue(cachedSale);
+      vi.spyOn(localPos, 'localPosActive').mockReturnValue(true);
+      let rejectScan!: (error: Error) => void;
+      const pendingScan = new Promise<never>((_resolve, reject) => {
+        rejectScan = reject;
+      });
+      const lookup = vi
+        .spyOn(localPos, 'callLocalPos')
+        .mockReturnValue(pendingScan);
+      const execute = vi
+        .spyOn(localPos, 'executeLocalSale')
+        .mockResolvedValue(saleFixture({ local_revision: workerRevision + 1 }));
+      const client = renderCheckout();
+      const priceDialog = await openPriceCheck();
+      fireEvent.change(
+        within(priceDialog).getByLabelText(
+          'Название или штрихкод для проверки цены',
+        ),
+        { target: { value: '2000001001851' } },
+      );
+      await waitFor(() =>
+        expect(lookup).toHaveBeenCalledWith({
+          type: 'resolveScan',
+          barcode: '2000001001851',
+        }),
+      );
+      expect(execute).not.toHaveBeenCalled();
+      await act(async () =>
+        rejectScan(
+          new PosError(
+            'PRODUCT_BARCODE_AMBIGUOUS',
+            'Выберите трактовку штрихкода.',
+            {
+              current_version: workerRevision,
+              candidates: [
+                {
+                  kind: 'static',
+                  product_id: 'product-1',
+                  name: 'Молоко',
+                  unit: 'kg',
+                  quantity: null,
+                  retail_price: '650.00',
+                  unavailable_reason: null,
+                },
+                {
+                  kind: 'weighted',
+                  product_id: 'product-1',
+                  name: 'Молоко',
+                  unit: 'kg',
+                  quantity: '0.185',
+                  retail_price: '650.00',
+                  unavailable_reason: null,
+                },
+              ],
+            },
+          ),
+        ),
+      );
+      await userEvent.click(
+        await within(priceDialog).findByRole('button', {
+          name: 'Выбрать товар',
+        }),
+      );
+      const choice = await screen.findByRole('dialog', {
+        name: 'Выберите товар по штрихкоду',
+      });
+      expect(
+        client.getQueryData<SaleResponse>(
+          queryKeys.sales.current(cashierSession.id),
+        )?.local_revision,
+      ).toBe(4);
+      await userEvent.click(
+        within(choice).getByRole('button', { name: /Весовая этикетка/ }),
+      );
+      await userEvent.click(
+        within(choice).getByRole('button', { name: 'Добавить в чек' }),
+      );
+      await waitFor(() =>
+        expect(execute).toHaveBeenCalledExactlyOnceWith({
+          type: 'add',
+          productId: 'product-1',
+          quantity: '0.185',
+          expectedVersion: workerRevision,
+          saleId: cachedSale.id,
+        }),
+      );
+    },
+  );
+  it('uses the cached local revision when requesting weight for a single ordinary kilogram product', async () => {
+    const cachedSale = saleFixture({ local_revision: 4 });
+    vi.mocked(getCurrentSale).mockResolvedValue(cachedSale);
+    vi.spyOn(localPos, 'localPosActive').mockReturnValue(true);
+    vi.spyOn(localPos, 'callLocalPos').mockResolvedValue({
+      product: productFixture({ barcode: '4870000000012', unit: 'kg' }),
+      kind: 'static',
+      quantity: '1',
+    });
+    const execute = vi
+      .spyOn(localPos, 'executeLocalSale')
+      .mockResolvedValue(saleFixture({ local_revision: 5 }));
+    renderCheckout();
+    const priceDialog = await openPriceCheck();
+    fireEvent.change(
+      within(priceDialog).getByLabelText(
+        'Название или штрихкод для проверки цены',
+      ),
+      { target: { value: '4870000000012' } },
+    );
+    await userEvent.click(
+      await within(priceDialog).findByRole('button', {
+        name: 'Добавить в чек Молоко',
+      }),
+    );
+    const choice = await screen.findByRole('dialog', {
+      name: 'Выберите товар по штрихкоду',
+    });
+    await userEvent.click(
+      within(choice).getByRole('button', { name: /Обычный штрихкод/ }),
+    );
+    const weight = within(choice).getByLabelText('Вес обычного товара, кг');
+    expect(weight).toHaveValue('');
+    await userEvent.type(weight, '0.4');
+    await userEvent.click(
+      within(choice).getByRole('button', { name: 'Добавить в чек' }),
+    );
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'add',
+        productId: 'product-1',
+        quantity: '0.4',
+        expectedVersion: 4,
+        saleId: cachedSale.id,
+      }),
+    );
+  });
   it.each(['001234', '2000000000015'])(
     'shows price for scanned barcode %s and creates a receipt only on explicit addition',
     async (barcode) => {

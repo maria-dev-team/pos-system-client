@@ -39,7 +39,9 @@ type Props = {
   ) => Promise<unknown>;
   onClose: () => void;
   onChooseScan?: (
-    ambiguity: ScanAmbiguity,
+    ambiguity: Omit<ScanAmbiguity, 'current_version'> & {
+      current_version?: number;
+    },
     barcode: string,
     markingCode?: string,
   ) => void;
@@ -139,7 +141,6 @@ export function CheckoutPriceCheckDialog({
       ) {
         onChooseScan(
           {
-            current_version: 0,
             candidates: [
               {
                 kind: 'static',
