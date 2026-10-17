@@ -143,11 +143,39 @@ const wrapperFor = (queryClient: QueryClient) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(searchProducts).mockImplementation(async ({ search }) => ({
+    ...productSearchFixture,
+    products: [
+      { ...productSearchFixture.products[0]!, barcode: search ?? '111' },
+    ],
+  }));
+  vi.spyOn(request, 'get').mockImplementation(async (_path, config) => ({
+    data: {
+      data: {
+        products: (
+          await searchProducts({
+            search: (config?.params as { barcode?: string })?.barcode,
+            limit: 20,
+            offset: 0,
+          })
+        ).products,
+        scale_profile: {
+          format: 'ean13-weight-v1',
+          prefix: '20',
+          enabled: false,
+          blocked_reason: null,
+          revision: 1,
+          issued_plu_ranges: [],
+        },
+      },
+    },
+  }));
 });
 
 afterEach(() => {
   onlineManager.setOnline(true);
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('checkout sale queries', () => {
@@ -791,18 +819,32 @@ it('sends the grams encoded in a weighted label to the server scan endpoint', as
   const sale = saleFixture(1);
   queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), sale);
   vi.mocked(scanSaleItem).mockResolvedValue(saleFixture(2));
-  const get = vi.spyOn(request, 'get').mockResolvedValue({
-    data: {
+  const get = vi
+    .spyOn(request, 'get')
+    .mockImplementation(async (_path, config) => ({
       data: {
-        scale_profile: {
-          format: 'ean13-weight-v1',
-          prefix: '20',
-          enabled: true,
-          blocked_reason: null,
+        data: {
+          scale_profile: {
+            format: 'ean13-weight-v1',
+            prefix: '20',
+            enabled: true,
+            blocked_reason: null,
+            revision: 1,
+            issued_plu_ranges: [[1, 1]],
+          },
+          products: (config?.params as { scale_plu?: number } | undefined)
+            ?.scale_plu
+            ? [
+                {
+                  ...productSearchFixture.products[0],
+                  unit: 'kg',
+                  scale_plu: 1,
+                },
+              ]
+            : [],
         },
       },
-    },
-  });
+    }));
   try {
     const { result } = renderHook(
       () => useSaleCommandMutation(cashierSessionId, sale),
@@ -821,4 +863,70 @@ it('sends the grams encoded in a weighted label to the server scan endpoint', as
   } finally {
     get.mockRestore();
   }
+});
+
+it('confirms an ambiguity with its original version and never replays after a conflict', async () => {
+  const queryClient = createTestQueryClient();
+  const sale = saleFixture(6);
+  queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), sale);
+  vi.mocked(addSaleItem).mockRejectedValue(
+    responseError('SALE_VERSION_CONFLICT'),
+  );
+  vi.mocked(getSale).mockResolvedValue(saleFixture(7));
+  const { result } = renderHook(
+    () => useSaleCommandMutation(cashierSessionId, sale),
+    {
+      wrapper: wrapperFor(queryClient),
+    },
+  );
+  await expect(
+    act(() =>
+      result.current.mutateAsync({
+        type: 'add',
+        productId: 'product-1',
+        quantity: '0.185',
+        expectedVersion: 5,
+        saleId: sale.id,
+      }),
+    ),
+  ).rejects.toThrow();
+  expect(addSaleItem).toHaveBeenCalledExactlyOnceWith(sale.id, {
+    expectedVersion: 5,
+    productId: 'product-1',
+    quantity: '0.185',
+  });
+  expect(
+    queryClient.getQueryData<SaleResponse>(
+      queryKeys.sales.current(cashierSessionId),
+    )?.version,
+  ).toBe(7);
+});
+
+it('requests weight for an ordinary kilogram product before submitting an online scan', async () => {
+  const queryClient = createTestQueryClient();
+  const sale = saleFixture(5);
+  queryClient.setQueryData(queryKeys.sales.current(cashierSessionId), sale);
+  vi.mocked(searchProducts).mockResolvedValue({
+    ...productSearchFixture,
+    products: [
+      { ...productSearchFixture.products[0]!, barcode: '111', unit: 'kg' },
+    ],
+  });
+  const { result } = renderHook(
+    () => useSaleCommandMutation(cashierSessionId, sale),
+    { wrapper: wrapperFor(queryClient) },
+  );
+  await expect(
+    act(() => result.current.mutateAsync({ type: 'scan', barcode: '111' })),
+  ).rejects.toMatchObject({
+    code: 'PRODUCT_BARCODE_AMBIGUOUS',
+    details: {
+      current_version: 5,
+      candidates: [
+        expect.objectContaining({ kind: 'static', quantity: null, unit: 'kg' }),
+      ],
+    },
+  });
+  expect(scanSaleItem).not.toHaveBeenCalled();
+  expect(addSaleItem).not.toHaveBeenCalled();
 });

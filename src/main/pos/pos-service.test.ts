@@ -29,6 +29,15 @@ afterEach(() => {
 });
 const response = (data: unknown): Response =>
   new Response(JSON.stringify({ data }), { status: 200 });
+const scaleProfileKey = `scale-profile:organization:${ids.organization}`;
+const defaultScaleProfile = {
+  format: 'ean13-weight-v1',
+  prefix: null,
+  enabled: false,
+  blocked_reason: null,
+  revision: 0,
+  issued_plu_ranges: [],
+};
 const tick = (): Promise<void> =>
   new Promise<void>((resolve) => setImmediate(resolve));
 async function fixture(
@@ -50,7 +59,10 @@ async function fixture(
     async (input: string | URL | Request, init?: RequestInit) => {
       const path = String(input).replace('https://api.test', '');
       if (path === '/v1/pos/catalog/sync-start')
-        return response({ cursor: 'baseline' });
+        return response({
+          cursor: 'baseline',
+          scale_profile: defaultScaleProfile,
+        });
       if (path.startsWith('/v1/pos/catalog/changes?'))
         return response({
           products: [],
@@ -58,11 +70,13 @@ async function fixture(
           categories_changed: false,
           cursor: 'next',
           has_more: false,
+          scale_profile: defaultScaleProfile,
         });
       if (path.startsWith('/v1/pos/catalog/page'))
         return response({
           products: [{ ...productFixture(), store_id: ids.store }],
           next_cursor: null,
+          scale_profile: defaultScaleProfile,
         });
       if (path.startsWith('/v1/categories'))
         return response({ categories: [], meta: { has_more: false } });
@@ -100,6 +114,8 @@ async function fixture(
   await db.replaceCatalog(`${ids.organization}:${ids.store}`, [
     productFixture(),
   ]);
+  db.set(`catalog-cursor:${ids.organization}:${ids.store}`, 'baseline');
+  db.set(scaleProfileKey, defaultScaleProfile);
   await service.connect('token', ids.register);
   await tick();
   return { service, db, fetcher };
@@ -109,11 +125,13 @@ describe('local POS application service', () => {
   it('accumulates exact label weights into a durable offline receipt at the catalog price', async () => {
     const { service, db, fetcher } = await fixture();
     const scope = `${ids.organization}:${ids.store}`;
-    db.set(`scale-profile:${scope}`, {
+    db.set(scaleProfileKey, {
       format: 'ean13-weight-v1',
       prefix: '20',
       enabled: false,
       blocked_reason: null,
+      revision: 1,
+      issued_plu_ranges: [[1, 1]],
     });
     await db.cacheProducts(
       scope,
@@ -167,11 +185,13 @@ describe('local POS application service', () => {
       profile,
     );
     const scope = `${ids.organization}:${ids.store}`;
-    db.set(`scale-profile:${scope}`, {
+    db.set(scaleProfileKey, {
       format: 'ean13-weight-v1',
       prefix: '20',
       enabled: true,
       blocked_reason: null,
+      revision: 1,
+      issued_plu_ranges: [[1, 1]],
     });
     await db.cacheProducts(
       scope,
@@ -207,11 +227,13 @@ describe('local POS application service', () => {
       throw new TypeError('offline');
     });
     const scope = `${ids.organization}:${ids.store}`;
-    db.set(`scale-profile:${scope}`, {
+    db.set(scaleProfileKey, {
       format: 'ean13-weight-v1',
       prefix: '20',
       enabled: false,
       blocked_reason: null,
+      revision: 1,
+      issued_plu_ranges: [[1, 1]],
     });
     await db.cacheProducts(
       scope,
@@ -235,19 +257,20 @@ describe('local POS application service', () => {
   });
 
   it.each([
-    ['2000001001852', 'kg', null, 'SCALE_BARCODE_INVALID'],
-    ['2000001001851', 'pcs', null, 'SCALE_BARCODE_INVALID'],
-    ['2000001001851', 'kg', 'barcode_conflict', 'SCALE_BARCODE_CONFLICT'],
+    ['2000001001852', 'kg', 'SCALE_BARCODE_INVALID'],
+    ['2000001001851', 'pcs', 'SCALE_BARCODE_INVALID'],
   ] as const)(
-    'rejects unsafe label %s / %s / %s without changing the cart',
-    async (barcode, unit, blocked, code) => {
+    'rejects unsafe label %s / %s without changing the cart',
+    async (barcode, unit, code) => {
       const { service, db } = await fixture();
       const scope = `${ids.organization}:${ids.store}`;
-      db.set(`scale-profile:${scope}`, {
+      db.set(scaleProfileKey, {
         format: 'ean13-weight-v1',
         prefix: '20',
         enabled: true,
-        blocked_reason: blocked,
+        blocked_reason: null,
+        revision: 1,
+        issued_plu_ranges: [[1, 1]],
       });
       await db.cacheProducts(
         scope,
@@ -262,14 +285,16 @@ describe('local POS application service', () => {
     },
   );
 
-  it('rejects a cached static barcode that collides with the label even before the next profile refresh', async () => {
+  it('returns ambiguity for a cached static barcode that also has a weighted interpretation', async () => {
     const { service, db } = await fixture();
     const scope = `${ids.organization}:${ids.store}`;
-    db.set(`scale-profile:${scope}`, {
+    db.set(scaleProfileKey, {
       format: 'ean13-weight-v1',
       prefix: '20',
       enabled: true,
       blocked_reason: null,
+      revision: 1,
+      issued_plu_ranges: [[1, 1]],
     });
     await db.cacheProducts(
       scope,
@@ -290,7 +315,7 @@ describe('local POS application service', () => {
         type: 'execute',
         command: { type: 'scan', barcode: '2000001001851' },
       }),
-    ).rejects.toMatchObject({ code: 'SCALE_BARCODE_CONFLICT' });
+    ).rejects.toMatchObject({ code: 'PRODUCT_BARCODE_AMBIGUOUS' });
     expect(await service.handle({ type: 'current' })).toBeNull();
   });
 
@@ -378,8 +403,8 @@ describe('local POS application service', () => {
     expect(drafts).toBe(before + 1);
   });
   it('contains a storage error while persisting a background access revocation', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const { service, db, fetcher } = await fixture();
-    vi.useFakeTimers();
     fetcher.mockResolvedValue(
       new Response(JSON.stringify({ error_code: 'FORBIDDEN' }), {
         status: 403,
@@ -1752,7 +1777,7 @@ describe('local POS application service', () => {
     ).rejects.toMatchObject({ code: 'SALE_NOT_EDITABLE' });
   });
 
-  it('does not wait for a hung catalog request when searching or scanning', async () => {
+  it('keeps partial catalog search available but requires synchronization before interpreting scans', async () => {
     const { service, db, fetcher } = await fixture();
     db.set(`catalog:${ids.organization}:${ids.store}`, null);
     fetcher.mockImplementation(() => new Promise<Response>(() => undefined));
@@ -1766,9 +1791,7 @@ describe('local POS application service', () => {
         type: 'execute',
         command: { type: 'scan', barcode: productFixture().barcode },
       }),
-    ).resolves.toMatchObject({
-      items: [expect.objectContaining({ product_id: productFixture().id })],
-    });
+    ).rejects.toMatchObject({ code: 'LOCAL_CATALOG_SYNC_REQUIRED' });
   });
 
   it('keeps the existing offline catalog usable when forced reauthorization loses the network', async () => {
@@ -1829,7 +1852,9 @@ describe('local POS application service', () => {
     ).resolves.toMatchObject({
       items: [expect.objectContaining({ quantity: '1.000' })],
     });
-    finish(response({ products: [remote] }));
+    finish(
+      response({ products: [remote], scale_profile: defaultScaleProfile }),
+    );
     const sale = (await pending) as SaleResponse;
     expect(sale.items).toHaveLength(2);
   });
@@ -1865,7 +1890,9 @@ describe('local POS application service', () => {
       action: 'hold',
       saleId: sale.id,
     });
-    finish(response({ products: [remote] }));
+    finish(
+      response({ products: [remote], scale_profile: defaultScaleProfile }),
+    );
     await rejected;
     expect(await service.handle({ type: 'current' })).toBeNull();
   });

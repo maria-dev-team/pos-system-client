@@ -59,6 +59,15 @@ async function fixture(
   await db.replaceCatalog(`${ids.organization}:${ids.store}`, [
     productFixture(),
   ]);
+  db.set(`catalog-cursor:${ids.organization}:${ids.store}`, 'baseline');
+  db.set(`scale-profile:organization:${ids.organization}`, {
+    format: 'ean13-weight-v1',
+    prefix: null,
+    enabled: false,
+    blocked_reason: null,
+    revision: 0,
+    issued_plu_ranges: [],
+  });
   let online = false;
   let loseResponse = false;
   let reject = false;

@@ -4,11 +4,13 @@ import { type Mock, afterEach, expect, it, vi } from 'vitest';
 
 import type { ProductResponse } from '../../shared/pos/contracts';
 import { ids, productFixture } from '../../shared/pos/test-fixtures';
+import type { ScaleProfile } from '../../shared/pos/weighted-barcode';
 import { PosApiError } from './pos-api-client';
 import { PosCatalog } from './pos-catalog';
 import { PosDatabase } from './pos-database';
 
 const scope = `${ids.organization}:${ids.store}`;
+const profileKey = `scale-profile:organization:${ids.organization}`;
 const product = (): ProductResponse & { store_id: string } => ({
   ...productFixture(),
   store_id: ids.store,
@@ -672,6 +674,8 @@ const scaleProfile = {
   prefix: '20',
   enabled: true,
   blocked_reason: null,
+  revision: 1,
+  issued_plu_ranges: [[1, 4]],
 } as const;
 
 it('looks up a PLU online and retains scale metadata for offline scans', async () => {
@@ -770,9 +774,13 @@ it('discards a PLU lookup after changing store', async () => {
     code: 'LOCAL_CONTEXT_CHANGED',
   });
   catalog.activate(ids.organization, randomUUID());
-  finish({ products: [{ ...product(), scale_plu: 1 }] });
+  finish({
+    products: [{ ...product(), scale_plu: 1 }],
+    scale_profile: scaleProfile,
+  });
   await rejected;
   expect(db.scalePlu(scope, 1)).toBeUndefined();
+  expect(db.get(profileKey)).toBeNull();
 });
 
 it('persists the bootstrap scale profile before continuing an interrupted product download', async () => {
@@ -784,11 +792,13 @@ it('persists the bootstrap scale profile before continuing an interrupted produc
     throw new Error('offline');
   });
   await catalog.refresh();
-  expect(db.get(`scale-profile:${scope}`)).toEqual(scaleProfile);
+  expect(db.get(profileKey)).toEqual(scaleProfile);
   expect(catalog.status().catalogRevision).not.toBe(revision);
   catalog.activate(ids.organization, ids.store);
   expect(catalog.scaleProfile()).toEqual(scaleProfile);
   catalog.activate(ids.organization, randomUUID());
+  expect(catalog.scaleProfile()).toEqual(scaleProfile);
+  catalog.activate(randomUUID(), ids.store);
   expect(catalog.scaleProfile()).toBeNull();
 });
 
@@ -803,7 +813,7 @@ it('persists profile-only changes and preserves the profile when an older API om
   const disabled = {
     ...scaleProfile,
     enabled: false,
-    blocked_reason: 'barcode_conflict',
+    revision: 2,
   };
   request.mockResolvedValue({
     ...delta([], [], 'disabled'),
@@ -821,12 +831,13 @@ it('persists profile-only changes and preserves the profile when an older API om
 it('invalidates cached scans only when a profile-only delta changes the scale profile', async () => {
   const { db, catalog, request } = setup();
   db.set(`catalog-cursor:${scope}`, 'baseline');
-  db.set(`scale-profile:${scope}`, scaleProfile);
+  db.set(profileKey, scaleProfile);
   const revision = catalog.status().catalogRevision;
   const blocked = {
     ...scaleProfile,
     enabled: false,
-    blocked_reason: 'barcode_conflict',
+    prefix: '27',
+    revision: 2,
   };
   request.mockResolvedValue({ ...delta(), scale_profile: blocked });
   await catalog.refresh();
@@ -854,17 +865,21 @@ it.each([
   {},
   { ...scaleProfile, prefix: '2' },
   { ...scaleProfile, enabled: 'true' },
+  { ...scaleProfile, revision: -1 },
+  { ...scaleProfile, revision: undefined },
+  { ...scaleProfile, issued_plu_ranges: [[4, 1]] },
+  { ...scaleProfile, issued_plu_ranges: undefined },
 ])(
   'rejects malformed scale profile %j before acknowledging the delta',
   async (scale_profile) => {
     const { db, catalog, request } = setup();
     db.set(`catalog-cursor:${scope}`, 'baseline');
-    db.set(`scale-profile:${scope}`, scaleProfile);
+    db.set(profileKey, scaleProfile);
     request.mockResolvedValue({ ...delta([product()]), scale_profile });
     await catalog.refresh();
     expect(catalog.status().catalogError).toBeTruthy();
     expect(db.get(`catalog-cursor:${scope}`)).toBe('baseline');
-    expect(db.get(`scale-profile:${scope}`)).toEqual(scaleProfile);
+    expect(db.get(profileKey)).toEqual(scaleProfile);
     expect(db.product(scope, product().id)).toBeUndefined();
   },
 );
@@ -883,7 +898,7 @@ it('does not persist a scale profile returned for a previous store', async () =>
   catalog.activate(ids.organization, randomUUID());
   finish({ cursor: 'baseline', scale_profile: scaleProfile });
   await refreshing;
-  expect(db.get(`scale-profile:${scope}`)).toBeNull();
+  expect(db.get(profileKey)).toBeNull();
   expect(catalog.scaleProfile()).toBeNull();
 });
 
@@ -896,6 +911,281 @@ it('does not acknowledge an empty profile update when the store changes during a
       queueMicrotask(() => catalog.activate(ids.organization, ids.product));
   });
   await catalog.refresh();
-  expect(db.get(`scale-profile:${scope}`)).toBeNull();
+  expect(db.get(profileKey)).toBeNull();
   expect(db.get(`catalog-cursor:${scope}`)).toBe('baseline');
+});
+
+it('merges issued ranges at equal or older revisions without reverting the organization prefix', async () => {
+  const { db, catalog, request } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  const latest = { ...scaleProfile, prefix: '27', revision: 3 };
+  request.mockResolvedValue({ ...delta(), scale_profile: latest });
+  await catalog.refresh();
+  const revision = catalog.status().catalogRevision;
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  request.mockResolvedValue({
+    ...delta([], [], 'same'),
+    scale_profile: { ...latest, issued_plu_ranges: [[8, 10]] },
+  });
+  await catalog.refresh();
+  expect(catalog.status().catalogRevision).not.toBe(revision);
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+  request.mockResolvedValue({
+    ...delta([], [], 'older'),
+    scale_profile: { ...scaleProfile, issued_plu_ranges: [[4, 7]] },
+  });
+  await catalog.refresh();
+  expect(db.get(profileKey)).toEqual({
+    ...latest,
+    issued_plu_ranges: [[1, 10]],
+  });
+  catalog.activate(ids.organization, randomUUID());
+  expect(catalog.scaleProfile()).toEqual(db.get(profileKey));
+  catalog.activate(randomUUID(), ids.store);
+  expect(catalog.scaleProfile()).toBeNull();
+});
+
+it.each(['page', 'lookup', 'search'] as const)(
+  'persists profile metadata from an empty %s response',
+  async (endpoint) => {
+    const { db, catalog, request, changed } = setup();
+    const revision = catalog.status().catalogRevision;
+    request.mockImplementation(async (path) => {
+      if (path.endsWith('/sync-start')) return { cursor: 'baseline' };
+      if (path.includes('/changes?')) return delta();
+      return {
+        products: [],
+        next_cursor: null,
+        meta: { has_more: false },
+        scale_profile: scaleProfile,
+      };
+    });
+    if (endpoint === 'page') await catalog.refresh();
+    else if (endpoint === 'lookup') await catalog.barcode('missing');
+    else await catalog.search('missing', undefined, 20, 0);
+    expect(db.get(profileKey)).toEqual(scaleProfile);
+    expect(catalog.status().catalogRevision).not.toBe(revision);
+    expect(changed).toHaveBeenCalled();
+  },
+);
+
+it('keeps static and issued but unavailable weighted interpretations after a tombstone', async () => {
+  const { db, catalog, request } = setup();
+  const barcode = '2000001001851';
+  const weighted = { ...product(), unit: 'kg' as const, scale_plu: 1 };
+  const regular = { ...product(), id: randomUUID(), barcode, nkt: null };
+  await db.cacheProducts(scope, [weighted, regular]);
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  request.mockResolvedValue({
+    ...delta([], [weighted.id]),
+    scale_profile: scaleProfile,
+  });
+  await catalog.refresh();
+  expect(await catalog.scanCandidates(barcode)).toEqual([
+    expect.objectContaining({ kind: 'static', product_id: regular.id }),
+    expect.objectContaining({
+      kind: 'weighted',
+      product_id: null,
+      name: null,
+      retail_price: null,
+      quantity: '0.185',
+      unavailable_reason: 'PRODUCT_NOT_FOUND',
+    }),
+  ]);
+});
+
+it.each(['legacy-profile', 'bootstrap', 'pending', 'missing-cursor'] as const)(
+  'requires synchronization rather than inferring absent interpretations from %s data',
+  async (state) => {
+    const { db, catalog, request } = setup();
+    const p = { ...product(), barcode: '2000001001851' };
+    await db.cacheProducts(scope, [p]);
+    db.set(`catalog:${scope}`, 'last-complete');
+    db.set(`catalog-cursor:${scope}`, 'resume');
+    db.set(profileKey, scaleProfile);
+    if (state === 'legacy-profile') {
+      db.set(profileKey, null);
+      db.set(`scale-profile:${scope}`, {
+        format: 'ean13-weight-v1',
+        prefix: '20',
+        enabled: true,
+        blocked_reason: null,
+      });
+    }
+    if (state === 'bootstrap')
+      db.set(`catalog-progress:${scope}`, {
+        cursor: 'resume',
+        after: p.id,
+        loaded: 1,
+      });
+    if (state === 'pending') db.set(`catalog-pending:${scope}`, true);
+    if (state === 'missing-cursor') db.set(`catalog-cursor:${scope}`, null);
+    await expect(catalog.scanCandidates(p.barcode)).rejects.toMatchObject({
+      code: 'LOCAL_CATALOG_SYNC_REQUIRED',
+    });
+    expect(request).not.toHaveBeenCalled();
+    expect(db.product(scope, p.id)).toBeDefined();
+    expect(db.get(`catalog:${scope}`)).toBe('last-complete');
+  },
+);
+
+it('keeps incomplete changes unsafe across activation until their cursor catches up', async () => {
+  const { db, catalog, request } = setup();
+  db.set(`catalog:${scope}`, 'last-complete');
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  db.set(profileKey, scaleProfile);
+  let calls = 0;
+  request.mockImplementation(async () => {
+    if (++calls === 1)
+      return { ...delta([product()], [], 'resume'), has_more: true };
+    throw new Error('offline');
+  });
+  await catalog.refresh();
+  catalog.activate(ids.organization, ids.store);
+  expect(db.get(`catalog-cursor:${scope}`)).toBe('resume');
+  await expect(catalog.scanCandidates(product().barcode)).rejects.toMatchObject(
+    { code: 'LOCAL_CATALOG_SYNC_REQUIRED' },
+  );
+  request.mockResolvedValue({
+    ...delta([], [], 'complete'),
+    scale_profile: scaleProfile,
+  });
+  await catalog.refresh();
+  expect(await catalog.scanCandidates(product().barcode)).toEqual([
+    expect.objectContaining({ kind: 'static', product_id: product().id }),
+  ]);
+});
+
+it('keeps a complete catalog scannable while waiting for the next changes response', async () => {
+  const { db, catalog, request } = setup();
+  await db.cacheProducts(scope, [product()]);
+  db.set(`catalog:${scope}`, 'last-complete');
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  db.set(profileKey, scaleProfile);
+  let finish!: (value: unknown) => void;
+  request.mockImplementation(
+    async () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const refresh = catalog.refresh();
+  await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  expect(await catalog.scanCandidates(product().barcode)).toEqual([
+    expect.objectContaining({ kind: 'static', product_id: product().id }),
+  ]);
+  finish(delta());
+  await refresh;
+});
+
+it('does not let an older foreground metadata response undo a newer prefix delta', async () => {
+  const { db, catalog, request } = setup();
+  db.set(`catalog-cursor:${scope}`, 'baseline');
+  let finish!: (value: unknown) => void;
+  request.mockImplementation(async (path) =>
+    path.includes('/lookup?')
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : {
+          ...delta(),
+          scale_profile: { ...scaleProfile, prefix: '27', revision: 2 },
+        },
+  );
+  const lookup = catalog.barcode('missing');
+  await catalog.refresh();
+  finish({
+    products: [],
+    scale_profile: { ...scaleProfile, issued_plu_ranges: [[8, 10]] },
+  });
+  await lookup;
+  expect(catalog.scaleProfile()).toEqual({
+    ...scaleProfile,
+    prefix: '27',
+    revision: 2,
+    issued_plu_ranges: [
+      [1, 4],
+      [8, 10],
+    ],
+  });
+});
+
+it('keeps a resumed bootstrap unsafe until all pages and catch-up changes commit', async () => {
+  const { db, catalog, request } = setup();
+  db.set(`catalog-progress:${scope}`, {
+    cursor: 'baseline',
+    cycle: 'cycle',
+    after: product().id,
+    loaded: 1,
+  });
+  db.set(`catalog:${scope}`, 'previous-complete');
+  db.set(profileKey, scaleProfile);
+  await db.cacheProducts(scope, [product()]);
+  request.mockImplementation(async (path) =>
+    path.includes('/page?')
+      ? {
+          products: [],
+          next_cursor: null,
+          scale_profile: { ...scaleProfile, issued_plu_ranges: [[8, 10]] },
+        }
+      : { ...delta(), scale_profile: scaleProfile },
+  );
+  await expect(catalog.scanCandidates(product().barcode)).rejects.toMatchObject(
+    { code: 'LOCAL_CATALOG_SYNC_REQUIRED' },
+  );
+  await catalog.refresh();
+  expect(request.mock.calls[0][0]).toContain(`after=${product().id}`);
+  expect(catalog.scaleProfile()?.issued_plu_ranges).toEqual([
+    [1, 4],
+    [8, 10],
+  ]);
+  expect(await catalog.scanCandidates(product().barcode)).toHaveLength(1);
+});
+
+it('revalidates online scan metadata and candidates on every scan without requiring a complete cache', async () => {
+  const { db, catalog, request } = setup();
+  const barcode = '2000001001851';
+  const weighted = { ...product(), unit: 'kg' as const, scale_plu: 1 };
+  const regular = { ...product(), id: randomUUID(), barcode, nkt: null };
+  let current: ScaleProfile = { ...scaleProfile, issued_plu_ranges: [[1, 4]] };
+  request.mockImplementation(async (path) => ({
+    products: path.includes('scale_plu=') ? [weighted] : [regular],
+    scale_profile: current,
+  }));
+  expect(await catalog.scanCandidates(barcode, true)).toEqual([
+    expect.objectContaining({ kind: 'static', product_id: regular.id }),
+    expect.objectContaining({
+      kind: 'weighted',
+      product_id: weighted.id,
+      quantity: '0.185',
+    }),
+  ]);
+  current = { ...current, prefix: '27', revision: 2 };
+  expect(await catalog.scanCandidates(barcode, true)).toEqual([
+    expect.objectContaining({ kind: 'static', product_id: regular.id }),
+  ]);
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(db.get(`catalog:${scope}`)).toBeNull();
+});
+
+it('does not reuse a negative lookup or cached product price when checking an online label', async () => {
+  const { db, catalog, request } = setup(async () => ({ products: [] }));
+  const barcode = '2000001001851';
+  await catalog.barcode(barcode);
+  await db.cacheProducts(scope, [{ ...product(), unit: 'kg', scale_plu: 1 }]);
+  request.mockImplementation(async (path) => ({
+    products: path.includes('scale_plu=')
+      ? [{ ...product(), unit: 'kg', scale_plu: 1, retail_price: null }]
+      : [],
+    scale_profile: scaleProfile,
+  }));
+  expect(await catalog.scanCandidates(barcode, true)).toEqual([
+    expect.objectContaining({
+      kind: 'weighted',
+      retail_price: null,
+      unavailable_reason: 'PRODUCT_SALE_PRICE_REQUIRED',
+    }),
+  ]);
+  expect(db.product(scope, product().id)?.retail_price).toBeNull();
+  expect(request).toHaveBeenCalledTimes(3);
 });

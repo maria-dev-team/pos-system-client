@@ -46,6 +46,39 @@ afterEach(() => {
 });
 
 describe('local cashier session authorization', () => {
+  it('preserves scan choices across IPC without retrying the rejected command', async () => {
+    const { callLocalPos, request } = await fixture();
+    const details = {
+      current_version: 5,
+      saleId: null,
+      candidates: [
+        {
+          kind: 'weighted',
+          product_id: null,
+          name: null,
+          unit: 'kg',
+          quantity: '0.185',
+          retail_price: null,
+          unavailable_reason: 'PRODUCT_NOT_FOUND',
+        },
+      ],
+    };
+    request.mockResolvedValue({
+      ok: false,
+      code: 'PRODUCT_BARCODE_AMBIGUOUS',
+      message: 'Выберите трактовку штрихкода.',
+      details,
+    });
+    await expect(
+      callLocalPos({
+        type: 'execute',
+        command: { type: 'scan', barcode: '2704245001850' },
+      }),
+    ).rejects.toMatchObject({ code: 'PRODUCT_BARCODE_AMBIGUOUS', details });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
   it.each(['connect', 'restore'] as const)(
     'does not reinstall a late %s profile after disconnect with the same token',
     async (kind) => {

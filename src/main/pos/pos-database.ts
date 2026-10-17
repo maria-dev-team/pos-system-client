@@ -612,24 +612,29 @@ export class PosDatabase {
       : undefined;
   }
   barcode(scope: string, barcode: string): ProductResponse | undefined {
-    scope = this.catalogScope(scope);
-    const rows = this.statement(
-      'SELECT id,value FROM products WHERE scope=? AND barcode=? UNION SELECT id,value FROM products WHERE scope=? AND additional_barcode=? UNION SELECT id,value FROM products WHERE scope=? AND gtin=? LIMIT 2',
-    ).all(scope, barcode, scope, barcode, scope, barcode);
-    if (rows.length > 1)
+    const products = this.barcodes(scope, barcode);
+    if (products.length > 1)
       throw new PosError(
         'PRODUCT_BARCODE_AMBIGUOUS',
         'Код соответствует нескольким товарам. Выберите товар по названию.',
       );
-    const product = rows[0]
-      ? this.open<ProductResponse>(
-          rows[0].value as Uint8Array,
-          `product:${scope}:${rows[0].id}`,
-        )
-      : undefined;
-    if (product && !productMatchesBarcode(product, barcode))
-      throw new Error('Catalog index integrity failure');
-    return product;
+    return products[0];
+  }
+  barcodes(scope: string, barcode: string): ProductResponse[] {
+    if (!barcode) return [];
+    scope = this.catalogScope(scope);
+    const rows = this.statement(
+      'SELECT id,value FROM products WHERE scope=? AND barcode=? UNION SELECT id,value FROM products WHERE scope=? AND additional_barcode=? UNION SELECT id,value FROM products WHERE scope=? AND gtin=?',
+    ).all(scope, barcode, scope, barcode, scope, barcode);
+    return rows.map((row) => {
+      const product = this.open<ProductResponse>(
+        row.value as Uint8Array,
+        `product:${scope}:${row.id}`,
+      );
+      if (!productMatchesBarcode(product, barcode))
+        throw new Error('Catalog index integrity failure');
+      return product;
+    });
   }
   scalePlu(scope: string, plu: number): ProductResponse | undefined {
     scope = this.catalogScope(scope);

@@ -2,6 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { CategoryResponse } from '../../shared/api/responses/category.response';
 import { reportError, retryDiagnostics } from '../../shared/diagnostics';
+import {
+  type ScanCandidate,
+  scanAmbiguitySchema,
+} from '../../shared/pos/barcode-scan';
 import type {
   ArchivedLocalSale,
   LocalSale,
@@ -35,10 +39,6 @@ import {
   fiscalShiftExpired,
   offlineGrantExpiresAt,
 } from '../../shared/pos/session-policy';
-import {
-  assertWeightedProduct,
-  parseWeightedBarcode,
-} from '../../shared/pos/weighted-barcode';
 import {
   PosApiError as ApiError,
   PosConnectionError,
@@ -102,6 +102,7 @@ export class PosService {
   private outboxHardRetryAt = 0;
   private checkoutProbeAt = 0;
   private workspaceRevision = 0;
+  private itemCommandInProgress = false;
   private readonly sending = new Set<string>();
   private readonly reconciliations = new Map<
     string,
@@ -867,71 +868,282 @@ export class PosService {
   private async resolveScan(barcode: string): Promise<ScannedProduct> {
     requirePermission(this.active(), 'product.read');
     const epoch = this.epoch;
-    const profile = this.catalog.scaleProfile();
-    const label = parseWeightedBarcode(barcode, profile);
-    const matrix = label ? null : parseGs1DataMatrix(barcode);
+    const workspace = this.workspaceRevision;
+    const matrix = parseGs1DataMatrix(barcode);
     const code = matrix?.gtin ?? barcode;
-    const product = label
-      ? await this.catalog.scalePlu(label.scalePlu)
-      : (this.db.barcode(this.scope, code) ??
-        (await this.catalog.barcode(code)));
-    this.assertEpoch(epoch);
-    if (JSON.stringify(profile) !== JSON.stringify(this.catalog.scaleProfile()))
-      throw new PosError(
-        'LOCAL_CONTEXT_CHANGED',
-        'Настройки весов изменились. Повторите сканирование.',
-      );
-    if (label) {
-      assertWeightedProduct(product, label);
+    let candidates: ScanCandidate[];
+    if (this.online && !this.tokenRefreshRequired) {
       try {
-        const collision = this.db.barcode(this.scope, barcode);
-        if (collision && collision.id !== product.id)
-          throw new PosError(
-            'SCALE_BARCODE_CONFLICT',
-            'Весовая этикетка совпадает с кодом другого товара.',
-          );
+        candidates = await this.catalog.scanCandidates(code, true);
       } catch (error) {
         if (
-          error instanceof PosError &&
-          error.code === 'PRODUCT_BARCODE_AMBIGUOUS'
+          !networkError(error) &&
+          !(error instanceof ApiError && error.status === 401)
         )
-          throw new PosError(
-            'SCALE_BARCODE_CONFLICT',
-            'Весовая этикетка совпадает с кодами других товаров.',
-          );
-        throw error;
+          throw error;
+        this.online = false;
+        candidates = await this.catalog.scanCandidates(code);
       }
+    } else {
+      candidates = await this.catalog.scanCandidates(code);
+      // Preserve the existing read-through lookup for a code absent locally.
+      if (!candidates.length)
+        candidates = await this.catalog.scanCandidates(code, true);
     }
+    this.assertEpoch(epoch);
+    if (workspace !== this.workspaceRevision)
+      throw new PosError(
+        'LOCAL_CONTEXT_CHANGED',
+        'Рабочий чек изменился. Повторите сканирование.',
+      );
+    if (candidates.length > 1) throw this.scanAmbiguity(candidates);
+    const candidate = candidates[0];
+    const product = candidate?.product_id
+      ? this.db.product(this.scope, candidate.product_id)
+      : undefined;
     if (!product)
       throw new PosError(
         'PRODUCT_NOT_FOUND',
         'Товар не найден в каталоге магазина.',
       );
+    if (candidate.unavailable_reason === 'SCALE_BARCODE_INVALID')
+      throw new PosError(
+        'SCALE_BARCODE_INVALID',
+        'Этикетка не соответствует весовому товару.',
+      );
     return {
       product,
-      quantity: label?.quantity ?? '1',
+      quantity: candidate.quantity ?? '1',
+      kind: candidate.kind,
       ...(matrix ? { markingCode: matrix.markingCode } : {}),
     };
   }
 
+  private scanAmbiguity(candidates: ScanCandidate[]): PosError {
+    const current = this.current();
+    return new PosError(
+      'PRODUCT_BARCODE_AMBIGUOUS',
+      'Выберите трактовку штрихкода.',
+      {
+        candidates,
+        current_version: current?.sale.local_revision ?? 0,
+        saleId: current?.sale.id ?? null,
+      },
+    );
+  }
+
+  private assertItemCommandIdle(): void {
+    if (this.itemCommandInProgress)
+      throw new PosError(
+        'LOCAL_OPERATION_PENDING',
+        'Дождитесь результата добавления товара.',
+      );
+  }
+
+  /** Online item mutations are never replayed by the durable snapshot outbox. */
+  private async executeOnlineItem(
+    command: Extract<SaleCommand, { type: 'scan' | 'add' }>,
+  ): Promise<SaleResponse> {
+    this.assertItemCommandIdle();
+    requirePermission(this.active(), 'product.read');
+    requirePermission(this.active(), 'sales.modify');
+    const epoch = this.epoch;
+    const id = this.current()!.sale.id;
+    let sent = false;
+    this.itemCommandInProgress = true;
+    try {
+      let quantity = command.quantity ?? '1';
+      const matrix =
+        command.type === 'scan' ? parseGs1DataMatrix(command.barcode) : null;
+      const markingCode = command.markingCode ?? matrix?.markingCode;
+      if (command.type === 'scan') {
+        const candidates = await this.catalog.scanCandidates(
+          matrix?.gtin ?? command.barcode,
+          true,
+        );
+        this.assertEpoch(epoch);
+        const candidate = candidates.length === 1 ? candidates[0] : undefined;
+        if (candidate?.kind === 'weighted') quantity = candidate.quantity!;
+        else if (candidate?.unit === 'kg' && !command.quantity)
+          throw this.scanAmbiguity(candidates);
+      }
+      await this.synchronizeForCheckout(id);
+      this.assertEpoch(epoch);
+      if (!this.online)
+        throw new PosConnectionError(
+          'POS_API_UNREACHABLE',
+          'Сервер недоступен.',
+        );
+      const record = this.record(id);
+      if (
+        this.current()?.sale.id !== id ||
+        record.error ||
+        record.inFlight ||
+        record.revision !== record.syncedRevision
+      )
+        throw new PosError(
+          'SYNC_REQUIRED',
+          'Дождитесь синхронизации текущего чека и повторите сканирование.',
+        );
+      // Persist uncertainty before sending: a crash must not allow a local snapshot
+      // to overwrite a server addition whose response was lost.
+      this.save({
+        ...record,
+        pendingItemCommand: true,
+        error: 'SALE_VERSION_CONFLICT',
+      });
+      sent = true;
+      try {
+        const { sale } = await this.api<{ sale: SaleResponse }>(
+          `/v1/sales/${id}/items${command.type === 'scan' ? '/scan' : ''}`,
+          {
+            ...(command.type === 'scan'
+              ? {
+                  barcode: matrix?.gtin ?? command.barcode,
+                  quantity_delta: quantity,
+                }
+              : { product_id: command.productId, quantity }),
+            expected_version: record.serverVersion,
+            ...(markingCode ? { marking_code: markingCode } : {}),
+          },
+        );
+        this.assertEpoch(epoch);
+        assertSaleAcknowledgement(sale, record);
+        if (
+          sale.status !== 'DRAFT' ||
+          sale.version !== record.serverVersion + 1
+        )
+          throw new PosError(
+            'POS_API_INVALID_RESPONSE',
+            'Сервер не подтвердил добавление. Проверьте серверный чек.',
+          );
+        this.save({
+          ...record,
+          sale,
+          revision: record.revision + 1,
+          syncedRevision: record.revision + 1,
+          serverVersion: sale.version,
+          pendingItemCommand: false,
+          error: null,
+        });
+        return this.record(id).sale;
+      } catch (error) {
+        this.assertEpoch(epoch);
+        if (
+          error instanceof ApiError &&
+          error.code === 'SALE_VERSION_CONFLICT'
+        ) {
+          // Refresh only; retrying a possibly accepted add would duplicate it.
+          const { sale } = await this.api<{ sale: SaleResponse }>(
+            `/v1/sales/${id}`,
+          );
+          this.assertEpoch(epoch);
+          assertSaleAcknowledgement(sale, record);
+          this.save({
+            ...record,
+            sale,
+            revision: record.revision + 1,
+            syncedRevision: record.revision + 1,
+            serverVersion: sale.version,
+            pendingItemCommand: false,
+            error: null,
+          });
+        } else if (
+          error instanceof ApiError &&
+          error.status < 500 &&
+          error.status !== 408
+        ) {
+          this.save({ ...record, pendingItemCommand: false });
+          if (error.code === 'PRODUCT_BARCODE_AMBIGUOUS') {
+            const ambiguity = scanAmbiguitySchema.safeParse(error.details);
+            if (ambiguity.success)
+              throw this.scanAmbiguity(ambiguity.data.candidates);
+          }
+        }
+        throw error;
+      }
+    } catch (error) {
+      if (
+        sent ||
+        (!networkError(error) &&
+          !(error instanceof ApiError && error.status === 401))
+      )
+        throw error;
+      // Only read-only/preparation work failed; no item mutation was sent.
+      // Continue through the established durable offline path.
+      this.online = false;
+    } finally {
+      this.itemCommandInProgress = false;
+      this.changed();
+    }
+    return this.execute(command);
+  }
+
   private async execute(command: SaleCommand): Promise<SaleResponse> {
     this.active();
+    this.assertItemCommandIdle();
+    const initial = this.current();
+    if (
+      command.type === 'add' &&
+      command.expectedVersion !== undefined &&
+      (command.expectedVersion !== (initial?.sale.local_revision ?? 0) ||
+        command.saleId !== (initial?.sale.id ?? null))
+    )
+      throw new PosError(
+        'SALE_VERSION_CONFLICT',
+        'Чек изменился. Повторите сканирование.',
+      );
     if (this.current()?.payment || this.current()?.fiscalBlocked)
       throw new PosError(
         'PAYMENT_UNCERTAIN',
         'Этот чек ожидает проверки оплаты. Перенесите его в очередь проверки, чтобы начать следующий чек.',
       );
+    // Both create endpoints require at least one item. The first scan therefore
+    // resolves the catalog before using the existing durable creation path.
+    if (
+      this.online &&
+      !this.tokenRefreshRequired &&
+      initial &&
+      (command.type === 'scan' ||
+        (command.type === 'add' && command.expectedVersion !== undefined))
+    )
+      return this.executeOnlineItem(command);
     const epoch = this.epoch;
     const workspace = this.workspaceRevision;
     let product: ProductResponse | undefined;
     if (command.type === 'scan') {
       const resolved = await this.resolveScan(command.barcode);
       product = resolved.product;
+      if (
+        resolved.kind === 'static' &&
+        product.unit === 'kg' &&
+        !command.quantity
+      )
+        throw this.scanAmbiguity([
+          {
+            kind: 'static',
+            product_id: product.id,
+            name: product.name,
+            unit: product.unit,
+            retail_price: product.retail_price,
+            quantity: null,
+            unavailable_reason: !product.is_active
+              ? 'PRODUCT_NOT_SELLABLE'
+              : product.retail_price === null
+                ? 'PRODUCT_SALE_PRICE_REQUIRED'
+                : null,
+          },
+        ]);
       command = {
         type: 'add',
         productId: product.id,
-        quantity: resolved.quantity,
-        ...(resolved.markingCode ? { markingCode: resolved.markingCode } : {}),
+        quantity:
+          resolved.kind === 'weighted'
+            ? resolved.quantity
+            : (command.quantity ?? resolved.quantity),
+        ...((command.markingCode ?? resolved.markingCode)
+          ? { markingCode: command.markingCode ?? resolved.markingCode }
+          : {}),
       };
     } else if (command.type === 'add') {
       requirePermission(this.active(), 'product.read');
@@ -947,6 +1159,16 @@ export class PosService {
       );
     const profile = this.active();
     const current = this.current();
+    if (
+      command.type === 'add' &&
+      command.expectedVersion !== undefined &&
+      (command.expectedVersion !== (current?.sale.local_revision ?? 0) ||
+        command.saleId !== (current?.sale.id ?? null))
+    )
+      throw new PosError(
+        'SALE_VERSION_CONFLICT',
+        'Чек изменился. Повторите сканирование.',
+      );
     if (current?.payment || current?.fiscalBlocked)
       throw new PosError(
         'PAYMENT_UNCERTAIN',
@@ -1828,6 +2050,7 @@ export class PosService {
           (r) =>
             !r.nonFiscalCompletion &&
             !r.fiscalBlocked &&
+            !(r.pendingItemCommand && this.itemCommandInProgress) &&
             r.error &&
             [
               'SALE_VERSION_CONFLICT',
@@ -1840,6 +2063,7 @@ export class PosService {
       pending: records.filter(
         (r) =>
           r.revision > r.syncedRevision ||
+          r.pendingItemCommand ||
           (r.deferredPayment && !r.deferSynced),
       ).length,
       outbox: records
@@ -1945,6 +2169,7 @@ export class PosService {
             r.revision > r.syncedRevision ||
             r.payment ||
             r.fiscalBlocked ||
+            r.pendingItemCommand ||
             r.deferredPayment,
         )
       )
@@ -1969,6 +2194,28 @@ export class PosService {
     }
     if (request.type === 'status') return this.status();
     this.active();
+    if (
+      [
+        'execute',
+        'transition',
+        'checkout',
+        'retrySale',
+        'deferPayment',
+        'resumePayment',
+        'reconcilePayment',
+        'archiveCancelledSale',
+        'resolveConflict',
+      ].includes(request.type)
+    ) {
+      this.assertItemCommandIdle();
+      const target =
+        'saleId' in request ? this.records.get(request.saleId) : this.current();
+      if (target?.pendingItemCommand && request.type !== 'resolveConflict')
+        throw new PosError(
+          'SALE_VERSION_CONFLICT',
+          'Результат добавления не подтверждён. Сравните чек с сервером перед продолжением.',
+        );
+    }
     switch (request.type) {
       case 'pendingReturn':
       case 'savePendingReturn':
@@ -2156,6 +2403,7 @@ export class PosService {
               r.revision > r.syncedRevision ||
               r.payment ||
               r.fiscalBlocked ||
+              r.pendingItemCommand ||
               (request.type === 'prepareCashMovement' && r.deferredPayment) ||
               (request.type === 'flush' &&
                 (r.sale.status === 'DRAFT' || r.sale.status === 'HELD')),
@@ -2251,6 +2499,7 @@ export class PosService {
           error: null,
           inFlight: null,
           serverVersion: 0,
+          pendingItemCommand: false,
         });
         this.adopt(remote);
       } else
@@ -2262,6 +2511,7 @@ export class PosService {
           serverVersion: remote.version,
           error: null,
           inFlight: null,
+          pendingItemCommand: false,
         });
     } else {
       if (
@@ -2290,6 +2540,7 @@ export class PosService {
         serverVersion: remote?.id === record.sale.id ? remote.version : 0,
         inFlight: null,
         error: null,
+        pendingItemCommand: false,
       });
     }
     void this.synchronize();

@@ -22,9 +22,11 @@ import {
   executeLocalSale,
   localPosActive,
 } from '@renderer/common/lib/local-pos';
-import { browserWeightedBarcode } from '@renderer/common/lib/resolve-product-scan';
+import { resolveProductScan } from '@renderer/common/lib/resolve-product-scan';
+import { getScanAmbiguity } from '@renderer/common/lib/scan-ambiguity';
 
-import type { SaleCommand } from '../../../../shared/pos/contracts';
+import { PosError, type SaleCommand } from '../../../../shared/pos/contracts';
+import { assertProductSellable } from '../../../../shared/pos/product-policy';
 
 export type { SaleCommand } from '../../../../shared/pos/contracts';
 
@@ -81,6 +83,14 @@ export function useSaleCommandMutation(
         saleKey,
       );
 
+      if (
+        command.type === 'add' &&
+        command.saleId !== undefined &&
+        command.saleId !== (currentSale?.id ?? null)
+      ) {
+        throw new Error('Current sale is no longer active');
+      }
+
       if (!currentSale) {
         if (command.type !== 'add') {
           throw new Error('Current sale is no longer active');
@@ -117,14 +127,54 @@ export function useSaleCommandMutation(
         throw new Error('Current sale is no longer active');
       }
 
-      const expectedVersion = currentSale.version;
+      const expectedVersion =
+        command.type === 'add'
+          ? (command.expectedVersion ?? currentSale.version)
+          : currentSale.version;
       switch (command.type) {
         case 'scan': {
           const auth = captureAuth();
-          const weighted = await browserWeightedBarcode(
-            command.barcode,
-            queryClient,
-          );
+          let quantityDelta = command.quantity ?? '1';
+          {
+            try {
+              const resolved = await resolveProductScan(
+                command.barcode,
+                currentSale.organization_id,
+                queryClient,
+              );
+              if (resolved.kind === 'weighted')
+                quantityDelta = resolved.quantity;
+              if (
+                resolved.kind === 'static' &&
+                resolved.product.unit === 'kg' &&
+                command.quantity === undefined
+              ) {
+                assertProductSellable(resolved.product, command.markingCode);
+                throw new PosError(
+                  'PRODUCT_BARCODE_AMBIGUOUS',
+                  'Введите вес товара.',
+                  {
+                    current_version: expectedVersion,
+                    candidates: [
+                      {
+                        kind: 'static',
+                        product_id: resolved.product.id,
+                        name: resolved.product.name,
+                        unit: 'kg',
+                        quantity: null,
+                        retail_price: resolved.product.retail_price,
+                        unavailable_reason: null,
+                      },
+                    ],
+                  },
+                );
+              }
+            } catch (error) {
+              const ambiguity = getScanAmbiguity(error);
+              if (!ambiguity || ambiguity.candidates.length === 1) throw error;
+              // The scan endpoint supplies the authoritative candidates/version.
+            }
+          }
           assertAuthCurrent(auth);
           if (
             localPosActive() ||
@@ -135,7 +185,10 @@ export function useSaleCommandMutation(
           return scanSaleItem(currentSale.id, {
             barcode: command.barcode,
             expectedVersion,
-            quantityDelta: weighted?.quantity ?? '1',
+            quantityDelta,
+            ...(command.markingCode
+              ? { markingCode: command.markingCode }
+              : {}),
           });
         }
         case 'add':
@@ -200,5 +253,6 @@ export function useSaleCommandMutation(
     },
     // Local commands are serialized at their durable write, not behind a remote cache miss.
     scope: localPosActive() ? undefined : { id: cashierSessionId },
+    retry: false,
   });
 }

@@ -33,6 +33,8 @@ export const saleCommandSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('scan'),
       barcode: z.string().trim().min(1).max(512),
+      quantity: quantity.optional(),
+      markingCode: z.string().min(1).max(512).optional(),
     })
     .strict(),
   z
@@ -41,6 +43,8 @@ export const saleCommandSchema = z.discriminatedUnion('type', [
       productId: id,
       quantity: quantity.optional(),
       markingCode: z.string().min(1).max(512).optional(),
+      expectedVersion: z.number().int().nonnegative().optional(),
+      saleId: id.nullable().optional(),
     })
     .strict(),
   z.object({ type: z.literal('setQuantity'), itemId: id, quantity }).strict(),
@@ -68,6 +72,7 @@ export type SaleCommand = z.infer<typeof saleCommandSchema>;
 export type ScannedProduct = {
   product: ProductResponse;
   quantity: string;
+  kind?: 'static' | 'weighted';
   markingCode?: string;
 };
 export const posRequestSchema = z.discriminatedUnion('type', [
@@ -275,7 +280,13 @@ export type PosResult =
 export type PosConflict = { local: SaleResponse; remote: SaleResponse | null };
 export type PosReply =
   | { ok: true; value: PosResult }
-  | { ok: false; code: string; message: string; reported?: boolean };
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      reported?: boolean;
+      details?: unknown;
+    };
 export type LocalPosBridge = {
   request: (request: PosRequest) => Promise<PosReply>;
   onChange: (listener: () => void) => () => void;
@@ -283,6 +294,8 @@ export type LocalPosBridge = {
 
 /** Durable local aggregate and its last server version; these revisions are independent. */
 export type LocalSale = {
+  /** A non-idempotent server item mutation may have been accepted. Never replay it. */
+  pendingItemCommand?: boolean;
   nonFiscalCompletion?: {
     commandId: string;
     request: Extract<PosRequest, { type: 'checkout' }>;
@@ -330,8 +343,10 @@ export type SyncFailure = {
 
 export class PosError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  readonly details?: unknown;
+  constructor(code: string, message: string, details?: unknown) {
     super(message);
     this.code = code;
+    this.details = details;
   }
 }
