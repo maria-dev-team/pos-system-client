@@ -321,7 +321,8 @@ function ActiveCheckout({
       ({ organization }) => organization?.id === context.data?.organizationId,
     )?.organization?.timezone ?? 'Asia/Almaty';
   const lastClosedShift = shiftHistory.data?.find(
-    ({ status }) => status === 'CLOSED',
+    ({ status, fiscal_closed_at }) =>
+      status === 'CLOSED' && Boolean(fiscal_closed_at),
   );
 
   const refocus = () =>
@@ -1491,7 +1492,9 @@ function ActiveCheckout({
               </div>
             ) : null}
             <div className="grid grid-cols-2 gap-2">
-              {canReadShift ? (
+              {canReadShift &&
+              fiscalizationEnabled &&
+              fiscalizationPolicy !== 'NEVER' ? (
                 <XReportPrintButton
                   className="min-h-14 w-full justify-start gap-3 whitespace-normal border-border bg-background px-4 py-3 text-left text-sm leading-tight"
                   registerShiftId={cashierSession.register_shift_id}
@@ -1504,7 +1507,7 @@ function ActiveCheckout({
                   registerShiftId={lastClosedShift.id}
                   timeZone={timeZone}
                 />
-              ) : (
+              ) : fiscalizationEnabled && fiscalizationPolicy !== 'NEVER' ? (
                 <div
                   aria-label="Z-отчёт пока недоступен"
                   className="flex min-h-18 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/35 px-2 py-3 text-center text-xs leading-tight text-muted-foreground"
@@ -1512,7 +1515,7 @@ function ActiveCheckout({
                   <ReceiptText aria-hidden="true" className="size-5" />
                   Z-отчёт после закрытия
                 </div>
-              )}
+              ) : null}
             </div>
             {canEndSession ? (
               <div className="mt-3">

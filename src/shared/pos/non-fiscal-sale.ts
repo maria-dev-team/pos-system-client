@@ -9,7 +9,7 @@ export function nonFiscalAllowed(
   request: Checkout,
 ): boolean {
   const settings = profile.register.fiscalization;
-  if (!settings.enabled) return true;
+  if (!settings.enabled || settings.policy === 'NEVER') return true;
   if (settings.policy === 'SELECTIVE')
     return request.fiscalizationMode === 'NON_FISCAL';
   return (

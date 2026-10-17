@@ -130,6 +130,12 @@ const contextResponse = {
   userOrganizationId: 'membership-1',
 };
 const registerResponse = {
+  fiscalization: {
+    enabled: true,
+    policy: 'ALWAYS',
+    provider: 'WEBKASSA',
+    cashbox_unique_number: 'SWK00000001',
+  },
   code: 'POS-01',
   created_at: '2026-08-23T00:00:00.000Z',
   id: 'register-1',
@@ -161,6 +167,7 @@ const registerShiftResponse = {
 };
 const closedRegisterShiftResponse = {
   ...registerShiftResponse,
+  fiscal_closed_at: '2026-08-24T10:00:00.000Z',
   actual_cash: '9800.00',
   closed_at: '2026-08-24T10:00:00.000Z',
   closed_by_membership_id: 'membership-1',
@@ -897,7 +904,7 @@ describe('DukenAI POS authorization flow', () => {
     );
     expect(
       screen.getByText(
-        'Пересчитайте наличные. Касса будет закрыта, ОФД сформирует Z-отчёт. После закрытия сумму нельзя изменить.',
+        'Пересчитайте наличные. Кассовая смена будет закрыта. После закрытия сумму нельзя изменить.',
       ),
     ).toBeInTheDocument();
     await user.click(screen.getByLabelText('Фактические наличные, ₸'));
@@ -997,6 +1004,61 @@ describe('DukenAI POS authorization flow', () => {
         name: 'Печать последнего Z-отчёта',
       }),
     ).not.toBeInTheDocument();
+  });
+
+  it('works and closes without offering fiscal reports on a non-fiscal register', async () => {
+    const user = userEvent.setup();
+    api.refreshTokens.mockResolvedValue({ access_token: 'restored-token' });
+    api.getActiveRegisters.mockResolvedValue([
+      {
+        ...registerResponse,
+        fiscalization: {
+          enabled: false,
+          policy: 'NEVER',
+          provider: null,
+          cashbox_unique_number: null,
+        },
+      },
+    ]);
+    api.getCurrentRegisterShift.mockResolvedValue({
+      ...registerShiftResponse,
+      fiscal_shift_number: null,
+    });
+    api.getRegisterShifts.mockResolvedValue([
+      {
+        ...closedRegisterShiftResponse,
+        fiscal_closed_at: null,
+        fiscal_shift_number: null,
+      },
+    ]);
+    api.closeRegisterShift.mockResolvedValue({
+      register_shift: {
+        ...closedRegisterShiftResponse,
+        fiscal_closed_at: null,
+        fiscal_shift_number: null,
+      },
+      z_report: null,
+    });
+    renderApp();
+    expect(
+      await screen.findByRole('button', {
+        name: 'Начать работу на кассе Основная касса',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Печать X-отчёта' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Печать последнего Z-отчёта' }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Закрыть кассу' }));
+    await user.type(screen.getByLabelText('Фактические наличные, ₸'), '9800');
+    await user.click(screen.getByRole('button', { name: 'Закрыть смену' }));
+    expect(
+      await screen.findByText(
+        'Смена закрыта без фискализации. Z-отчёт не формируется.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('retries a CLOSING shift with its saved cash and handles a missing Z report', async () => {
