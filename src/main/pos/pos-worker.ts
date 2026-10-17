@@ -66,6 +66,10 @@ parentPort!.on(
           ok: false,
           reported: true,
           code: error instanceof PosError ? error.code : 'LOCAL_STORAGE_ERROR',
+          ...(error instanceof PosError &&
+          error.code === 'PRODUCT_BARCODE_AMBIGUOUS'
+            ? { details: error.details }
+            : {}),
           message:
             error instanceof PosError || error instanceof RangeError
               ? error.message

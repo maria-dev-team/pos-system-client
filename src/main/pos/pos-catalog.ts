@@ -4,6 +4,10 @@ import { z } from 'zod';
 import type { ProductSearchResponse } from '../../shared/api/responses/product.response';
 import { reportError } from '../../shared/diagnostics';
 import {
+  type ScanCandidate,
+  buildScanCandidates,
+} from '../../shared/pos/barcode-scan';
+import {
   PosError,
   type PosStatus,
   type ProductResponse,
@@ -11,6 +15,9 @@ import {
 import { productMatchesBarcode } from '../../shared/pos/product-policy';
 import {
   type ScaleProfile,
+  isIssuedPlu,
+  mergeScaleProfiles,
+  parseWeightedBarcode,
   scaleProfileSchema,
 } from '../../shared/pos/weighted-barcode';
 import { PosApiError, PosConnectionError } from './pos-api-client';
@@ -140,9 +147,13 @@ export class PosCatalog {
     this.waitingForTransactions = false;
   }
   scaleProfile(): ScaleProfile | null {
-    return this.scope
-      ? this.db.get<ScaleProfile>(`scale-profile:${this.scope}`)
-      : null;
+    if (!this.scope) return null;
+    // Legacy per-store profiles have neither revisions nor issued PLU ranges.
+    // Keep their catalog/cursors intact, but require fresh metadata before scans.
+    const profile = scaleProfileSchema.safeParse(
+      this.db.get<unknown>(`scale-profile:organization:${this.organization}`),
+    );
+    return profile.success ? profile.data : null;
   }
   status(): Pick<
     PosStatus,
@@ -200,15 +211,12 @@ export class PosCatalog {
     this.check(epoch);
     if (!profile) return;
     const previous = this.scaleProfile();
-    if (
-      previous?.format === profile.format &&
-      previous.prefix === profile.prefix &&
-      previous.enabled === profile.enabled &&
-      previous.blocked_reason === profile.blocked_reason
-    )
-      return;
-    this.db.set(`scale-profile:${this.scope}`, profile);
+    const merged = mergeScaleProfiles(previous, profile);
+    if (JSON.stringify(previous) === JSON.stringify(merged)) return;
+    this.db.set(`scale-profile:organization:${this.organization}`, merged);
+    this.misses.clear();
     this.revision = `${Date.now()}:${randomUUID()}`;
+    this.changed();
   }
   private products(input: unknown, max: number): ProductResponse[] {
     const parsed = z.array(productSchema).max(max).safeParse(input);
@@ -229,6 +237,7 @@ export class PosCatalog {
     products: ProductResponse[],
     epoch: number,
     foreground?: number,
+    refresh = false,
   ): Promise<void> {
     this.check(epoch);
     if (!products.length) return;
@@ -240,7 +249,7 @@ export class PosCatalog {
       this.scope,
       products,
       () => epoch === this.epoch,
-      foreground === undefined ? 'authoritative' : 'missing',
+      foreground === undefined || refresh ? 'authoritative' : 'missing',
       (id) =>
         foreground === undefined ||
         (foreground >= this.prunedAt &&
@@ -301,9 +310,11 @@ export class PosCatalog {
             const page = await this.request<{
               products: unknown;
               next_cursor: unknown;
+              scale_profile?: unknown;
             }>(`/v1/pos/catalog/page?${params}`, 5000);
             this.check(epoch);
             const products = this.products(page.products, 250);
+            const profile = this.profile(page.scale_profile);
             if (
               products.some(
                 (p, index) =>
@@ -330,6 +341,7 @@ export class PosCatalog {
             this.phase = 'saving';
             this.changed();
             await this.cache(products, epoch);
+            this.saveProfile(profile, epoch);
             progress = {
               ...progress,
               after: page.next_cursor as string | null,
@@ -397,6 +409,10 @@ export class PosCatalog {
               'Некорректный пакет изменений каталога.',
             );
           this.phase = 'saving';
+          // A crash during a batch must not leave partially applied data marked
+          // as a complete catalog for offline ambiguity decisions.
+          this.db.set(`catalog-pending:${scope}`, true);
+          this.pending = true;
           this.changed();
           await this.cache(products, epoch);
           if (deleted.data.length) {
@@ -416,7 +432,8 @@ export class PosCatalog {
           this.saveProfile(profile, epoch);
           // A crash during apply replays the same batch. Never acknowledge a partially saved page.
           this.db.set(`catalog-cursor:${scope}`, next);
-          this.pending = page.has_more;
+          this.pending =
+            page.has_more || page.waiting_for_transactions === true;
           this.db.set(`catalog-pending:${scope}`, this.pending);
           cursor = next;
           this.waitingForTransactions = page.waiting_for_transactions === true;
@@ -481,11 +498,15 @@ export class PosCatalog {
     return value;
   }
 
-  private lookup(params: URLSearchParams): Promise<ProductResponse[]> {
-    const key = params.toString();
+  private lookup(
+    params: URLSearchParams,
+    refresh = false,
+  ): Promise<ProductResponse[]> {
+    const key = `${refresh ? 'fresh:' : ''}${params}`;
     const shared = this.jobs.get(key);
     if (shared) return shared;
-    if ((this.misses.get(key) ?? 0) > Date.now()) return Promise.resolve([]);
+    if (!refresh && (this.misses.get(key) ?? 0) > Date.now())
+      return Promise.resolve([]);
     if (this.jobs.size >= 4 || Date.now() < this.foregroundRetryAt)
       return Promise.reject(
         new PosError(
@@ -497,12 +518,18 @@ export class PosCatalog {
     const writes = this.writes;
     const job = (async () => {
       try {
-        const result = await this.request<{ products: unknown }>(
-          `/v1/pos/catalog/lookup?${params}`,
-          5000,
-        );
+        const result = await this.request<{
+          products: unknown;
+          scale_profile?: unknown;
+        }>(`/v1/pos/catalog/lookup?${params}`, 5000);
         this.check(epoch);
         const products = this.products(result.products, 2);
+        const profile = this.profile(result.scale_profile);
+        if (refresh && !profile)
+          throw new PosError(
+            'LOCAL_CATALOG_SYNC_REQUIRED',
+            'Для проверки штрихкода требуется актуальный профиль каталога.',
+          );
         const matches = (p: ProductResponse): boolean =>
           params.has('product_id')
             ? p.id === params.get('product_id')
@@ -519,7 +546,8 @@ export class PosCatalog {
             this.misses.delete(this.misses.keys().next().value!);
           this.misses.set(key, Date.now() + 10_000);
         }
-        await this.cache(products, epoch, writes);
+        await this.cache(products, epoch, writes, refresh);
+        this.saveProfile(profile, epoch);
         return products.flatMap((p) => {
           const local = this.db.product(this.scope, p.id);
           return local && matches(local) ? [local] : [];
@@ -593,6 +621,62 @@ export class PosCatalog {
     return products[0];
   }
 
+  async scanCandidates(
+    barcode: string,
+    online = false,
+  ): Promise<ScanCandidate[]> {
+    const epoch = this.epoch;
+    const products = online
+      ? await this.lookup(new URLSearchParams({ barcode }), true)
+      : this.db.barcodes(this.scope, barcode);
+    this.check(epoch);
+    const profile = this.scaleProfile();
+    if (
+      !profile ||
+      (!online &&
+        (!this.db.get<string>(`catalog:${this.scope}`) ||
+          !this.db.get<string>(`catalog-cursor:${this.scope}`) ||
+          this.db.get<Progress>(`catalog-progress:${this.scope}`) ||
+          this.db.get<boolean>(`catalog-pending:${this.scope}`)))
+    )
+      throw new PosError(
+        'LOCAL_CATALOG_SYNC_REQUIRED',
+        'Нужна онлайн-проверка или завершение синхронизации каталога, чтобы определить товар по коду.',
+      );
+    let weighted: ProductResponse | undefined;
+    try {
+      const label = parseWeightedBarcode(barcode, profile);
+      if (label && isIssuedPlu(label.scalePlu, profile)) {
+        if (online) {
+          const matches = await this.lookup(
+            new URLSearchParams({ scale_plu: String(label.scalePlu) }),
+            true,
+          );
+          if (matches.length > 1)
+            throw new PosError(
+              'PRODUCT_BARCODE_AMBIGUOUS',
+              'PLU соответствует нескольким товарам. Выполните синхронизацию каталога.',
+            );
+          weighted = matches[0];
+        } else weighted = this.db.scalePlu(this.scope, label.scalePlu);
+      }
+    } catch (error) {
+      // A malformed weight interpretation must not hide an exact static code.
+      if (
+        !(error instanceof PosError) ||
+        error.code !== 'SCALE_BARCODE_INVALID'
+      )
+        throw error;
+    }
+    this.check(epoch);
+    if (JSON.stringify(profile) !== JSON.stringify(this.scaleProfile()))
+      throw new PosError(
+        'LOCAL_CONTEXT_CHANGED',
+        'Настройки весов изменились. Повторите сканирование.',
+      );
+    return buildScanCandidates(barcode, profile, products, weighted);
+  }
+
   async search(
     term: string,
     category: string | undefined,
@@ -650,12 +734,12 @@ export class PosCatalog {
     const job = (async () => {
       const writes = this.writes;
       try {
-        const result = await this.request<ProductSearchResponse>(
-          `/v1/pos/catalog/search?${params}`,
-          5000,
-        );
+        const result = await this.request<
+          ProductSearchResponse & { scale_profile?: unknown }
+        >(`/v1/pos/catalog/search?${params}`, 5000);
         this.check(epoch);
         const products = this.products(result.products, limit);
+        const profile = this.profile(result.scale_profile);
         if (category && products.some((p) => p.category_id !== category))
           throw new PosError(
             'POS_API_INVALID_RESPONSE',
@@ -672,6 +756,7 @@ export class PosCatalog {
             'Некорректный результат поиска.',
           );
         await this.cache(products, epoch, writes);
+        this.saveProfile(profile, epoch);
         if (writes !== this.writes)
           return this.db.search(
             this.scope,

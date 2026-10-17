@@ -48,6 +48,7 @@ export function canSync(
   stage: SyncStage,
   now = Date.now(),
 ): boolean {
+  if (record.pendingItemCommand) return false;
   const failure = record.syncFailures?.[stage];
   return !failure || (failure.temporary && (failure.nextAttemptAt ?? 0) <= now);
 }

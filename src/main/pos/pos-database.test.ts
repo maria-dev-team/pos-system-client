@@ -37,6 +37,44 @@ const receipt = (): LocalSale => ({
   error: null,
 });
 describe('durable local database', () => {
+  it('retains a legacy scale-profile catalog, resume cursors and unsent receipt on restart', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'pos-profile-upgrade-'));
+    directories.push(directory);
+    const path = join(directory, 'pos.sqlite');
+    const key = randomBytes(32);
+    const initial = new PosDatabase(path, key);
+    const sale = receipt();
+    const progress = {
+      cursor: 'baseline',
+      cycle: 'cycle',
+      after: ids.product,
+      loaded: 1,
+    };
+    try {
+      await initial.cacheProducts('store', [
+        { ...productFixture(), scale_plu: 1 },
+      ]);
+      initial.save(sale);
+      initial.set('catalog-cursor:store', 'resume');
+      initial.set('catalog-progress:store', progress);
+      initial.set('catalog-pending:store', true);
+      initial.set('scale-profile:store', {
+        format: 'ean13-weight-v1',
+        prefix: '20',
+        enabled: true,
+        blocked_reason: null,
+      });
+    } finally {
+      initial.close();
+    }
+    const restarted = open(path, key);
+    expect(restarted.scalePlu('store', 1)?.id).toBe(ids.product);
+    expect(restarted.get('catalog-cursor:store')).toBe('resume');
+    expect(restarted.get('catalog-progress:store')).toEqual(progress);
+    expect(restarted.get('catalog-pending:store')).toBe(true);
+    expect(restarted.sale(ids.session, sale.sale.id)).toEqual(sale);
+    expect(restarted.workingSales(ids.session)).toEqual([sale]);
+  });
   it('completes a partially upgraded history schema without deleting local data', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pos-schema-recovery-'));
     directories.push(dir);
@@ -234,6 +272,40 @@ describe('durable local database', () => {
     expect(() => db.barcode('store', milk.barcode)).toThrow(
       'нескольким товарам',
     );
+  });
+  it('collects every static match once across primary, additional and NKT codes in the current store', async () => {
+    const db = open();
+    const product = productFixture();
+    const barcode = product.barcode;
+    const products = [
+      {
+        ...product,
+        additional_barcode: barcode,
+        nkt: { ...product.nkt!, gtin: barcode },
+      },
+      {
+        ...product,
+        id: 'additional',
+        barcode: 'other',
+        additional_barcode: barcode,
+        nkt: null,
+      },
+      {
+        ...product,
+        id: 'gtin',
+        barcode: 'another',
+        nkt: { ...product.nkt!, gtin: barcode },
+      },
+    ];
+    await db.cacheProducts('store', products);
+    await db.cacheProducts('different-store', [{ ...product, id: 'foreign' }]);
+    expect(
+      db
+        .barcodes('store', barcode)
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual(products.map(({ id }) => id).sort());
+    expect(db.barcodes('store', '')).toEqual([]);
   });
   it('restores encrypted records after restart and refuses a wrong key', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pos-db-test-'));

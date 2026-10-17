@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '@testing-library/jest-dom/vitest';
 import {
+  act,
   cleanup,
   createEvent,
   fireEvent,
@@ -10,6 +11,7 @@ import {
   within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AxiosError, type AxiosResponse } from 'axios';
 import type { ComponentProps } from 'react';
 import { Toaster } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -34,6 +36,7 @@ import {
   overrideSaleItemPrice,
   removeSaleItem,
   resetSaleDiscount,
+  scanSaleItem,
   searchProducts,
   triggerAntiFraudEvent,
 } from '@renderer/common/api';
@@ -59,6 +62,7 @@ vi.mock('@renderer/common/api', async (importOriginal) => {
     overrideSaleItemPrice: vi.fn(),
     removeSaleItem: vi.fn(),
     resetSaleDiscount: vi.fn(),
+    scanSaleItem: vi.fn(),
     searchProducts: vi.fn(),
     triggerAntiFraudEvent: vi.fn(),
   };
@@ -243,9 +247,31 @@ const renderCheckout = (
 };
 
 beforeEach(() => {
-  vi.spyOn(request, 'get').mockResolvedValue({
-    data: { data: {} },
-  });
+  vi.spyOn(request, 'get').mockImplementation(async (path, config) => ({
+    data: {
+      data:
+        path === '/v1/pos/catalog/lookup'
+          ? {
+              products: (
+                await searchProducts({
+                  search: (config?.params as { barcode?: string } | undefined)
+                    ?.barcode,
+                  limit: 20,
+                  offset: 0,
+                })
+              ).products,
+              scale_profile: {
+                format: 'ean13-weight-v1',
+                prefix: '20',
+                enabled: false,
+                blocked_reason: null,
+                revision: 1,
+                issued_plu_ranges: [],
+              },
+            }
+          : {},
+    },
+  }));
   vi.clearAllMocks();
   vi.mocked(getAuthContext).mockResolvedValue(
     contextFixture([
@@ -297,6 +323,139 @@ afterEach(() => {
 });
 
 describe('server-authoritative checkout', () => {
+  it('keeps an open scan decision when a different pending scan resolves later', async () => {
+    const replies = new Map<string, (value: unknown) => void>();
+    vi.mocked(request.get).mockImplementation(async (path, config) => {
+      if (path !== '/v1/pos/catalog/lookup') return { data: { data: {} } };
+      return new Promise((resolve) =>
+        replies.set((config?.params as { barcode: string }).barcode, resolve),
+      );
+    });
+    vi.mocked(createSale).mockResolvedValue(
+      saleFixture({ items: [itemFixture()], version: 1 }),
+    );
+    renderCheckout();
+    const search = await screen.findByLabelText('Сканируйте или найдите товар');
+    for (const barcode of ['001111', '002222']) {
+      fireEvent.change(search, { target: { value: barcode } });
+      fireEvent.keyDown(search, { key: 'Enter' });
+    }
+    await waitFor(() => expect(replies.size).toBe(2));
+    const respond = (barcode: string, name: string) =>
+      replies.get(barcode)!({
+        data: {
+          data: {
+            scale_profile: {
+              format: 'ean13-weight-v1',
+              prefix: null,
+              enabled: false,
+              blocked_reason: null,
+              revision: 1,
+              issued_plu_ranges: [],
+            },
+            products: [
+              productFixture({ id: `${barcode}-first`, barcode, name }),
+              productFixture({
+                id: `${barcode}-second`,
+                barcode,
+                name: `${name} второй`,
+              }),
+            ],
+          },
+        },
+      });
+    await act(async () => respond('001111', 'Первый выбор'));
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Выберите товар по штрихкоду',
+    });
+    await userEvent.click(within(dialog).getByText('Первый выбор'));
+    await act(async () => respond('002222', 'Поздний выбор'));
+    expect(within(dialog).getByText('Первый выбор')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Поздний выбор')).not.toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Добавить в чек' }),
+    );
+    await waitFor(() =>
+      expect(createSale).toHaveBeenCalledExactlyOnceWith({
+        items: [{ productId: '001111-first', quantity: '1' }],
+      }),
+    );
+  });
+  it('offers both interpretations and adds only the explicitly confirmed weighted candidate', async () => {
+    vi.mocked(getCurrentSale).mockResolvedValue(saleFixture({ version: 5 }));
+    vi.mocked(scanSaleItem).mockRejectedValue(
+      new AxiosError('ambiguous', undefined, undefined, undefined, {
+        data: {
+          error_code: 'PRODUCT_BARCODE_AMBIGUOUS',
+          current_version: 5,
+          candidates: [
+            {
+              kind: 'static',
+              product_id: 'product-1',
+              name: 'Молоко',
+              unit: 'kg',
+              quantity: null,
+              retail_price: '650.00',
+              unavailable_reason: null,
+            },
+            {
+              kind: 'weighted',
+              product_id: 'product-1',
+              name: 'Молоко',
+              unit: 'kg',
+              quantity: '0.185',
+              retail_price: '650.00',
+              unavailable_reason: null,
+            },
+            {
+              kind: 'weighted',
+              product_id: null,
+              name: null,
+              unit: 'kg',
+              quantity: '0.185',
+              retail_price: null,
+              unavailable_reason: 'PRODUCT_NOT_FOUND',
+            },
+          ],
+        },
+        headers: {},
+        status: 409,
+        statusText: 'Conflict',
+      } as AxiosResponse),
+    );
+    vi.mocked(addSaleItem).mockResolvedValue(
+      saleFixture({
+        version: 6,
+        items: [itemFixture({ quantity: '0.185', unit_code: 'kg' })],
+      }),
+    );
+    renderCheckout();
+    const search = await screen.findByLabelText('Сканируйте или найдите товар');
+    await userEvent.type(search, '001234{enter}');
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Выберите товар по штрихкоду',
+    });
+    expect(within(dialog).getByText('Обычный штрихкод')).toBeInTheDocument();
+    expect(
+      within(dialog).getAllByText('Весовая этикетка — 0,185 кг'),
+    ).toHaveLength(2);
+    expect(addSaleItem).not.toHaveBeenCalled();
+    const weighted = within(dialog).getAllByRole('button', {
+      name: /Весовая этикетка/,
+    });
+    expect(weighted[1]).toBeDisabled();
+    await userEvent.click(weighted[0]!);
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Добавить в чек' }),
+    );
+    await waitFor(() =>
+      expect(addSaleItem).toHaveBeenCalledExactlyOnceWith('sale-1', {
+        productId: 'product-1',
+        expectedVersion: 5,
+        quantity: '0.185',
+      }),
+    );
+  });
   it('shows quick products by category only with both read permissions', async () => {
     renderCheckout();
 

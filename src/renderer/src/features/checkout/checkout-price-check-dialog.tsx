@@ -16,8 +16,10 @@ import { Label } from '@renderer/common/components/ui/label';
 import { formatCash } from '@renderer/common/helpers/format-cash';
 import { getHttpErrorMessage } from '@renderer/common/helpers/http-error.helper';
 import { resolveProductScan } from '@renderer/common/lib/resolve-product-scan';
+import { getScanAmbiguity } from '@renderer/common/lib/scan-ambiguity';
 import { useProductSearchQuery } from '@renderer/features/products';
 
+import type { ScanAmbiguity } from '../../../../shared/pos/barcode-scan';
 import { PosError } from '../../../../shared/pos/contracts';
 import { parseGs1DataMatrix } from '../../../../shared/pos/gs1-data-matrix';
 import {
@@ -36,6 +38,11 @@ type Props = {
     quantity?: string,
   ) => Promise<unknown>;
   onClose: () => void;
+  onChooseScan?: (
+    ambiguity: ScanAmbiguity,
+    barcode: string,
+    markingCode?: string,
+  ) => void;
   organizationId: string;
   storeId: string;
 };
@@ -45,6 +52,7 @@ export function CheckoutPriceCheckDialog({
   canAdd,
   onAdd,
   onClose,
+  onChooseScan,
   organizationId,
   storeId,
 }: Props) {
@@ -124,9 +132,39 @@ export function CheckoutPriceCheckDialog({
       const currentProduct = resolved?.product ?? product;
       const currentMarkingCode = resolved?.markingCode ?? markingCode;
       assertProductSellable(currentProduct, currentMarkingCode);
+      if (
+        currentProduct.unit === 'kg' &&
+        resolved?.kind === 'static' &&
+        onChooseScan
+      ) {
+        onChooseScan(
+          {
+            current_version: 0,
+            candidates: [
+              {
+                kind: 'static',
+                product_id: currentProduct.id,
+                name: currentProduct.name,
+                unit: currentProduct.unit,
+                quantity: null,
+                retail_price: currentProduct.retail_price,
+                unavailable_reason: null,
+              },
+            ],
+          },
+          term,
+          currentMarkingCode,
+        );
+        return;
+      }
       await onAdd(currentProduct, currentMarkingCode, resolved?.quantity);
       if (epoch === lifecycle.current.version) onClose();
     } catch (error) {
+      const ambiguity = getScanAmbiguity(error);
+      if (epoch === lifecycle.current.version && ambiguity && onChooseScan) {
+        onChooseScan(ambiguity, term, dataMatrix?.markingCode);
+        return;
+      }
       if (epoch === lifecycle.current.version)
         setError(
           getHttpErrorMessage(error, 'Не удалось добавить товар в чек.'),
@@ -221,6 +259,20 @@ export function CheckoutPriceCheckDialog({
               >
                 Повторить поиск
               </Button>
+              {canAdd && onChooseScan && getScanAmbiguity(products.error) ? (
+                <Button
+                  type="button"
+                  onClick={() =>
+                    onChooseScan(
+                      getScanAmbiguity(products.error)!,
+                      term,
+                      dataMatrix?.markingCode,
+                    )
+                  }
+                >
+                  Выбрать товар
+                </Button>
+              ) : null}
             </div>
           ) : !results ? (
             <p

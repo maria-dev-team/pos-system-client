@@ -30,17 +30,22 @@ export function startAnalytics(getPage?: () => string) {
       ).data.data,
     getPage,
   );
-  const req = request.interceptors.request.use((config) => {
-    if (!config.url?.startsWith('/v1/analytics/')) {
-      config.headers['X-Pos-Diagnostics'] = '1';
-      config.headers['X-Client-Version'] =
-        import.meta.env.VITE_CLIENT_VERSION ?? 'development';
-      config.headers['X-Trace-Id'] ??= crypto.randomUUID();
-      const action = analytics.actionId();
-      if (action) config.headers['X-Action-Id'] = action;
-    }
-    return config;
-  });
+  const req = request.interceptors.request.use(
+    (config) => {
+      if (!config.url?.startsWith('/v1/analytics/')) {
+        config.headers['X-Pos-Diagnostics'] = '1';
+        config.headers['X-Client-Version'] =
+          import.meta.env.VITE_CLIENT_VERSION ?? 'development';
+        config.headers['X-Trace-Id'] ??= crypto.randomUUID();
+        const action = analytics.actionId();
+        if (action) config.headers['X-Action-Id'] = action;
+      }
+      return config;
+    },
+    undefined,
+    // Auth mutations capture ownership synchronously when the request starts.
+    { synchronous: true },
+  );
   const res = request.interceptors.response.use(
     (response) => response,
     (error) => {

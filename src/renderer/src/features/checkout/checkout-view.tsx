@@ -63,6 +63,7 @@ import {
   formatQuantity,
   quantitySchema,
 } from '@renderer/common/lib/quantity';
+import { getScanAmbiguity } from '@renderer/common/lib/scan-ambiguity';
 import { authContextQueryOptions } from '@renderer/features/auth';
 import { CashMovementsDialog } from '@renderer/features/cash-movements';
 import { EndCashierSessionAction } from '@renderer/features/cashier-sessions';
@@ -79,6 +80,7 @@ import {
   registerShiftHistoryQueryOptions,
 } from '@renderer/features/register-shifts';
 
+import type { ScanAmbiguity } from '../../../../shared/pos/barcode-scan';
 import { assertProductSellable } from '../../../../shared/pos/product-policy';
 import { CheckoutCategoryPicker } from './checkout-category-picker';
 import { CheckoutHeldSalesDialog } from './checkout-held-sales-dialog';
@@ -93,6 +95,7 @@ import {
   currentSaleQueryOptions,
   heldSalesQueryOptions,
 } from './checkout-query-options';
+import { CheckoutScanChoiceDialog } from './checkout-scan-choice-dialog';
 import { LocalPosStatus } from './local-pos-status';
 import { LocalReceiptsButton } from './local-receipts-button';
 import {
@@ -249,6 +252,12 @@ function ActiveCheckout({
     barcode: string;
     message: string;
   } | null>(null);
+  const [scanChoice, setScanChoice] = useState<{
+    ambiguity: ScanAmbiguity;
+    barcode: string;
+    saleId: string | null;
+    markingCode?: string;
+  } | null>(null);
   const [quantityItem, setQuantityItem] = useState<CheckoutRow | null>(null);
   const [quantity, setQuantity] = useState('');
   const [quantityError, setQuantityError] = useState<string | null>(null);
@@ -340,6 +349,22 @@ function ActiveCheckout({
 
   const commandState = useSaleCommandMutation(cashierSession.id, sale, {
     onError: (error, submitted) => {
+      const ambiguity = getScanAmbiguity(error);
+      if (submitted.type === 'scan' && ambiguity) {
+        setScanIssue(null);
+        setScanChoice(
+          (openChoice) =>
+            openChoice ?? {
+              ambiguity,
+              barcode: submitted.barcode,
+              saleId:
+                queryClient.getQueryData<SaleResponse | null>(currentKey)?.id ??
+                null,
+              markingCode: submitted.markingCode,
+            },
+        );
+        return;
+      }
       if (
         submitted.type === 'remove' &&
         getHttpErrorCode(error) === ErrorCode.SaleEmpty
@@ -431,6 +456,11 @@ function ActiveCheckout({
     onIssue: setScanIssue,
     onResolved: (barcode) =>
       setSearch((value) => (value.trim() === barcode ? '' : value)),
+    onAmbiguity: (ambiguity, barcode, saleId, markingCode) =>
+      setScanChoice(
+        (openChoice) =>
+          openChoice ?? { ambiguity, barcode, saleId, markingCode },
+      ),
     refocus,
   });
   const products = useProductSearchQuery(
@@ -469,6 +499,7 @@ function ActiveCheckout({
       !discountOpen &&
       !categoryPickerOpen &&
       !priceCheckOpen &&
+      !scanChoice &&
       !operationsOpen &&
       !cashMovementType &&
       !quantityItem &&
@@ -1394,6 +1425,27 @@ function ActiveCheckout({
         </div>
       </footer>
 
+      {scanChoice ? (
+        <CheckoutScanChoiceDialog
+          ambiguity={scanChoice.ambiguity}
+          onClose={() => {
+            setScanChoice(null);
+            refocus();
+          }}
+          onConfirm={(candidate, quantity) =>
+            command.mutateAsync({
+              type: 'add',
+              productId: candidate.product_id!,
+              quantity,
+              expectedVersion: scanChoice.ambiguity.current_version,
+              saleId: scanChoice.saleId,
+              ...(scanChoice.markingCode
+                ? { markingCode: scanChoice.markingCode }
+                : {}),
+            })
+          }
+        />
+      ) : null}
       <Dialog open={operationsOpen} onOpenChange={setOperationsOpen}>
         <DialogContent
           className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-xl"
@@ -1505,6 +1557,26 @@ function ActiveCheckout({
       ) : null}
       {canSearch && priceCheckOpen ? (
         <CheckoutPriceCheckDialog
+          onChooseScan={(ambiguity, barcode, markingCode) => {
+            const current = queryClient.getQueryData<SaleResponse | null>(
+              currentKey,
+            );
+            setScanChoice(
+              (openChoice) =>
+                openChoice ?? {
+                  ambiguity: {
+                    ...ambiguity,
+                    current_version: localPosActive()
+                      ? (current?.local_revision ?? 0)
+                      : (current?.version ?? 0),
+                  },
+                  barcode,
+                  saleId: current?.id ?? null,
+                  markingCode,
+                },
+            );
+            setPriceCheckOpen(false);
+          }}
           canAdd={canAddProduct && !isBusy}
           onClose={() => {
             setPriceCheckOpen(false);

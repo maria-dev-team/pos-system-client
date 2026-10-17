@@ -71,7 +71,7 @@ export async function callLocalPos<T extends PosResult = PosResult>(
       );
     const reply = await window.localPos.request(request);
     if (!reply.ok) {
-      const error = new PosError(reply.code, reply.message);
+      const error = new PosError(reply.code, reply.message, reply.details);
       // The main process already records failed IPC replies, including background failures.
       if (reply.reported) ignoreReportedError(error);
       throw error;

@@ -56,6 +56,16 @@ async function fixture(): Promise<{
   await db.replaceCatalog(`${ids.organization}:${ids.store}`, [
     productFixture(),
   ]);
+  const scaleProfile = {
+    format: 'ean13-weight-v1',
+    prefix: null,
+    enabled: false,
+    blocked_reason: null,
+    revision: 0,
+    issued_plu_ranges: [],
+  };
+  db.set(`catalog-cursor:${ids.organization}:${ids.store}`, 'baseline');
+  db.set(`scale-profile:organization:${ids.organization}`, scaleProfile);
   const mode = {
     offline: false,
     unauthorized: false,
@@ -85,9 +95,10 @@ async function fixture(): Promise<{
       return response({
         products: [{ ...productFixture(), store_id: profile.session.store_id }],
         next_cursor: null,
+        scale_profile: scaleProfile,
       });
     if (path === '/v1/pos/catalog/sync-start')
-      return response({ cursor: 'baseline' });
+      return response({ cursor: 'baseline', scale_profile: scaleProfile });
     if (path === '/v1/pos/catalog/changes')
       return response({
         products: [],
@@ -95,6 +106,12 @@ async function fixture(): Promise<{
         categories_changed: false,
         cursor: 'next',
         has_more: false,
+        scale_profile: scaleProfile,
+      });
+    if (path === '/v1/pos/catalog/lookup')
+      return response({
+        products: [{ ...productFixture(), store_id: profile.session.store_id }],
+        scale_profile: scaleProfile,
       });
     if (path === '/v1/categories')
       return response({ categories: [], meta: { has_more: false } });
